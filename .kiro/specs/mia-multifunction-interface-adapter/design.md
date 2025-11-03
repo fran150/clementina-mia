@@ -194,9 +194,16 @@ Structure per sprite:
 4. MIA responds with boot loader entry address in $E000-$FFFF range
 5. CPU executes boot loader code provided by MIA ROM emulation
 6. Boot loader implements kernel copying loop using two fixed addresses
-7. Kernel data copied byte-by-byte to RAM starting at $4000
+7. Kernel data (loaded from `kernel.bin` at build time) copied byte-by-byte to RAM starting at $4000
 8. Boot loader jumps to $4000 to start kernel execution
 9. Kernel banks out MIA (asserts PICOHIRAM) and increases clock to 1 MHz
+
+**Kernel Development Workflow:**
+1. Develop kernel code using 6502 assembler/compiler
+2. Generate `kernel.bin` binary file
+3. Place `kernel.bin` in MIA project root directory
+4. Build MIA firmware (CMake automatically embeds kernel data)
+5. Upload `mia.uf2` to Raspberry Pi Pico
 
 **Boot Loader Structure:**
 - Minimal 6502 assembly routine (~30 bytes) stored in MIA flash
@@ -266,10 +273,11 @@ LOAD_COMPLETE:
 - `$FFFC-$FFFD`: Reset vector pointing to `$E000`
 
 **Kernel Storage:**
-- Complete kernel binary embedded in MIA firmware as C array
+- Complete kernel binary loaded from `kernel.bin` file at compile time
+- Binary data automatically converted to C array during build process
 - Sequential byte streaming via memory-mapped data address ($E101)
 - Automatic internal pointer advancement on each read
-- No external storage dependencies - kernel is part of MIA firmware
+- Kernel development independent of MIA firmware - only requires updating `kernel.bin`
 - Kernel responsible for banking out MIA and increasing clock speed to 1 MHz
 
 ### USB Interface Data Model

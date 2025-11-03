@@ -4,6 +4,7 @@
  */
 
 #include "rom_emulator.h"
+#include "kernel_data.h"
 #include "hardware/gpio_mapping.h"
 #include "system/clock_control.h"
 #include "system/reset_control.h"
@@ -73,113 +74,8 @@ static const uint8_t bootloader_code[] = {
     0xEA, 0xEA, 0xEA, 0xEA   // $E05D-$E060: NOP padding
 };
 
-// Complete Clementina Kernel Binary
-// This is a minimal 6502 kernel that demonstrates system initialization
-// Memory addresses shown are the 6502 CPU addresses where this code will be loaded ($4000+)
-static const uint8_t kernel_data[] = {
-    // === Kernel Entry Point ($4000) ===
-    0x78,                    // $4000: SEI - Disable interrupts
-    0xD8,                    // $4001: CLD - Clear decimal mode
-    
-    // Initialize stack pointer
-    0xA2, 0xFF,              // $4002-$4003: LDX #$FF
-    0x9A,                    // $4004: TXS - Set stack pointer to $01FF
-    
-    // Bank out MIA by asserting PICOHIRAM and increase clock speed
-    // This would typically be done through a memory-mapped register
-    // For now, we'll use a placeholder address
-    0xA9, 0x01,              // $4005-$4006: LDA #$01
-    0x8D, 0x00, 0xC1,        // $4007-$4009: STA $C100 - Signal MIA to bank out and increase speed
-    
-    // Initialize system variables
-    0xA9, 0x00,              // $400A-$400B: LDA #$00
-    0x8D, 0x00, 0x02,        // $400C-$400E: STA $0200 - Clear system status
-    0x8D, 0x01, 0x02,        // $400F-$4011: STA $0201 - Clear error flags
-    
-    // Set up interrupt vectors (example)
-    0xA9, 0x00,              // $4012-$4013: LDA #$00 - Low byte of IRQ handler
-    0x8D, 0xFE, 0xFF,        // $4014-$4016: STA $FFFE
-    0xA9, 0x50,              // $4017-$4018: LDA #$50 - High byte of IRQ handler ($5000)
-    0x8D, 0xFF, 0xFF,        // $4019-$401B: STA $FFFF
-    
-    // Initialize video system (placeholder)
-    0xA9, 0x80,              // $401C-$401D: LDA #$80 - Video init command
-    0x8D, 0x00, 0xD0,        // $401E-$4020: STA $D000 - Video control register
-    
-    // Clear screen memory (example: clear first 1KB of video memory)
-    0xA9, 0x20,              // $4021-$4022: LDA #$20 - Space character
-    0xA2, 0x00,              // $4023-$4024: LDX #$00
-    0xA0, 0x00,              // $4025-$4026: LDY #$00
-    
-    // CLEAR_LOOP: ($4027)
-    0x99, 0x00, 0x30,        // $4027-$4029: STA $3000,Y - Store space character (example screen memory)
-    0xC8,                    // $402A: INY
-    0xD0, 0xFA,              // $402B-$402C: BNE CLEAR_LOOP - Continue if Y != 0 (branch to $4027)
-    0xEE, 0x29, 0x40,        // $402D-$402F: INC $4029 - Increment high byte of store instruction
-    0xE8,                    // $4030: INX
-    0xE0, 0x04,              // $4031-$4032: CPX #$04 - Compare with 4 (4 pages = 1KB)
-    0xD0, 0xF2,              // $4033-$4034: BNE CLEAR_LOOP - Continue if not done (branch to $4027)
-    
-    // Enable interrupts and enter main loop
-    0x58,                    // $4035: CLI - Enable interrupts
-    
-    // === Main Kernel Loop ===
-    // MAIN_LOOP: ($4036)
-    0xAD, 0x00, 0xC0,        // $4036-$4038: LDA $C000 - Check keyboard input
-    0xF0, 0x06,              // $4039-$403A: BEQ NO_KEY - Branch if no key pressed (to $4041)
-    
-    // Process keyboard input
-    0x8D, 0x00, 0x30,        // $403B-$403D: STA $3000 - Display character on screen
-    0xEE, 0x01, 0x30,        // $403E-$4040: INC $3001 - Move cursor
-    
-    // NO_KEY: ($4041)
-    0xAD, 0x01, 0xD0,        // $4041-$4043: LDA $D001 - Check video status
-    0x29, 0x80,              // $4044-$4045: AND #$80 - Check VBlank flag
-    0xF0, 0x02,              // $4046-$4047: BEQ SKIP_VBLANK (to $404A)
-    
-    // Handle VBlank processing
-    0xEE, 0x02, 0x02,        // $4048-$404A: INC $0202 - Increment frame counter
-    
-    // SKIP_VBLANK: ($404B)
-    0x4C, 0x36, 0x40,        // $404B-$404D: JMP MAIN_LOOP - Jump back to main loop ($4036)
-    
-    // === IRQ Handler (would be copied to $5000) ===
-    // This code would be copied to $5000 in actual memory by the kernel
-    0x48,                    // $404E: PHA - Save accumulator
-    0x8A,                    // $404F: TXA
-    0x48,                    // $4050: PHA - Save X register
-    0x98,                    // $4051: TYA
-    0x48,                    // $4052: PHA - Save Y register
-    
-    // Handle interrupt (placeholder)
-    0xAD, 0x00, 0xD5,        // $4053-$4055: LDA $D500 - Read interrupt source
-    0x29, 0x01,              // $4056-$4057: AND #$01 - Check timer interrupt
-    0xF0, 0x04,              // $4058-$4059: BEQ CHECK_OTHER (to $405E)
-    
-    // Handle timer interrupt
-    0xEE, 0x03, 0x02,        // $405A-$405C: INC $0203 - Increment timer counter
-    
-    // CHECK_OTHER: ($405E)
-    // Additional interrupt handling would go here
-    
-    // Restore registers and return
-    0x68,                    // $405E: PLA - Restore Y register
-    0xA8,                    // $405F: TAY
-    0x68,                    // $4060: PLA - Restore X register
-    0xAA,                    // $4061: TAX
-    0x68,                    // $4062: PLA - Restore accumulator
-    0x40,                    // $4063: RTI - Return from interrupt
-    
-    // Padding and additional kernel code space
-    0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,  // $4064-$406B: NOP padding
-    0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,  // $406C-$4073: NOP padding
-    0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,  // $4074-$407B: NOP padding
-    0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,  // $407C-$4083: NOP padding
-    0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,  // $4084-$408B: NOP padding
-    0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,  // $408C-$4093: NOP padding
-    0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,  // $4094-$409B: NOP padding
-    0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA   // $409C-$40A3: NOP padding
-};
+// Kernel data is now loaded from kernel.bin at build time
+// See kernel_data.h for external declarations
 
 void rom_emulator_init(void) {
     current_state = ROM_STATE_INACTIVE;
@@ -187,7 +83,7 @@ void rom_emulator_init(void) {
     reset_cycle_count = 0;
     
     printf("ROM Emulator initialized - Boot loader: %zu bytes, Kernel: %zu bytes\n", 
-           sizeof(bootloader_code), sizeof(kernel_data));
+           sizeof(bootloader_code), kernel_data_size);
 }
 
 void rom_emulator_start_boot_sequence(void) {
@@ -295,24 +191,24 @@ bool rom_emulator_handle_read(uint16_t address, uint8_t *data) {
         }
         
         // Return 1 if more data available, 0 if complete
-        *data = (kernel_data_pointer < sizeof(kernel_data)) ? 0x01 : 0x00;
+        *data = (kernel_data_pointer < kernel_data_size) ? 0x01 : 0x00;
         return true;
     }
     
     // Handle kernel data register ($E101 maps to $101 in MIA space)
     else if (address == KERNEL_DATA_ADDR) {
-        if (kernel_data_pointer < sizeof(kernel_data)) {
+        if (kernel_data_pointer < kernel_data_size) {
             *data = kernel_data[kernel_data_pointer];
             kernel_data_pointer++;
             
             // Log progress periodically
-            if (kernel_data_pointer % 64 == 0 || kernel_data_pointer >= sizeof(kernel_data)) {
+            if (kernel_data_pointer % 64 == 0 || kernel_data_pointer >= kernel_data_size) {
                 printf("Kernel transfer progress: %lu/%zu bytes\n", 
-                       kernel_data_pointer, sizeof(kernel_data));
+                       kernel_data_pointer, kernel_data_size);
             }
             
             // Mark complete when all data transferred
-            if (kernel_data_pointer >= sizeof(kernel_data)) {
+            if (kernel_data_pointer >= kernel_data_size) {
                 current_state = ROM_STATE_COMPLETE;
                 printf("All kernel data transferred\n");
             }
@@ -345,7 +241,7 @@ bool rom_emulator_is_active(void) {
 }
 
 uint32_t rom_emulator_get_kernel_size(void) {
-    return sizeof(kernel_data);
+    return kernel_data_size;
 }
 
 uint32_t rom_emulator_get_bytes_transferred(void) {

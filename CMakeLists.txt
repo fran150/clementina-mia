@@ -35,6 +35,25 @@ set(CMAKE_CXX_STANDARD 17)
 # Initialize the Pico SDK
 pico_sdk_init()
 
+# Generate kernel data from kernel.bin at build time
+set(KERNEL_BIN_FILE "${CMAKE_SOURCE_DIR}/kernel.bin")
+set(KERNEL_DATA_FILE "${CMAKE_BINARY_DIR}/generated/kernel_data.c")
+
+# Create the generated directory
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/generated")
+
+# Custom command to generate kernel_data.c from kernel.bin
+add_custom_command(
+    OUTPUT ${KERNEL_DATA_FILE}
+    COMMAND ${CMAKE_COMMAND} 
+        -DKERNEL_BIN_FILE=${KERNEL_BIN_FILE}
+        -DKERNEL_DATA_FILE=${KERNEL_DATA_FILE}
+        -P ${CMAKE_SOURCE_DIR}/scripts/generate_kernel_data.cmake
+    DEPENDS ${KERNEL_BIN_FILE} ${CMAKE_SOURCE_DIR}/scripts/generate_kernel_data.cmake
+    COMMENT "Generating kernel data from kernel.bin"
+    VERBATIM
+)
+
 # Add executable
 add_executable(mia
     src/main.c
@@ -48,6 +67,7 @@ add_executable(mia
     src/usb/usb_controller.c
     src/usb/usb_descriptors.c
     src/network/wifi_controller.c
+    ${KERNEL_DATA_FILE}  # Add generated kernel data
 )
 
 # Add include directories
@@ -59,6 +79,7 @@ target_include_directories(mia PRIVATE
     src/video/
     src/usb/
     src/network/
+    ${CMAKE_BINARY_DIR}/generated  # Include generated files directory
 )
 
 # Link libraries

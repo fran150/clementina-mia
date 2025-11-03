@@ -5,6 +5,7 @@ cmake-build-*/
 # Generated files
 *.uf2
 *.bin
+!kernel.bin
 *.hex
 *.elf
 *.map
@@ -33,7 +34,7 @@ pico-sdk/
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
-Makefile
 *.cmake
 !CMakeLists.txt
 !pico_sdk_import.cmake
+!scripts/generate_kernel_data.cmake
