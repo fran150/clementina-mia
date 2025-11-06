@@ -36,11 +36,11 @@ static const uint8_t bootloader_code[] = {
     
     // === Main Kernel Loading Loop ===
     // LOAD_LOOP: ($E00C)
-    0xAD, 0x00, 0xE1,        // $E00C-$E00E: LDA $E100 - Read status address (mapped to MIA status register)
+    0xAD, 0x80, 0xE0,        // $E00C-$E00E: LDA $E080 - Read status address (mapped to MIA status register)
     0xF0, 0x0C,              // $E00F-$E010: BEQ LOAD_COMPLETE - If 0, loading is complete (branch to $E01D)
     
     // Read next kernel byte
-    0xAD, 0x01, 0xE1,        // $E011-$E013: LDA $E101 - Read data address (mapped to MIA data register)
+    0xAD, 0x81, 0xE0,        // $E011-$E013: LDA $E081 - Read data address (mapped to MIA data register)
     0x91, 0x00,              // $E014-$E015: STA ($00),Y - Store byte at destination address
     
     // Advance destination pointer
@@ -161,7 +161,7 @@ void rom_emulator_process(void) {
 bool rom_emulator_handle_read(uint16_t address, uint8_t *data) {
     if (!data) return false;
     
-    // Handle reset vector ($FFFC-$FFFD maps to $3FC-$3FD in MIA space)
+    // Handle reset vector ($FFFC-$FFFD maps to $FC-$FD in MIA space)
     if (address == ROM_RESET_VECTOR) {
         // Return low byte of boot loader start address ($E000)
         *data = 0x00;  // Low byte of $E000
@@ -172,7 +172,7 @@ bool rom_emulator_handle_read(uint16_t address, uint8_t *data) {
         return true;
     }
     
-    // Handle boot loader code ($E000-$E0FF maps to $000-$0FF in MIA space)
+    // Handle boot loader code ($E000-$E07F maps to $000-$07F in MIA space)
     else if (address < KERNEL_STATUS_ADDR) {
         uint16_t offset = address - BOOTLOADER_START;
         if (offset < sizeof(bootloader_code)) {
@@ -183,7 +183,7 @@ bool rom_emulator_handle_read(uint16_t address, uint8_t *data) {
         return true;
     }
     
-    // Handle kernel status register ($E100 maps to $100 in MIA space)
+    // Handle kernel status register ($E080 maps to $080 in MIA space)
     else if (address == KERNEL_STATUS_ADDR) {
         if (current_state != ROM_STATE_KERNEL_LOADING) {
             current_state = ROM_STATE_KERNEL_LOADING;
@@ -195,7 +195,7 @@ bool rom_emulator_handle_read(uint16_t address, uint8_t *data) {
         return true;
     }
     
-    // Handle kernel data register ($E101 maps to $101 in MIA space)
+    // Handle kernel data register ($E081 maps to $081 in MIA space)
     else if (address == KERNEL_DATA_ADDR) {
         if (kernel_data_pointer < kernel_data_size) {
             *data = kernel_data[kernel_data_pointer];

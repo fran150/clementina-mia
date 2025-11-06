@@ -2,7 +2,7 @@
 
 - [x] 1. Set up project structure and core interfaces
   - Create directory structure for hardware abstraction, video processing, and network components
-  - Define GPIO pin mapping constants (GPIO 0-7,26-27: address, GPIO 8-15: data, GPIO 16-22,28: control)
+  - Define GPIO pin mapping constants (GPIO 0-7: address, GPIO 8-15: data, GPIO 16-22,28: control, GPIO 26-27: reserved)
   - Set up CMake build system for Raspberry Pi Pico 2 W
   - Configure development environment with Pico SDK and TinyUSB
   - _Requirements: All requirements - foundational setup_
@@ -15,20 +15,20 @@
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5_
 
 - [x] 3. Implement ROM emulation for boot phase
-  - Configure GPIO pins for 6502 bus interface (address A0-A7 on GPIO 0-7, A8-A9 on GPIO 26-27, data D0-D7 on GPIO 8-15, control signals)
+  - Configure GPIO pins for 6502 bus interface (address A0-A7 on GPIO 0-7, data D0-D7 on GPIO 8-15, control signals)
   - Implement reset line control and boot sequence initialization (assert reset for 5+ cycles)
   - Create 6502 bus interface using C code for 100 kHz operation
-  - Implement address decoding for $E000-$FFFF range using 10 address lines (A0-A7 on GPIO 0-7, A8-A9 on GPIO 26-27, 1KB space)
-  - Create minimal 6502 boot loader assembly code (< 100 bytes) with kernel copying loop
+  - Implement address decoding for $E000-$FFFF range using 8 address lines (A0-A7 on GPIO 0-7, 256-byte space with mirroring)
+  - Create minimal 6502 boot loader assembly code (< 100 bytes) with kernel copying loop using addresses $E080/$E081
   - Embed complete kernel binary as C array in MIA firmware
-  - Implement two memory-mapped addresses: status (completion check) and data (kernel bytes)
+  - Implement two memory-mapped addresses: status ($E080) and data ($E081) within 256-byte ROM space
   - Add automatic kernel pointer advancement on data address reads
   - Implement reset vector response ($FFFC-$FFFD) with boot loader entry address
   - Add PICOHIRAM banking control and clock speed transition to 1 MHz
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11_
 
 - [ ] 4. Implement PIO state machines for video I/O
-  - Design PIO state machine 0 for address decoding and read operations (GPIO 0-7,26-27 for address, GPIO 8-15 for data)
+  - Design PIO state machine 0 for address decoding and read operations (GPIO 0-7 for address, GPIO 8-15 for data)
   - Design PIO state machine 1 for write operations and data handling
   - Implement video chip select monitoring (GPIO 21) and activation logic
   - Add WE/OE signal coordination (GPIO 18-19) in PIO code

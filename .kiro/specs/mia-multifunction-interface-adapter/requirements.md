@@ -53,14 +53,14 @@ The MIA (Multifunction Interface Adapter) is a Raspberry Pi Pico 2 W-based syste
 
 #### Acceptance Criteria
 
-1. THE MIA SHALL respond to memory access in the $E000-$FFFF address range using 10 address lines (A0-A7 on GPIO 0-7, A8-A9 on GPIO 26-27) with 1KB address space
+1. THE MIA SHALL respond to memory access in the $E000-$FFFF address range using 8 address lines (A0-A7 on GPIO 0-7) with 256-byte address space mirrored throughout the range
 2. THE MIA SHALL interface with Clementina using standard 6502 memory signals: WE (Write Enable) on GPIO 18, OE (Output Enable) on GPIO 19, and 8 data lines on GPIO 8-15
 3. THE MIA SHALL control the PICOHIRAM line on GPIO 16 to bank itself in and out of the high memory region
 4. WHEN MIA initializes, THE MIA SHALL assert the Reset_Line on GPIO 17 for minimum 5 clock cycles then release it to start the 6502 CPU
 5. WHEN Clementina accesses the Reset_Vector addresses ($FFFC-$FFFD), THE MIA SHALL respond with the address of its boot loader routine in the $E000-$FFFF range
 6. WHEN the 6502 CPU reads boot loader instructions from MIA, THE MIA SHALL provide hardcoded 6502 assembly code bytes that implement kernel loading logic
-7. THE MIA SHALL provide a kernel status address that returns 1 when more kernel data is available and 0 when kernel transfer is complete
-8. THE MIA SHALL provide a kernel data address that returns sequential bytes from the stored kernel and advances the internal pointer
+7. THE MIA SHALL provide a kernel status address within the 256-byte ROM space that returns 1 when more kernel data is available and 0 when kernel transfer is complete
+8. THE MIA SHALL provide a kernel data address within the 256-byte ROM space that returns sequential bytes from the stored kernel and advances the internal pointer
 9. THE MIA SHALL store the complete kernel binary as embedded data within the MIA firmware for byte-by-byte transfer
 10. WHEN the boot loader reads from the kernel data address, THE MIA SHALL copy kernel bytes sequentially to Clementina RAM starting at address $4000
 11. WHEN kernel loading is complete and PICOHIRAM is asserted by the kernel, THE MIA SHALL increase clock frequency to 1 MHz and bank out of high memory

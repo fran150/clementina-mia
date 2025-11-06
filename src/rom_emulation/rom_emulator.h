@@ -9,15 +9,15 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-// ROM memory map constants (MIA internal 1KB address space)
+// ROM memory map constants (MIA internal 256-byte address space with mirroring)
 #define ROM_BASE_ADDRESS    0x0000  // MIA internal address space start
-#define ROM_SIZE           0x0400   // 1KB ROM space (10-bit addressing)
-#define ROM_RESET_VECTOR   0x03FC   // Reset vector location in MIA space ($FFFC-$FFFD)
+#define ROM_SIZE           0x0100   // 256-byte ROM space (8-bit addressing)
+#define ROM_RESET_VECTOR   0x00FC   // Reset vector location in MIA space ($FFFC-$FFFD)
 
 // Boot loader addresses within ROM space (maps to $E000-$FFFF on 6502)
 #define BOOTLOADER_START   0x0000   // Boot loader entry point (maps to $E000)
-#define KERNEL_STATUS_ADDR 0x0100   // Status register (maps to $E100)
-#define KERNEL_DATA_ADDR   0x0101   // Data register (maps to $E101)
+#define KERNEL_STATUS_ADDR 0x0080   // Status register (maps to $E080)
+#define KERNEL_DATA_ADDR   0x0081   // Data register (maps to $E081)
 
 // 6502 system addresses
 #define KERNEL_LOAD_ADDRESS 0x4000  // Where kernel gets loaded in Clementina RAM

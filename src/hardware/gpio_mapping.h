@@ -9,7 +9,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-// Address Bus Lines (10-bit addressing for 1KB ROM space)
+// Address Bus Lines (8-bit addressing for 256-byte ROM space with mirroring)
 #define GPIO_ADDR_A0    0
 #define GPIO_ADDR_A1    1
 #define GPIO_ADDR_A2    2
@@ -18,8 +18,6 @@
 #define GPIO_ADDR_A5    5
 #define GPIO_ADDR_A6    6
 #define GPIO_ADDR_A7    7
-#define GPIO_ADDR_A8    26
-#define GPIO_ADDR_A9    27
 
 // Data Bus Lines (bidirectional)
 #define GPIO_DATA_D0    8
@@ -45,8 +43,8 @@
 // System Control
 #define GPIO_CLK_OUT    28  // Clock output (PWM6A) to Clementina
 
-// Address bus mask for 10-bit addressing
-#define ADDR_BUS_MASK   0x3FF
+// Address bus mask for 8-bit addressing
+#define ADDR_BUS_MASK   0xFF
 
 // Data bus mask for 8-bit data
 #define DATA_BUS_MASK   0xFF

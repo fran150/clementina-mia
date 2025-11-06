@@ -53,12 +53,12 @@ The MIA operates in two distinct phases with different timing and processing req
 - **GPIO 20**: ROM Emulation Chip Select input (active low)
 - **GPIO 21**: Video Chip Select input (Device 4) (active low)
 - **GPIO 22**: General Interface Chip Select input (Device 0) - keyboard, mouse, USB, SD cards (active low)
-- **GPIO 26-27**: Address bus lines A8-A9 (to complete 10 lines for 1K addressing)
+- **GPIO 26-27**: Reserved for future use
 - **GPIO 28**: Clock output (PWM6A) to Clementina
 
 
 **6502 Bus Interface:**
-- Address decoding using GPIO 0-7 and GPIO 26-27 for 1KB address space (10-bit addressing)
+- Address decoding using GPIO 0-7 for 256-byte address space (8-bit addressing) with mirroring
 - Bidirectional data transfer via GPIO 8-15
 - Control signal coordination through WE/OE inputs
 - Dual chip select lines for ROM vs Video operation modes
@@ -85,12 +85,12 @@ The MIA operates in two distinct phases with different timing and processing req
 ### Memory Mapping
 
 **ROM Emulation Region ($E000-$FFFF):**
-- 1KB address space using 10 address lines (A0-A9)
-- Reset vector at $FFFC-$FFFD (addresses $3FC-$3FD in MIA space)
-- Boot loader code space ($E000-$EFFF maps to MIA $000-$3FF)
-- Kernel data streaming address
-- Completion status address
-- No address mirroring required
+- 256-byte address space using 8 address lines (A0-A7) with mirroring every 256 bytes
+- Reset vector at $FFFC-$FFFD (mirrors to addresses $FC-$FD in MIA space)
+- Boot loader code space starts at $E000 (maps to MIA $00)
+- Kernel status address at $E080 (maps to MIA $80)
+- Kernel data address at $E081 (maps to MIA $81)
+- Address space mirrors 32 times throughout $E000-$FFFF range
 
 **I/O Device Mapping:**
 
@@ -114,7 +114,7 @@ The MIA operates in two distinct phases with different timing and processing req
 - PIO state machines provide deterministic timing for video operations
 
 **PIO Implementation Strategy:**
-- PIO State Machine 0: Address decoding (GPIO 0-7, 26-27) and read operations (GPIO 8-15)
+- PIO State Machine 0: Address decoding (GPIO 0-7) and read operations (GPIO 8-15)
 - PIO State Machine 1: Write operations and data handling
 - Video Chip Select (GPIO 21) triggers PIO state machine activation
 - C code processes PIO-buffered data in background
@@ -122,7 +122,7 @@ The MIA operates in two distinct phases with different timing and processing req
 
 **Memory-Mapped I/O Handling:**
 - PIO monitors Video Chip Select (GPIO 21) for activation
-- Address decoding via GPIO 0-7 and GPIO 26-27 for video I/O region ($C000-$DFFF)
+- Address decoding via GPIO 0-7 for video I/O region ($C000-$DFFF)
 - Bidirectional data handling via GPIO 8-15
 - WE/OE signal coordination (GPIO 18-19)
 - Data buffering for C code processing
@@ -238,11 +238,11 @@ KERNEL_LOADER:
 ; === Main Kernel Loading Loop ===
 LOAD_LOOP:
     ; Check if more kernel data is available
-    LDA $E100              ; Read status address (mapped to MIA status register)
+    LDA $E080              ; Read status address (mapped to MIA status register)
     BEQ LOAD_COMPLETE      ; If 0, loading is complete
     
     ; Read next kernel byte
-    LDA $E101              ; Read data address (mapped to MIA data register)
+    LDA $E081              ; Read data address (mapped to MIA data register)
     STA ($00),Y            ; Store byte at destination address
     
     ; Advance destination pointer
@@ -266,11 +266,11 @@ LOAD_COMPLETE:
     .word $0000            ; IRQ/BRK vector (unused during boot)
 ```
 
-**MIA ROM Memory Map:**
-- `$E000`: Kernel loader entry point
-- `$E100`: Status register (1 = more data available, 0 = transfer complete)
-- `$E101`: Data register (returns next kernel byte, advances pointer)
-- `$FFFC-$FFFD`: Reset vector pointing to `$E000`
+**MIA ROM Memory Map (256-byte space, mirrored):**
+- `$E000` (MIA $00): Kernel loader entry point
+- `$E080` (MIA $80): Status register (1 = more data available, 0 = transfer complete)
+- `$E081` (MIA $81): Data register (returns next kernel byte, advances pointer)
+- `$FFFC-$FFFD` (MIA $FC-$FD): Reset vector pointing to `$E000`
 
 **Kernel Storage:**
 - Complete kernel binary loaded from `kernel.bin` file at compile time

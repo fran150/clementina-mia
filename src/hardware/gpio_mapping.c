@@ -14,15 +14,7 @@ void gpio_mapping_init(void) {
     gpio_pull_down(i); // Pull down for stable readings
   }
   
-  // Initialize address bus pins A8-A9 (GPIO 26-27)
-  gpio_init(GPIO_ADDR_A8);
-  gpio_set_dir(GPIO_ADDR_A8, GPIO_IN);
-  gpio_pull_down(GPIO_ADDR_A8);
   
-  gpio_init(GPIO_ADDR_A9);
-  gpio_set_dir(GPIO_ADDR_A9, GPIO_IN);
-  gpio_pull_down(GPIO_ADDR_A9);
-
   // Initialize data bus pins as inputs initially (will be switched to output
   // when needed)
   for (int i = GPIO_DATA_D0; i <= GPIO_DATA_D7; i++) {
@@ -68,21 +60,11 @@ void gpio_mapping_init(void) {
 uint16_t gpio_read_address_bus(void) {
   uint16_t address = 0;
 
-  // Read A0-A7 (GPIO 0-7)
+  // Read A0-A7 (GPIO 0-7) - 8-bit addressing
   for (int i = 0; i < 8; i++) {
     if (gpio_get(GPIO_ADDR_A0 + i)) {
       address |= (1 << i);
     }
-  }
-  
-  // Read A8 (GPIO 26)
-  if (gpio_get(GPIO_ADDR_A8)) {
-    address |= (1 << 8);
-  }
-  
-  // Read A9 (GPIO 27)
-  if (gpio_get(GPIO_ADDR_A9)) {
-    address |= (1 << 9);
   }
 
   return address & ADDR_BUS_MASK;
