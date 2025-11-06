@@ -24,14 +24,23 @@ The MIA (Multifunction Interface Adapter) is a Raspberry Pi Pico 2 W-based syste
 - **Scanline**: A single horizontal line of pixels on the display
 - **Reset_Line**: Hardware signal that resets all chips in the Clementina system
 - **PICOHIRAM**: Control line that banks the MIA in/out of the high memory region ($E000-$FFFF)
-- **WE**: Write Enable signal for 6502 memory operations
-- **OE**: Output Enable signal for 6502 memory operations
+- **WE**: Write Enable signal for 6502 memory operations (active low)
+- **OE**: Output Enable signal for 6502 memory operations (active low)
+- **HIRAM_CS**: Chip select line on GPIO 20 for ROM emulation mode (active low)
+- **IO0_CS**: Chip select line on GPIO 21 for indexed memory interface mode (active low)
 - **Boot_Loader**: Small 6502 assembly program stored in MIA and executed by Clementina's CPU to copy kernel from MIA storage to RAM
 - **Keyboard_Buffer**: Circular buffer storing USB keyboard input for access by Clementina
 - **Key_Code**: ASCII representation of keyboard input transmitted to Clementina
-- **USB_Host_Mode**: MIA operates as USB host accepting multiple devices via hub (GPIO 28 jumper connected)
-- **USB_Device_Mode**: MIA operates as USB device for development console and debugging (GPIO 28 jumper disconnected)
-- **Mode_Jumper**: GPIO 29 jumper setting that determines USB operation mode
+- **USB_Host_Mode**: MIA operates as USB host accepting multiple devices via hub
+- **USB_Device_Mode**: MIA operates as USB device for development console and debugging
+- **Indexed_Memory_Interface**: Dual-window register-based interface providing access to MIA's internal memory via 256 shared indexes accessible from both windows
+- **Memory_Index**: One of 256 shared pointers (0-255) that maintains current address, default address, step size, and behavior flags, accessible from either Window_A or Window_B
+- **Window_A**: Primary register interface at $C000-$C007 with full functionality and access to all 256 shared indexes
+- **Window_B**: Secondary register interface at $C008-$C00F with identical functionality to Window A and access to the same 256 shared indexes
+- **DATA_PORT**: Register that reads/writes bytes at the current index address with automatic stepping
+- **Auto_Step**: Automatic address increment or decrement after DATA_PORT access based on index configuration
+- **DMA_Operation**: Hardware-accelerated memory copy between any two indexes within MIA memory space
+- **IRQ_Line**: Interrupt signal from MIA to 6502 CPU on GPIO 26 for error and event notification
 
 ## Requirements
 
@@ -54,7 +63,7 @@ The MIA (Multifunction Interface Adapter) is a Raspberry Pi Pico 2 W-based syste
 #### Acceptance Criteria
 
 1. THE MIA SHALL respond to memory access in the $E000-$FFFF address range using 8 address lines (A0-A7 on GPIO 0-7) with 256-byte address space mirrored throughout the range
-2. THE MIA SHALL interface with Clementina using standard 6502 memory signals: WE (Write Enable) on GPIO 18, OE (Output Enable) on GPIO 19, and 8 data lines on GPIO 8-15
+2. THE MIA SHALL interface with Clementina using standard 6502 memory signals: WE (Write Enable) on GPIO 18 (active low), OE (Output Enable) on GPIO 19 (active low), HIRAM chip select on GPIO 20 (active low), IO0 chip select on GPIO 21 (active low), and 8 data lines on GPIO 8-15
 3. THE MIA SHALL control the PICOHIRAM line on GPIO 16 to bank itself in and out of the high memory region
 4. WHEN MIA initializes, THE MIA SHALL assert the Reset_Line on GPIO 17 for minimum 5 clock cycles then release it to start the 6502 CPU
 5. WHEN Clementina accesses the Reset_Vector addresses ($FFFC-$FFFD), THE MIA SHALL respond with the address of its boot loader routine in the $E000-$FFFF range
@@ -63,7 +72,7 @@ The MIA (Multifunction Interface Adapter) is a Raspberry Pi Pico 2 W-based syste
 8. THE MIA SHALL provide a kernel data address within the 256-byte ROM space that returns sequential bytes from the stored kernel and advances the internal pointer
 9. THE MIA SHALL store the complete kernel binary as embedded data within the MIA firmware for byte-by-byte transfer
 10. WHEN the boot loader reads from the kernel data address, THE MIA SHALL copy kernel bytes sequentially to Clementina RAM starting at address $4000
-11. WHEN kernel loading is complete and PICOHIRAM is asserted by the kernel, THE MIA SHALL increase clock frequency to 1 MHz and bank out of high memory
+11. WHEN kernel loading is complete and PICOHIRAM is asserted by the kernel, THE MIA SHALL increase clock frequency to 1 MHz, bank out of high memory, and activate the Indexed_Memory_Interface
 
 ### Requirement 3
 
@@ -96,49 +105,82 @@ The MIA (Multifunction Interface Adapter) is a Raspberry Pi Pico 2 W-based syste
 
 ### Requirement 5
 
-**User Story:** As a 6502 system designer, I want the MIA to handle memory-mapped I/O efficiently, so that the 6502 system can control video operations seamlessly.
+**User Story:** As a 6502 system designer, I want the MIA to provide a unified indexed memory interface, so that I can efficiently access all MIA functionality through a consistent register-based system.
 
 #### Acceptance Criteria
 
-1. THE MIA SHALL respond to video I/O operations in the $C000-$DFFF address range using a dedicated chip select line on GPIO 21
-2. WHEN Clementina writes to Nametable or Palette_Table addresses, THE MIA SHALL update the corresponding graphics data within 1 microsecond
-3. THE MIA SHALL provide memory-mapped registers at addresses $D000-$D0FF for Palette bank configuration and selection
-4. THE MIA SHALL provide memory-mapped registers at addresses $D100-$D1FF for Character_Table bank updates and selection
-5. THE MIA SHALL provide memory-mapped registers at addresses $D200-$D2FF for OAM data and Sprite configuration
-6. THE MIA SHALL provide memory-mapped registers for Character_Table bank switching and Palette bank switching
-7. THE MIA SHALL respond to Clementina memory access within 500 nanoseconds to maintain CPU timing compatibility
-8. THE MIA SHALL maintain data integrity during concurrent video operations and memory access through atomic memory operations
+1. THE MIA SHALL respond to I/O operations in the $C000-$C3FF address range using chip select line IO0 on GPIO 21 (active low), with 16-byte register space mirrored throughout the 1KB range
+2. THE MIA SHALL provide Window_A interface at addresses $C000-$C007 (and mirrored throughout $C000-$C3FF) with full read/write functionality
+3. THE MIA SHALL provide Window_B interface at addresses $C008-$C00F (and mirrored throughout $C000-$C3FF) with identical register layout to Window_A
+4. WHEN both windows are accessed simultaneously, THE MIA SHALL prioritize Window_A and ignore Window_B access
+5. THE MIA SHALL maintain exactly 256 shared Memory_Index entries (0-255) accessible from both windows, each containing current address, default address, step size, and behavior flags
+6. THE MIA SHALL respond to Clementina memory access within 500 nanoseconds to maintain CPU timing compatibility at 1 MHz operation
+7. THE MIA SHALL respond to Clementina memory access within 200 nanoseconds to maintain CPU timing compatibility at 1 MHz operation
+8. THE MIA SHALL maintain data integrity during concurrent operations through atomic memory operations
 
 ### Requirement 6
 
-**User Story:** As a 6502 system designer, I want the MIA to provide comprehensive sprite control and status registers, so that I can efficiently manage sprite operations and detect collision events.
+**User Story:** As a 6502 system designer, I want the MIA to provide indexed memory access with automatic stepping, so that I can efficiently read and write sequential data without manual address management.
 
 #### Acceptance Criteria
 
-1. THE MIA SHALL provide a PPU_Control register at address $D300 for sprite size selection and rendering mode configuration
-2. THE MIA SHALL provide a PPU_Status register at address $D301 for sprite collision detection and rendering state
-3. THE MIA SHALL provide an OAM address register at address $D302 for selecting which sprite to access
-4. THE MIA SHALL provide an OAM data register at address $D303 for reading and writing individual sprite attributes
-5. THE MIA SHALL provide an OAM DMA register at address $D304 for fast transfer of sprite data from Clementina memory
-6. WHEN two sprites overlap, THE MIA SHALL set collision flags in the PPU_Status register
-7. WHEN more than 16 sprites appear on the same scanline, THE MIA SHALL set overflow flag in the PPU_Status register
-8. THE MIA SHALL support Sprite_Attributes including 4-bit palette selection, priority bit, and horizontal/vertical flip bits
+1. THE MIA SHALL provide an IDX_SELECT register at $C000 and $C008 to select the active Memory_Index (0-255) for each window from the shared pool of 256 indexes
+2. THE MIA SHALL provide a DATA_PORT register at $C001 and $C009 that reads or writes one byte at the current index address
+3. WHEN DATA_PORT is accessed and Auto_Step is enabled, THE MIA SHALL automatically increment or decrement the current address by the configured step size
+4. THE MIA SHALL provide a CFG_FIELD_SELECT register at $C002 and $C00A to select which configuration field to access
+5. THE MIA SHALL provide a CFG_DATA register at $C003 and $C00B to read or write the selected configuration field
+6. THE MIA SHALL support 24-bit addressing (16MB address space) for accessing the full MIA memory range
+7. THE MIA SHALL support step sizes from 0 to 255 bytes with configurable forward or backward direction
+8. THE MIA SHALL provide configuration fields for current address (3 bytes), default address (3 bytes), step size (1 byte), and flags (1 byte)
 
 ### Requirement 7
 
-**User Story:** As a 6502 system designer, I want the MIA to control the system reset line, so that I can perform software-controlled system resets without manual intervention.
+**User Story:** As a 6502 system designer, I want the MIA to provide command execution and DMA capabilities, so that I can perform complex operations efficiently without manual data movement.
 
 #### Acceptance Criteria
 
-1. THE MIA SHALL control the Reset_Line signal to all chips in the Clementina system
-2. WHEN a software reset command is received, THE MIA SHALL assert the Reset_Line for a minimum of 10 milliseconds
-3. THE MIA SHALL provide a memory-mapped register at address $C100 for Reset_Line control
-4. WHEN the Reset_Line is asserted, THE MIA SHALL reinitialize its own ROM emulation state
-5. THE MIA SHALL release the Reset_Line and resume normal operation after reset sequence completion
+1. THE MIA SHALL provide a COMMAND register at $C004 and $C00C for issuing control commands
+2. THE MIA SHALL support RESET_INDEX command to copy default address to current address for the active index
+3. THE MIA SHALL support RESET_ALL command to reset all 256 indexes to their default addresses
+4. THE MIA SHALL support COPY_BYTE command to copy one byte between any two specified indexes
+5. THE MIA SHALL support COPY_BLOCK command to copy up to 65535 bytes between any two specified indexes
+6. THE MIA SHALL support PICO_REINIT command to reinitialize MIA internal state without asserting the 6502 Reset_Line
+7. THE MIA SHALL provide STATUS register at $C006 and $C00E indicating command completion, errors, and system state
+8. THE MIA SHALL complete all commands deterministically with immediate effect or set STATUS.BUSY until completion
 
 ### Requirement 8
 
-**User Story:** As a 6502 system designer, I want the MIA to support dual USB operation modes, so that I can use either dedicated USB devices or development console input for the Clementina system.
+**User Story:** As a 6502 system designer, I want the MIA to provide interrupt-driven error handling and event notification, so that I can respond to system events and errors efficiently.
+
+#### Acceptance Criteria
+
+1. THE MIA SHALL provide an IRQ_Line on GPIO 26 to signal interrupts to the 6502 CPU
+2. THE MIA SHALL provide an IRQ_CAUSE register at $C007 and $C00F to identify the source of interrupts
+3. WHEN a memory access error occurs, THE MIA SHALL assert the IRQ_Line and set appropriate IRQ_CAUSE code
+4. WHEN an index address overflow or underflow occurs, THE MIA SHALL assert the IRQ_Line and set INDEX_OVERFLOW cause
+5. WHEN a DMA_Operation completes, THE MIA SHALL assert the IRQ_Line and set DMA_COMPLETE cause
+6. WHEN USB keyboard data is received, THE MIA SHALL assert the IRQ_Line and set USB_KEYBOARD cause
+7. THE MIA SHALL provide CLEAR_IRQ command to clear interrupt pending flags
+8. THE MIA SHALL maintain error information in Memory_Index 0 accessible through the standard indexed interface
+
+### Requirement 9
+
+**User Story:** As a 6502 system designer, I want the MIA to provide pre-configured memory indexes for system functions, so that I can access video data, USB input, and system control without manual setup.
+
+#### Acceptance Criteria
+
+1. THE MIA SHALL pre-configure Memory_Index 0 to point to system error log and status information
+2. THE MIA SHALL pre-configure Memory_Index 16-31 to point to Character_Table data for video rendering
+3. THE MIA SHALL pre-configure Memory_Index 32-47 to point to Palette_Bank data for video colors
+4. THE MIA SHALL pre-configure Memory_Index 48-63 to point to Sprite and OAM data for video objects
+5. THE MIA SHALL pre-configure Memory_Index 64-79 to point to USB keyboard buffer and input device data
+6. THE MIA SHALL pre-configure Memory_Index 80-95 to point to system control registers (clock, reset, status)
+7. THE MIA SHALL reserve Memory_Index 128-255 for user applications and general-purpose RAM access
+8. THE MIA SHALL allow reconfiguration of all pre-configured indexes through the standard CFG_FIELD_SELECT interface
+
+### Requirement 10
+
+**User Story:** As a 6502 system designer, I want the MIA to support dual USB operation modes through the indexed interface, so that I can use either dedicated USB devices or development console input.
 
 #### Acceptance Criteria
 
@@ -148,9 +190,9 @@ The MIA (Multifunction Interface Adapter) is a Raspberry Pi Pico 2 W-based syste
 4. IN USB Host mode, THE MIA SHALL accept multiple USB devices connected through a USB hub
 5. IN USB Host mode, THE MIA SHALL support USB keyboard and mouse input devices
 6. IN USB Device mode, THE MIA SHALL provide console output for printf debugging and accept keyboard input from connected computer
-7. THE MIA SHALL provide memory-mapped registers at addresses $C000-$C0FF for keyboard data and status in both modes
-8. WHEN a key is pressed in either mode, THE MIA SHALL store the key code in a keyboard buffer accessible to Clementina
-9. THE MIA SHALL provide a keyboard status register indicating buffer availability and key press events
+7. THE MIA SHALL provide USB keyboard data through Memory_Index 64 accessible via DATA_PORT
+8. WHEN a key is pressed in either mode, THE MIA SHALL store the key code in the USB keyboard buffer
+9. THE MIA SHALL provide USB status information through Memory_Index 65 accessible via DATA_PORT
 10. THE MIA SHALL support standard ASCII key codes for alphanumeric and special characters
 11. THE MIA SHALL maintain a keyboard input buffer of at least 16 key presses to prevent data loss
-12. WHEN Clementina reads from the keyboard data register, THE MIA SHALL return the next key code and advance the buffer pointer
+12. WHEN USB keyboard buffer is accessed via DATA_PORT, THE MIA SHALL return the next key code and advance the buffer pointer automatically

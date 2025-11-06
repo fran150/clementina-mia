@@ -1,8 +1,8 @@
 # Implementation Plan
 
 - [x] 1. Set up project structure and core interfaces
-  - Create directory structure for hardware abstraction, video processing, and network components
-  - Define GPIO pin mapping constants (GPIO 0-7: address, GPIO 8-15: data, GPIO 16-22,28: control, GPIO 26-27: reserved)
+  - Create directory structure for hardware abstraction, indexed memory system, and network components
+  - Define GPIO pin mapping constants (GPIO 0-7: address, GPIO 8-15: data, GPIO 18-21,26,28: control)
   - Set up CMake build system for Raspberry Pi Pico 2 W
   - Configure development environment with Pico SDK and TinyUSB
   - _Requirements: All requirements - foundational setup_
@@ -24,95 +24,99 @@
   - Implement two memory-mapped addresses: status ($E080) and data ($E081) within 256-byte ROM space
   - Add automatic kernel pointer advancement on data address reads
   - Implement reset vector response ($FFFC-$FFFD) with boot loader entry address
-  - Add PICOHIRAM banking control and clock speed transition to 1 MHz
+  - Add PICOHIRAM banking control, clock speed transition to 1 MHz, and indexed interface activation
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11_
 
-- [ ] 4. Implement PIO state machines for video I/O
-  - Design PIO state machine 0 for address decoding and read operations (GPIO 0-7 for address, GPIO 8-15 for data)
-  - Design PIO state machine 1 for write operations and data handling
-  - Implement video chip select monitoring (GPIO 21) and activation logic
-  - Add WE/OE signal coordination (GPIO 18-19) in PIO code
-  - Create interrupt-driven coordination between PIO and C code
-  - Implement data buffering system for C code processing
-  - _Requirements: 5.1, 5.7, 5.8_
+- [ ] 4. Implement indexed memory system core
+  - Create 256-index data structure with current address, default address, step, and flags
+  - Implement index allocation and initialization (system, video, USB, user ranges)
+  - Add basic index configuration functions (set address, step, flags)
+  - Create memory access functions for reading/writing via indexes
+  - Add auto-stepping functionality (increment/decrement with configurable step size)
+  - Test: Verify index structure, basic memory access, and auto-stepping
+  - _Requirements: 5.5, 6.1, 6.8_
 
-- [ ] 5. Implement graphics memory management
-  - Create character table storage system (8 tables × 256 characters × 24 bytes)
-  - Implement palette bank storage (16 banks × 8 colors × 2 bytes)
-  - Create nametable management with double buffering (4 buffers × 40×25 bytes)
-  - Implement palette table management with double buffering (2 buffers × 40×25 × 4 bits)
-  - Add OAM storage for 256 sprites (256 × 4 bytes)
-  - Implement memory-mapped register interfaces for graphics data access
-  - _Requirements: 3.2, 3.3, 3.4, 3.5, 3.6, 3.7_
+- [ ] 5. Implement PIO state machines for indexed interface
+  - Design PIO state machine 0 for bus protocol and address decoding (GPIO 0-7, 18-21)
+  - Implement IO0 chip select monitoring (GPIO 21) and dual-window detection
+  - Add WE/OE signal coordination (GPIO 18-19) with W65C02S timing compliance
+  - Create fast path for simple register access (IDX_SELECT, STATUS) entirely in PIO
+  - Implement interrupt-driven coordination between PIO and C code for complex operations
+  - Test: Verify PIO timing, register access, and window priority handling
+  - _Requirements: 5.1, 5.2, 5.6, 5.7_
 
-- [ ] 6. Implement video memory-mapped I/O registers
-  - Create palette bank configuration registers ($D000-$D0FF)
-  - Implement character table management registers ($D100-$D1FF)
-  - Add OAM data and sprite configuration registers ($D300-$D4FF)
-  - Implement character table and palette bank switching registers
-  - Ensure 1 microsecond response time for graphics data updates
-  - _Requirements: 5.2, 5.3, 5.4, 5.5, 5.6_
+- [ ] 6. Implement dual-window register interface
+  - Create register handlers for Window A ($C000-$C007) and Window B ($C008-$C00F)
+  - Implement IDX_SELECT registers for selecting active index in each window
+  - Add DATA_PORT registers with automatic index stepping and memory access
+  - Implement CFG_FIELD_SELECT and CFG_DATA for index configuration
+  - Add COMMAND register for basic commands (RESET_INDEX, RESET_ALL, CLEAR_IRQ)
+  - Create shared STATUS and IRQ_CAUSE registers
+  - Test: Verify dual-window operation, register mirroring, and window priority
+  - _Requirements: 5.2, 5.3, 5.4, 6.1, 6.2, 6.3, 6.4, 6.5_
 
-- [ ] 7. Implement PPU control and status system
-  - Create PPU control register ($D500) for sprite size and rendering mode configuration
-  - Implement PPU status register ($D501) for collision detection and rendering state
-  - Add OAM address register ($D502) for sprite selection
-  - Create OAM data register ($D503) for individual sprite attribute access
-  - Implement OAM DMA register ($D504) for fast sprite data transfer
-  - Add sprite collision detection with hardware acceleration
-  - Implement sprite overflow detection (>16 sprites per scanline)
-  - Support sprite attributes with 4-bit palette selection and flip bits
-  - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8_
+- [ ] 7. Implement DMA and command system
+  - Add DMA configuration fields (COPY_SRC_IDX, COPY_DST_IDX, COPY_COUNT)
+  - Implement COPY_BYTE command for single-byte transfers between indexes
+  - Add COPY_BLOCK command for multi-byte hardware-accelerated transfers
+  - Create command processing system with immediate execution and status reporting
+  - Add system commands (PICO_REINIT) and subsystem command ranges
+  - Test: Verify DMA operations, command execution, and status reporting
+  - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 7.7, 7.8_
 
-- [ ] 8. Implement dual USB mode system
-  - Add build-time configuration constant for USB mode selection (CONFIG_USB_HOST/CONFIG_USB_DEVICE)
-  - Configure TinyUSB Host stack for USB Host mode build configuration
-  - Configure TinyUSB Device stack for USB Device mode build configuration
-  - Implement USB Host mode with multiple device support via hub
-  - Add USB keyboard and mouse device detection and initialization in Host mode
-  - Implement USB Device mode with CDC console support for development
-  - Create 16-byte circular keyboard buffer with head/tail pointers for both modes
-  - Add ASCII key code conversion and storage from both USB modes
-  - Implement keyboard data register ($C000) with automatic buffer advancement
-  - Create keyboard status register ($C001) with buffer availability flags
-  - Add buffer pointer registers ($C002-$C003) and USB mode status register ($C004)
-  - Add printf output redirection to USB console in Device mode
-  - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 8.8, 8.9, 8.10, 8.11, 8.12_
+- [ ] 8. Implement interrupt and error handling system
+  - Configure IRQ line (GPIO 26) for interrupt notification to 6502
+  - Implement IRQ_CAUSE register with specific interrupt source codes
+  - Add error detection for memory access violations and index overflows
+  - Create error logging system accessible via Index 0 (system error log)
+  - Implement CLEAR_IRQ command and interrupt management
+  - Test: Verify interrupt generation, error detection, and error reporting
+  - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 8.8_
 
-- [ ] 9. Implement Wi-Fi communication system
-  - Configure Wi-Fi connection and network initialization
-  - Implement UDP-based client-server communication architecture
-  - Create frame data transmission system (30 FPS, 33.33ms intervals)
-  - Add resource update transmission for character tables and palette banks
-  - Implement frame data formatting (nametable, palette table, OAM data)
-  - Add dynamic character table and palette bank update transmission
-  - Ensure transmission timing meets 33.33ms frame requirements
+- [ ] 9. Implement graphics memory organization
+  - Organize MIA memory layout for video data (character tables, palettes, sprites)
+  - Pre-configure indexes 16-31 for character table access
+  - Pre-configure indexes 32-47 for palette bank access  
+  - Pre-configure indexes 48-63 for sprite/OAM data access
+  - Create graphics data structures accessible via indexed interface
+  - Test: Verify graphics memory layout and index-based access
+  - _Requirements: 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 9.2, 9.3, 9.4, 9.5_
+
+- [ ] 10. Implement USB keyboard system via indexed interface
+  - Add build-time configuration for USB Host/Device mode selection
+  - Configure TinyUSB stack for selected mode
+  - Pre-configure indexes 64-79 for USB keyboard buffer and status
+  - Implement 16-byte circular keyboard buffer accessible via Index 64
+  - Add USB status information accessible via Index 65
+  - Create IRQ generation for keyboard events
+  - Test: Verify USB operation and keyboard data access via indexes
+  - _Requirements: 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7, 10.8, 10.9, 10.10, 10.11, 10.12_
+
+- [ ] 11. Implement Wi-Fi video transmission system
+  - Configure Wi-Fi connection and UDP-based communication
+  - Create frame data transmission using graphics data from indexed memory
+  - Implement 30 FPS transmission timing (33.33ms intervals)
+  - Add dynamic resource updates for character tables and palette banks
+  - Create video client communication protocol
+  - Test: Verify Wi-Fi connectivity and video data transmission
   - _Requirements: 3.8, 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7_
 
-- [ ] 10. Implement system reset control
-  - Create reset line control via GPIO 17
-  - Implement software reset command processing via memory-mapped register ($D200)
-  - Add 10ms minimum reset assertion timing
-  - Coordinate MIA state reinitialization during reset sequence
-  - Implement proper reset sequence completion and recovery
-  - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5_
-
-- [ ] 11. Implement dual-core coordination and main system integration
-  - Set up Core 0 for system control (ROM emulation, PIO coordination, USB keyboard, reset control)
-  - Configure Core 1 for video processing (graphics management, Wi-Fi transmission)
-  - Implement inter-core communication and synchronization
-  - Add system state management for boot vs normal operation phases
-  - Integrate PWM clock control with phase transitions
-  - Coordinate all subsystems for complete MIA functionality
+- [ ] 12. Implement dual-core coordination and system integration
+  - Configure Core 0 for real-time operations (ROM emulation, PIO coordination, bus interface)
+  - Configure Core 1 for background processing (video, Wi-Fi, USB, error handling)
+  - Implement inter-core communication and shared memory management
+  - Add system state management for boot vs indexed interface phases
+  - Integrate all subsystems with proper initialization and shutdown sequences
+  - Test: Verify complete system operation from boot through indexed interface
   - _Requirements: All requirements - system integration_
 
-- [ ]* 12. Create comprehensive test suite
-  - Write unit tests for PWM clock generation accuracy and stability
-  - Create ROM emulation timing and functionality tests
-  - Add PIO state machine validation and timing tests
-  - Implement graphics memory management and rendering tests
-  - Create Wi-Fi communication and frame transmission tests
-  - Add USB keyboard input and buffer management tests
-  - Write integration tests for complete boot sequence
-  - Create performance tests for timing requirements validation
+- [ ]* 13. Create comprehensive test suite
+  - Write unit tests for indexed memory system and auto-stepping functionality
+  - Create PIO state machine timing validation tests for W65C02S compliance
+  - Add dual-window register interface tests with conflict resolution
+  - Implement DMA operation and command execution tests
+  - Create interrupt and error handling validation tests
+  - Add USB keyboard and graphics memory access tests via indexed interface
+  - Write integration tests for complete boot sequence and indexed interface activation
+  - Create performance tests for 1 MHz timing requirements validation
   - _Requirements: All requirements - validation and verification_
