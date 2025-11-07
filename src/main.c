@@ -14,6 +14,10 @@
 #include "system/clock_control.h"
 #include "system/reset_control.h"
 #include "rom_emulation/rom_emulator.h"
+#include "indexed_memory/indexed_memory.h"
+#ifdef RUN_INDEXED_MEMORY_TESTS
+#include "indexed_memory/indexed_memory_test.h"
+#endif
 #include "video/video_controller.h"
 #include "usb/usb_controller.h"
 #include "network/wifi_controller.h"
@@ -56,6 +60,19 @@ int main() {
     // Initialize ROM emulator for boot phase
     rom_emulator_init();
     printf("ROM emulator initialized\n");
+    
+    // Initialize indexed memory system
+    indexed_memory_init();
+    printf("Indexed memory system initialized\n");
+    
+#ifdef RUN_INDEXED_MEMORY_TESTS
+    // Run indexed memory tests (only when explicitly enabled)
+    if (run_indexed_memory_tests()) {
+        printf("Indexed memory tests passed\n");
+    } else {
+        printf("WARNING: Indexed memory tests failed\n");
+    }
+#endif
     
     // Initialize video controller (Core 0 portion)
     video_controller_init_core0();

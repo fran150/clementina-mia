@@ -1,0 +1,158 @@
+/**
+ * MIA Indexed Memory System
+ * 
+ * Provides 256 independent memory indexes with automatic stepping,
+ * dual-window access, and DMA capabilities for the Clementina 6502 computer.
+ */
+
+#ifndef INDEXED_MEMORY_H
+#define INDEXED_MEMORY_H
+
+#include <stdint.h>
+#include <stdbool.h>
+
+// Index allocation ranges
+#define IDX_SYSTEM_ERROR        0
+#define IDX_SYSTEM_START        1
+#define IDX_SYSTEM_END          15
+#define IDX_CHARACTER_START     16
+#define IDX_CHARACTER_END       31
+#define IDX_PALETTE_START       32
+#define IDX_PALETTE_END         47
+#define IDX_SPRITE_START        48
+#define IDX_SPRITE_END          63
+#define IDX_USB_START           64
+#define IDX_USB_END             79
+#define IDX_SYSCTRL_START       80
+#define IDX_SYSCTRL_END         95
+#define IDX_RESERVED_START      96
+#define IDX_RESERVED_END        127
+#define IDX_USER_START          128
+#define IDX_USER_END            255
+
+// Configuration field IDs
+#define CFG_ADDR_L              0x00
+#define CFG_ADDR_M              0x01
+#define CFG_ADDR_H              0x02
+#define CFG_DEFAULT_L           0x03
+#define CFG_DEFAULT_M           0x04
+#define CFG_DEFAULT_H           0x05
+#define CFG_STEP                0x06
+#define CFG_FLAGS               0x07
+#define CFG_COPY_SRC_IDX        0x08
+#define CFG_COPY_DST_IDX        0x09
+#define CFG_COPY_COUNT_L        0x0A
+#define CFG_COPY_COUNT_H        0x0B
+
+// Flag bits
+#define FLAG_AUTO_STEP          0x01
+#define FLAG_DIRECTION          0x02    // 0=forward, 1=backward
+
+// Command codes
+#define CMD_NOP                 0x00
+#define CMD_RESET_INDEX         0x01
+#define CMD_RESET_ALL           0x02
+#define CMD_LOAD_DEFAULT        0x03
+#define CMD_SET_DEFAULT_TO_ADDR 0x04
+#define CMD_CLEAR_IRQ           0x05
+#define CMD_COPY_BYTE           0x06
+#define CMD_COPY_BLOCK          0x07
+#define CMD_SET_COPY_SRC        0x08
+#define CMD_SET_COPY_DST        0x09
+#define CMD_SET_COPY_COUNT      0x0A
+#define CMD_PICO_REINIT         0x10
+
+// Status bits
+#define STATUS_BUSY             0x01
+#define STATUS_IRQ_PENDING      0x02
+#define STATUS_MEMORY_ERROR     0x04
+#define STATUS_INDEX_OVERFLOW   0x08
+#define STATUS_USB_DATA_READY   0x10
+#define STATUS_VIDEO_FRAME_READY 0x20
+#define STATUS_DMA_ACTIVE       0x40
+#define STATUS_SYSTEM_READY     0x80
+
+// IRQ cause codes
+#define IRQ_NO_IRQ              0x00
+#define IRQ_MEMORY_ERROR        0x01
+#define IRQ_INDEX_OVERFLOW      0x02
+#define IRQ_DMA_COMPLETE        0x03
+#define IRQ_DMA_ERROR           0x04
+#define IRQ_USB_KEYBOARD        0x10
+#define IRQ_USB_DEVICE_CHANGE   0x11
+#define IRQ_VIDEO_FRAME_COMPLETE 0x20
+#define IRQ_VIDEO_COLLISION     0x21
+#define IRQ_SYSTEM_ERROR        0x30
+
+// Memory index structure (8 bytes per index)
+typedef struct {
+    uint32_t current_addr;      // Bits 0-23: 24-bit current address, Bits 24-31: flags
+    uint32_t default_addr;      // Bits 0-23: 24-bit default address, Bits 24-31: reserved
+    uint8_t step;              // Step size (0-255 bytes)
+    uint8_t reserved;          // Reserved for future use
+} index_t;
+
+// Global DMA configuration
+typedef struct {
+    uint8_t src_idx;
+    uint8_t dst_idx;
+    uint16_t count;
+} dma_config_t;
+
+// System state
+typedef struct {
+    index_t indexes[256];       // 256 memory indexes
+    dma_config_t dma_config;    // DMA operation configuration
+    uint8_t status;            // System status register
+    uint8_t irq_cause;         // Interrupt cause register
+    uint8_t window_a_idx;      // Currently selected index for Window A
+    uint8_t window_b_idx;      // Currently selected index for Window B
+    uint8_t cfg_field_a;       // Selected configuration field for Window A
+    uint8_t cfg_field_b;       // Selected configuration field for Window B
+} indexed_memory_state_t;
+
+// Function prototypes
+void indexed_memory_init(void);
+void indexed_memory_reset_all(void);
+
+// Index management
+void indexed_memory_set_index_address(uint8_t idx, uint32_t address);
+void indexed_memory_set_index_default(uint8_t idx, uint32_t address);
+void indexed_memory_set_index_step(uint8_t idx, uint8_t step);
+void indexed_memory_set_index_flags(uint8_t idx, uint8_t flags);
+void indexed_memory_reset_index(uint8_t idx);
+
+// Memory access via indexes
+uint8_t indexed_memory_read(uint8_t idx);
+void indexed_memory_write(uint8_t idx, uint8_t data);
+uint8_t indexed_memory_read_no_step(uint8_t idx);
+void indexed_memory_write_no_step(uint8_t idx, uint8_t data);
+
+// Configuration field access
+uint8_t indexed_memory_get_config_field(uint8_t idx, uint8_t field);
+void indexed_memory_set_config_field(uint8_t idx, uint8_t field, uint8_t value);
+
+// Command execution
+void indexed_memory_execute_command(uint8_t cmd);
+
+// DMA operations
+void indexed_memory_copy_byte(uint8_t src_idx, uint8_t dst_idx);
+void indexed_memory_copy_block(uint8_t src_idx, uint8_t dst_idx, uint16_t count);
+
+// Status and interrupt management
+uint8_t indexed_memory_get_status(void);
+uint8_t indexed_memory_get_irq_cause(void);
+void indexed_memory_clear_irq(void);
+void indexed_memory_set_irq(uint8_t cause);
+
+// Window management
+void indexed_memory_set_window_index(bool window_b, uint8_t idx);
+uint8_t indexed_memory_get_window_index(bool window_b);
+void indexed_memory_set_config_field_select(bool window_b, uint8_t field);
+uint8_t indexed_memory_get_config_field_select(bool window_b);
+
+// Memory validation
+bool indexed_memory_is_valid_address(uint32_t address);
+void indexed_memory_handle_overflow(uint8_t idx);
+
+#endif // INDEXED_MEMORY_H
