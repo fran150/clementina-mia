@@ -16,11 +16,17 @@
 #define IDX_SYSTEM_START        1
 #define IDX_SYSTEM_END          15
 #define IDX_CHARACTER_START     16
-#define IDX_CHARACTER_END       31
+#define IDX_CHARACTER_END       23      // 8 character tables (16-23)
 #define IDX_PALETTE_START       32
-#define IDX_PALETTE_END         47
-#define IDX_SPRITE_START        48
-#define IDX_SPRITE_END          63
+#define IDX_PALETTE_END         47      // 16 palette banks (32-47)
+#define IDX_NAMETABLE_START     48
+#define IDX_NAMETABLE_END       51      // 4 nametables (48-51)
+#define IDX_PALETTE_TABLE_START 52
+#define IDX_PALETTE_TABLE_END   55      // 4 palette tables (52-55)
+#define IDX_SPRITE_OAM          56      // Sprite OAM (256 sprites × 4 bytes)
+#define IDX_ACTIVE_FRAME        57      // Active frame control (0 or 1 to select buffer set)
+#define IDX_VIDEO_RESERVED_START 58
+#define IDX_VIDEO_RESERVED_END  63      // Reserved for video expansion
 #define IDX_USB_START           64
 #define IDX_USB_END             79
 #define IDX_SYSCTRL_START       80
@@ -84,12 +90,13 @@
 #define IRQ_VIDEO_COLLISION     0x21
 #define IRQ_SYSTEM_ERROR        0x30
 
-// Memory index structure (8 bytes per index)
+// Memory index structure (12 bytes per index)
 typedef struct {
-    uint32_t current_addr;      // Bits 0-23: 24-bit current address, Bits 24-31: flags
-    uint32_t default_addr;      // Bits 0-23: 24-bit default address, Bits 24-31: reserved
+    uint32_t current_addr;      // 24-bit current address (upper 8 bits unused)
+    uint32_t default_addr;      // 24-bit default address (upper 8 bits unused)
     uint8_t step;              // Step size (0-255 bytes)
-    uint8_t reserved;          // Reserved for future use
+    uint8_t flags;             // Behavior flags (AUTO_STEP, DIRECTION)
+    uint16_t reserved;         // Reserved for future use
 } index_t;
 
 // Global DMA configuration
@@ -151,8 +158,6 @@ uint8_t indexed_memory_get_window_index(bool window_b);
 void indexed_memory_set_config_field_select(bool window_b, uint8_t field);
 uint8_t indexed_memory_get_config_field_select(bool window_b);
 
-// Memory validation
-bool indexed_memory_is_valid_address(uint32_t address);
-void indexed_memory_handle_overflow(uint8_t idx);
+
 
 #endif // INDEXED_MEMORY_H

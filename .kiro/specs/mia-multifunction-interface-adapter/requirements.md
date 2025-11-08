@@ -83,11 +83,12 @@ The MIA (Multifunction Interface Adapter) is a Raspberry Pi Pico 2 W-based syste
 1. THE MIA SHALL support 320x200 pixel resolution rendered from tile-based graphics data
 2. THE MIA SHALL implement 8 Character_Table banks, each containing 256 character definitions of 8x8 pixels with 3-bit color depth
 3. THE MIA SHALL support 16 Palette_Bank definitions, each containing 8 colors with 16-bit color depth
-4. THE MIA SHALL maintain 4 Nametable buffers (2 active + 2 for double buffering), each 40x25 bytes specifying character indices
-5. THE MIA SHALL maintain 2 Palette_Table buffers (1 active + 1 for double buffering), each 40x25 entries with 4-bit palette bank selection
-6. THE MIA SHALL support 256 Sprite objects with configurable 8x8 or 8x16 pixel sizes
+4. THE MIA SHALL maintain 4 Nametable buffers for double buffering and scrolling support, each 40x25 bytes specifying character indices
+5. THE MIA SHALL maintain 4 Palette_Table buffers for double buffering and scrolling support, each 40x25 entries with 4-bit palette bank selection
+6. THE MIA SHALL support 256 Sprite objects with 8x8 pixel size using Character_Table data for sprite graphics
 7. THE MIA SHALL maintain OAM for 256 sprites with 4 bytes per sprite (Y position, tile index, attributes, X position)
-8. THE MIA SHALL transmit video data to the Video_Client via Wi-Fi connection at 30 frames per second
+8. THE MIA SHALL provide an active frame control register to select which buffer set is transmitted for double buffering
+9. THE MIA SHALL transmit video data to the Video_Client via Wi-Fi connection at 30 frames per second
 
 ### Requirement 4
 
@@ -95,12 +96,12 @@ The MIA (Multifunction Interface Adapter) is a Raspberry Pi Pico 2 W-based syste
 
 #### Acceptance Criteria
 
-1. THE MIA SHALL transmit frame data every 33.33 milliseconds containing active Character_Table index, Nametable data, Palette_Table data, and OAM data
+1. THE MIA SHALL transmit frame data every 33.33 milliseconds containing active Character_Table index, two Nametable buffers, two Palette_Table buffers, and OAM data from the active buffer set
 2. WHEN Palette_Bank definitions change, THE MIA SHALL transmit updated palette bank data to the Video_Client within 33.33 milliseconds
 3. WHEN Character_Table definitions change, THE MIA SHALL transmit updated character table data to the Video_Client within 33.33 milliseconds
-4. THE MIA SHALL format Nametable data as 40x25 character indices specifying which characters to display at each screen position
-5. THE MIA SHALL format Palette_Table data as 40x25 entries with 4-bit palette bank selection for each character position
-6. THE MIA SHALL format OAM data containing Y position, tile index, attributes, and X position for all 256 sprites
+4. THE MIA SHALL format Nametable data as two 40x25 buffers of character indices for scrolling viewport support
+5. THE MIA SHALL format Palette_Table data as two 40x25 buffers with 4-bit palette bank selection for scrolling viewport support
+6. THE MIA SHALL format OAM data containing Y position, tile index from Character_Table, attributes, and X position for all 256 sprites
 7. THE MIA SHALL support dynamic Character_Table and Palette_Bank updates without requiring system restart or initial synchronization
 
 ### Requirement 5
@@ -170,13 +171,16 @@ The MIA (Multifunction Interface Adapter) is a Raspberry Pi Pico 2 W-based syste
 #### Acceptance Criteria
 
 1. THE MIA SHALL pre-configure Memory_Index 0 to point to system error log and status information
-2. THE MIA SHALL pre-configure Memory_Index 16-31 to point to Character_Table data for video rendering
-3. THE MIA SHALL pre-configure Memory_Index 32-47 to point to Palette_Bank data for video colors
-4. THE MIA SHALL pre-configure Memory_Index 48-63 to point to Sprite and OAM data for video objects
-5. THE MIA SHALL pre-configure Memory_Index 64-79 to point to USB keyboard buffer and input device data
-6. THE MIA SHALL pre-configure Memory_Index 80-95 to point to system control registers (clock, reset, status)
-7. THE MIA SHALL reserve Memory_Index 128-255 for user applications and general-purpose RAM access
-8. THE MIA SHALL allow reconfiguration of all pre-configured indexes through the standard CFG_FIELD_SELECT interface
+2. THE MIA SHALL pre-configure Memory_Index 16-23 to point to Character_Table data for video rendering (8 character tables)
+3. THE MIA SHALL pre-configure Memory_Index 32-47 to point to Palette_Bank data for video colors (16 palette banks)
+4. THE MIA SHALL pre-configure Memory_Index 48-51 to point to Nametable data for background rendering (4 nametables for double buffering and scrolling)
+5. THE MIA SHALL pre-configure Memory_Index 52-55 to point to Palette_Table data for palette selection (4 palette tables for double buffering and scrolling)
+6. THE MIA SHALL pre-configure Memory_Index 56 to point to Sprite OAM data for video objects (256 sprites)
+7. THE MIA SHALL pre-configure Memory_Index 57 to point to active frame control register for buffer set selection
+8. THE MIA SHALL pre-configure Memory_Index 64-79 to point to USB keyboard buffer and input device data
+9. THE MIA SHALL pre-configure Memory_Index 80-95 to point to system control registers including clock, reset, and status
+10. THE MIA SHALL reserve Memory_Index 128-255 for user applications and general-purpose RAM access
+11. THE MIA SHALL allow reconfiguration of all pre-configured indexes through the standard CFG_FIELD_SELECT interface
 
 ### Requirement 10
 

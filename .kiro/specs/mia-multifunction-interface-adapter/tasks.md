@@ -74,13 +74,16 @@
   - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 8.8_
 
 - [ ] 9. Implement graphics memory organization
-  - Organize MIA memory layout for video data (character tables, palettes, sprites)
-  - Pre-configure indexes 16-31 for character table access
-  - Pre-configure indexes 32-47 for palette bank access  
-  - Pre-configure indexes 48-63 for sprite/OAM data access
+  - Organize MIA memory layout: 256KB total (2KB index table, 16KB system, 60KB video, 162KB user, 16KB I/O)
+  - Pre-configure indexes 16-23 for character table access (8 tables, shared by background and sprites)
+  - Pre-configure indexes 32-47 for palette bank access (16 banks, shared resource)
+  - Pre-configure indexes 48-51 for nametable access (4 tables for double buffering and scrolling)
+  - Pre-configure indexes 52-55 for palette table access (4 tables for double buffering and scrolling)
+  - Pre-configure index 56 for sprite OAM data (256 sprites, 8x8 pixels, using character table graphics)
+  - Pre-configure index 57 for active frame control register for buffer set selection
   - Create graphics data structures accessible via indexed interface
-  - Test: Verify graphics memory layout and index-based access
-  - _Requirements: 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 9.2, 9.3, 9.4, 9.5_
+  - Test: Verify graphics memory layout, index-based access, and double buffering
+  - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 9.2, 9.3, 9.4, 9.5, 9.6, 9.7_
 
 - [ ] 10. Implement USB keyboard system via indexed interface
   - Add build-time configuration for USB Host/Device mode selection
@@ -94,12 +97,13 @@
 
 - [ ] 11. Implement Wi-Fi video transmission system
   - Configure Wi-Fi connection and UDP-based communication
-  - Create frame data transmission using graphics data from indexed memory
+  - Create frame data transmission using graphics data from indexed memory (active buffer set)
   - Implement 30 FPS transmission timing (33.33ms intervals)
+  - Transmit two nametables and two palette tables per frame based on active frame control register
   - Add dynamic resource updates for character tables and palette banks
   - Create video client communication protocol
-  - Test: Verify Wi-Fi connectivity and video data transmission
-  - _Requirements: 3.8, 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7_
+  - Test: Verify Wi-Fi connectivity, video data transmission, and double buffering
+  - _Requirements: 3.9, 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7_
 
 - [ ] 12. Implement dual-core coordination and system integration
   - Configure Core 0 for real-time operations (ROM emulation, PIO coordination, bus interface)

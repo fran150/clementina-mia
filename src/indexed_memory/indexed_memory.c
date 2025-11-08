@@ -9,14 +9,14 @@
 #include <string.h>
 #include <stdio.h>
 
-// MIA memory layout (520KB SRAM)
+// MIA memory layout (256KB allocated from 520KB SRAM)
 #define MIA_MEMORY_BASE         0x20000000
 #define MIA_INDEX_TABLE_BASE    (MIA_MEMORY_BASE + 0x00000000)  // 2KB
-#define MIA_SYSTEM_AREA_BASE    (MIA_MEMORY_BASE + 0x00000800)  // 30KB
-#define MIA_VIDEO_AREA_BASE     (MIA_MEMORY_BASE + 0x00010000)  // 192KB
-#define MIA_USER_AREA_BASE      (MIA_MEMORY_BASE + 0x00040000)  // 192KB
-#define MIA_IO_BUFFER_BASE      (MIA_MEMORY_BASE + 0x00070000)  // 64KB
-#define MIA_MEMORY_SIZE         0x80000  // 512KB usable
+#define MIA_SYSTEM_AREA_BASE    (MIA_MEMORY_BASE + 0x00000800)  // 16KB
+#define MIA_VIDEO_AREA_BASE     (MIA_MEMORY_BASE + 0x00004800)  // 60KB
+#define MIA_USER_AREA_BASE      (MIA_MEMORY_BASE + 0x00013800)  // 162KB
+#define MIA_IO_BUFFER_BASE      (MIA_MEMORY_BASE + 0x0003C000)  // 16KB
+#define MIA_MEMORY_SIZE         0x40000  // 256KB total MIA memory
 
 // Global system state
 static indexed_memory_state_t g_state;
@@ -43,8 +43,8 @@ void indexed_memory_init(void) {
     indexed_memory_set_index_step(IDX_SYSTEM_ERROR, 1);
     indexed_memory_set_index_flags(IDX_SYSTEM_ERROR, FLAG_AUTO_STEP);
     
-    // Character tables (indexes 16-31)
-    for (int i = 0; i < 16; i++) {
+    // Character tables (indexes 16-23) - 8 tables, shared by background and sprites
+    for (int i = 0; i < 8; i++) {
         uint8_t idx = IDX_CHARACTER_START + i;
         uint32_t addr = MIA_VIDEO_AREA_BASE + (i * 256 * 24); // 256 chars × 24 bytes each
         indexed_memory_set_index_address(idx, addr);
@@ -53,30 +53,52 @@ void indexed_memory_init(void) {
         indexed_memory_set_index_flags(idx, FLAG_AUTO_STEP);
     }
     
-    // Palette banks (indexes 32-47)
+    // Palette banks (indexes 32-47) - 16 banks, shared resource
+    uint32_t palette_base = MIA_VIDEO_AREA_BASE + (8 * 256 * 24); // After 8 char tables (48KB)
     for (int i = 0; i < 16; i++) {
         uint8_t idx = IDX_PALETTE_START + i;
-        uint32_t addr = MIA_VIDEO_AREA_BASE + 0x18000 + (i * 16); // After char tables, 8 colors × 2 bytes
+        uint32_t addr = palette_base + (i * 16); // 8 colors × 2 bytes per bank
         indexed_memory_set_index_address(idx, addr);
         indexed_memory_set_index_default(idx, addr);
         indexed_memory_set_index_step(idx, 1);
         indexed_memory_set_index_flags(idx, FLAG_AUTO_STEP);
     }
     
-    // Sprite/OAM data (indexes 48-63)
-    uint32_t sprite_base = MIA_VIDEO_AREA_BASE + 0x19000;
+    // Nametables (indexes 48-51) - 4 tables for double buffering and scrolling
+    uint32_t nametable_base = palette_base + (16 * 16); // After palette banks (256 bytes)
+    for (int i = 0; i < 4; i++) {
+        uint8_t idx = IDX_NAMETABLE_START + i;
+        uint32_t addr = nametable_base + (i * 40 * 25); // 40×25 bytes per nametable
+        indexed_memory_set_index_address(idx, addr);
+        indexed_memory_set_index_default(idx, addr);
+        indexed_memory_set_index_step(idx, 1);
+        indexed_memory_set_index_flags(idx, FLAG_AUTO_STEP);
+    }
     
-    // Index 48: Sprite OAM (256 sprites × 4 bytes)
-    indexed_memory_set_index_address(48, sprite_base);
-    indexed_memory_set_index_default(48, sprite_base);
-    indexed_memory_set_index_step(48, 4); // Step by sprite record size
-    indexed_memory_set_index_flags(48, FLAG_AUTO_STEP);
+    // Palette tables (indexes 52-55) - 4 tables for double buffering and scrolling
+    uint32_t palette_table_base = nametable_base + (4 * 40 * 25); // After nametables (4KB)
+    for (int i = 0; i < 4; i++) {
+        uint8_t idx = IDX_PALETTE_TABLE_START + i;
+        uint32_t addr = palette_table_base + (i * 40 * 25); // 40×25 bytes per palette table
+        indexed_memory_set_index_address(idx, addr);
+        indexed_memory_set_index_default(idx, addr);
+        indexed_memory_set_index_step(idx, 1);
+        indexed_memory_set_index_flags(idx, FLAG_AUTO_STEP);
+    }
     
-    // Index 49: Sprite tile data
-    indexed_memory_set_index_address(49, sprite_base + 0x400);
-    indexed_memory_set_index_default(49, sprite_base + 0x400);
-    indexed_memory_set_index_step(49, 1);
-    indexed_memory_set_index_flags(49, FLAG_AUTO_STEP);
+    // Sprite OAM (index 56) - 256 sprites × 4 bytes, sprites use character table graphics
+    uint32_t sprite_oam_base = palette_table_base + (4 * 40 * 25); // After palette tables (4KB)
+    indexed_memory_set_index_address(IDX_SPRITE_OAM, sprite_oam_base);
+    indexed_memory_set_index_default(IDX_SPRITE_OAM, sprite_oam_base);
+    indexed_memory_set_index_step(IDX_SPRITE_OAM, 4); // Step by sprite record size (4 bytes)
+    indexed_memory_set_index_flags(IDX_SPRITE_OAM, FLAG_AUTO_STEP);
+    
+    // Active frame control (index 57) - selects which buffer set (0 or 1) for video transmission
+    uint32_t active_frame_base = sprite_oam_base + (256 * 4); // After sprite OAM (1KB)
+    indexed_memory_set_index_address(IDX_ACTIVE_FRAME, active_frame_base);
+    indexed_memory_set_index_default(IDX_ACTIVE_FRAME, active_frame_base);
+    indexed_memory_set_index_step(IDX_ACTIVE_FRAME, 1);
+    indexed_memory_set_index_flags(IDX_ACTIVE_FRAME, 0); // No auto-step
     
     // USB keyboard buffer (indexes 64-79)
     uint32_t usb_base = MIA_IO_BUFFER_BASE;
@@ -108,11 +130,12 @@ void indexed_memory_init(void) {
     indexed_memory_set_index_step(81, 1);
     indexed_memory_set_index_flags(81, 0);
     
-    // User area (indexes 128-255) - point to user memory area
+    // User area (indexes 128-255) - 162KB of user RAM
+    // All user indexes start at the base of user memory
+    // Users will reconfigure as needed for their applications
     for (int i = IDX_USER_START; i <= IDX_USER_END; i++) {
-        uint32_t addr = MIA_USER_AREA_BASE + ((i - IDX_USER_START) * 1024); // 1KB per user index
-        indexed_memory_set_index_address(i, addr);
-        indexed_memory_set_index_default(i, addr);
+        indexed_memory_set_index_address(i, MIA_USER_AREA_BASE);
+        indexed_memory_set_index_default(i, MIA_USER_AREA_BASE);
         indexed_memory_set_index_step(i, 1);
         indexed_memory_set_index_flags(i, FLAG_AUTO_STEP);
     }
@@ -133,9 +156,7 @@ void indexed_memory_reset_all(void) {
  * Set index current address
  */
 void indexed_memory_set_index_address(uint8_t idx, uint32_t address) {
-    // Preserve flags in upper 8 bits
-    uint8_t flags = (g_state.indexes[idx].current_addr >> 24) & 0xFF;
-    g_state.indexes[idx].current_addr = (address & 0xFFFFFF) | (flags << 24);
+    g_state.indexes[idx].current_addr = address & 0xFFFFFF;
 }
 
 /**
@@ -156,59 +177,43 @@ void indexed_memory_set_index_step(uint8_t idx, uint8_t step) {
  * Set index flags
  */
 void indexed_memory_set_index_flags(uint8_t idx, uint8_t flags) {
-    // Store flags in upper 8 bits of current_addr
-    uint32_t addr = g_state.indexes[idx].current_addr & 0xFFFFFF;
-    g_state.indexes[idx].current_addr = addr | (flags << 24);
+    g_state.indexes[idx].flags = flags;
 }
 
 /**
  * Reset index to default address
  */
 void indexed_memory_reset_index(uint8_t idx) {
-    uint8_t flags = (g_state.indexes[idx].current_addr >> 24) & 0xFF;
-    uint32_t default_addr = g_state.indexes[idx].default_addr & 0xFFFFFF;
-    g_state.indexes[idx].current_addr = default_addr | (flags << 24);
+    g_state.indexes[idx].current_addr = g_state.indexes[idx].default_addr;
 }
 
 /**
  * Read byte from index with auto-stepping
  */
 uint8_t indexed_memory_read(uint8_t idx) {
-    uint32_t addr = g_state.indexes[idx].current_addr & 0xFFFFFF;
-    uint8_t flags = (g_state.indexes[idx].current_addr >> 24) & 0xFF;
+    uint32_t addr = g_state.indexes[idx].current_addr;
+    uint8_t flags = g_state.indexes[idx].flags;
     
-    // Validate address
-    if (!indexed_memory_is_valid_address(addr)) {
-        indexed_memory_set_irq(IRQ_MEMORY_ERROR);
-        g_state.status |= STATUS_MEMORY_ERROR;
-        return 0xFF; // Return safe value
-    }
+    // Wrap address to valid range (modulo arithmetic for circular addressing)
+    uint32_t offset = (addr - MIA_MEMORY_BASE) % MIA_MEMORY_SIZE;
+    addr = MIA_MEMORY_BASE + offset;
     
     // Read data
-    uint8_t data = mia_memory[addr - MIA_MEMORY_BASE];
+    uint8_t data = mia_memory[offset];
     
     // Auto-step if enabled
     if (flags & FLAG_AUTO_STEP) {
         uint8_t step = g_state.indexes[idx].step;
         if (flags & FLAG_DIRECTION) {
-            // Backward stepping
-            if (addr >= step) {
-                addr -= step;
-            } else {
-                indexed_memory_handle_overflow(idx);
-                return data;
-            }
+            // Backward stepping with wrap
+            addr -= step;
         } else {
-            // Forward stepping
+            // Forward stepping with wrap
             addr += step;
-            if (addr >= MIA_MEMORY_BASE + MIA_MEMORY_SIZE) {
-                indexed_memory_handle_overflow(idx);
-                return data;
-            }
         }
         
-        // Update address with preserved flags
-        g_state.indexes[idx].current_addr = addr | (flags << 24);
+        // Update address (will wrap on next access)
+        g_state.indexes[idx].current_addr = addr;
     }
     
     return data;
@@ -218,41 +223,29 @@ uint8_t indexed_memory_read(uint8_t idx) {
  * Write byte to index with auto-stepping
  */
 void indexed_memory_write(uint8_t idx, uint8_t data) {
-    uint32_t addr = g_state.indexes[idx].current_addr & 0xFFFFFF;
-    uint8_t flags = (g_state.indexes[idx].current_addr >> 24) & 0xFF;
+    uint32_t addr = g_state.indexes[idx].current_addr;
+    uint8_t flags = g_state.indexes[idx].flags;
     
-    // Validate address
-    if (!indexed_memory_is_valid_address(addr)) {
-        indexed_memory_set_irq(IRQ_MEMORY_ERROR);
-        g_state.status |= STATUS_MEMORY_ERROR;
-        return;
-    }
+    // Wrap address to valid range (modulo arithmetic for circular addressing)
+    uint32_t offset = (addr - MIA_MEMORY_BASE) % MIA_MEMORY_SIZE;
+    addr = MIA_MEMORY_BASE + offset;
     
     // Write data
-    mia_memory[addr - MIA_MEMORY_BASE] = data;
+    mia_memory[offset] = data;
     
     // Auto-step if enabled
     if (flags & FLAG_AUTO_STEP) {
         uint8_t step = g_state.indexes[idx].step;
         if (flags & FLAG_DIRECTION) {
-            // Backward stepping
-            if (addr >= step) {
-                addr -= step;
-            } else {
-                indexed_memory_handle_overflow(idx);
-                return;
-            }
+            // Backward stepping with wrap
+            addr -= step;
         } else {
-            // Forward stepping
+            // Forward stepping with wrap
             addr += step;
-            if (addr >= MIA_MEMORY_BASE + MIA_MEMORY_SIZE) {
-                indexed_memory_handle_overflow(idx);
-                return;
-            }
         }
         
-        // Update address with preserved flags
-        g_state.indexes[idx].current_addr = addr | (flags << 24);
+        // Update address (will wrap on next access)
+        g_state.indexes[idx].current_addr = addr;
     }
 }
 
@@ -260,32 +253,24 @@ void indexed_memory_write(uint8_t idx, uint8_t data) {
  * Read byte from index without auto-stepping
  */
 uint8_t indexed_memory_read_no_step(uint8_t idx) {
-    uint32_t addr = g_state.indexes[idx].current_addr & 0xFFFFFF;
+    uint32_t addr = g_state.indexes[idx].current_addr;
     
-    // Validate address
-    if (!indexed_memory_is_valid_address(addr)) {
-        indexed_memory_set_irq(IRQ_MEMORY_ERROR);
-        g_state.status |= STATUS_MEMORY_ERROR;
-        return 0xFF;
-    }
+    // Wrap address to valid range
+    uint32_t offset = (addr - MIA_MEMORY_BASE) % MIA_MEMORY_SIZE;
     
-    return mia_memory[addr - MIA_MEMORY_BASE];
+    return mia_memory[offset];
 }
 
 /**
  * Write byte to index without auto-stepping
  */
 void indexed_memory_write_no_step(uint8_t idx, uint8_t data) {
-    uint32_t addr = g_state.indexes[idx].current_addr & 0xFFFFFF;
+    uint32_t addr = g_state.indexes[idx].current_addr;
     
-    // Validate address
-    if (!indexed_memory_is_valid_address(addr)) {
-        indexed_memory_set_irq(IRQ_MEMORY_ERROR);
-        g_state.status |= STATUS_MEMORY_ERROR;
-        return;
-    }
+    // Wrap address to valid range
+    uint32_t offset = (addr - MIA_MEMORY_BASE) % MIA_MEMORY_SIZE;
     
-    mia_memory[addr - MIA_MEMORY_BASE] = data;
+    mia_memory[offset] = data;
 }
 
 /**
@@ -294,13 +279,13 @@ void indexed_memory_write_no_step(uint8_t idx, uint8_t data) {
 uint8_t indexed_memory_get_config_field(uint8_t idx, uint8_t field) {
     switch (field) {
         case CFG_ADDR_L:
-            return (g_state.indexes[idx].current_addr) & 0xFF;
+            return g_state.indexes[idx].current_addr & 0xFF;
         case CFG_ADDR_M:
             return (g_state.indexes[idx].current_addr >> 8) & 0xFF;
         case CFG_ADDR_H:
             return (g_state.indexes[idx].current_addr >> 16) & 0xFF;
         case CFG_DEFAULT_L:
-            return (g_state.indexes[idx].default_addr) & 0xFF;
+            return g_state.indexes[idx].default_addr & 0xFF;
         case CFG_DEFAULT_M:
             return (g_state.indexes[idx].default_addr >> 8) & 0xFF;
         case CFG_DEFAULT_H:
@@ -308,7 +293,7 @@ uint8_t indexed_memory_get_config_field(uint8_t idx, uint8_t field) {
         case CFG_STEP:
             return g_state.indexes[idx].step;
         case CFG_FLAGS:
-            return (g_state.indexes[idx].current_addr >> 24) & 0xFF;
+            return g_state.indexes[idx].flags;
         case CFG_COPY_SRC_IDX:
             return g_state.dma_config.src_idx;
         case CFG_COPY_DST_IDX:
@@ -326,23 +311,15 @@ uint8_t indexed_memory_get_config_field(uint8_t idx, uint8_t field) {
  * Set configuration field value
  */
 void indexed_memory_set_config_field(uint8_t idx, uint8_t field, uint8_t value) {
-    uint32_t addr, flags;
-    
     switch (field) {
         case CFG_ADDR_L:
-            addr = g_state.indexes[idx].current_addr & 0xFFFF00FF;
-            flags = g_state.indexes[idx].current_addr & 0xFF000000;
-            g_state.indexes[idx].current_addr = addr | value | flags;
+            g_state.indexes[idx].current_addr = (g_state.indexes[idx].current_addr & 0xFFFF00) | value;
             break;
         case CFG_ADDR_M:
-            addr = g_state.indexes[idx].current_addr & 0xFF00FFFF;
-            flags = g_state.indexes[idx].current_addr & 0xFF000000;
-            g_state.indexes[idx].current_addr = addr | (value << 8) | flags;
+            g_state.indexes[idx].current_addr = (g_state.indexes[idx].current_addr & 0xFF00FF) | (value << 8);
             break;
         case CFG_ADDR_H:
-            addr = g_state.indexes[idx].current_addr & 0xFF0000FF;
-            flags = g_state.indexes[idx].current_addr & 0xFF000000;
-            g_state.indexes[idx].current_addr = addr | (value << 16) | flags;
+            g_state.indexes[idx].current_addr = (g_state.indexes[idx].current_addr & 0x00FFFF) | (value << 16);
             break;
         case CFG_DEFAULT_L:
             g_state.indexes[idx].default_addr = (g_state.indexes[idx].default_addr & 0xFFFF00) | value;
@@ -357,8 +334,7 @@ void indexed_memory_set_config_field(uint8_t idx, uint8_t field, uint8_t value) 
             g_state.indexes[idx].step = value;
             break;
         case CFG_FLAGS:
-            addr = g_state.indexes[idx].current_addr & 0x00FFFFFF;
-            g_state.indexes[idx].current_addr = addr | (value << 24);
+            g_state.indexes[idx].flags = value;
             break;
         case CFG_COPY_SRC_IDX:
             g_state.dma_config.src_idx = value;
@@ -501,20 +477,3 @@ uint8_t indexed_memory_get_config_field_select(bool window_b) {
     return window_b ? g_state.cfg_field_b : g_state.cfg_field_a;
 }
 
-/**
- * Validate memory address
- */
-bool indexed_memory_is_valid_address(uint32_t address) {
-    return (address >= MIA_MEMORY_BASE && address < (MIA_MEMORY_BASE + MIA_MEMORY_SIZE));
-}
-
-/**
- * Handle address overflow/underflow
- */
-void indexed_memory_handle_overflow(uint8_t idx) {
-    g_state.status |= STATUS_INDEX_OVERFLOW;
-    indexed_memory_set_irq(IRQ_INDEX_OVERFLOW);
-    
-    // Reset to default address on overflow
-    indexed_memory_reset_index(idx);
-}

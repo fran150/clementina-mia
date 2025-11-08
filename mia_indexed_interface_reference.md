@@ -36,27 +36,29 @@
 |-------------|---------|-------------|
 | 0 | System Error/Status | Pre-configured to system error log and status area |
 | 1-15 | System/Kernel | Reserved for kernel and system use |
-| 16-31 | Character Tables | Video character table access (16 tables max) |
-| 32-47 | Palette Banks | Video palette bank access (16 banks max) |
-| 48-63 | Sprite/OAM Data | Sprite and Object Attribute Memory |
+| 16-23 | Character Tables | Video character table access (8 tables, shared by background and sprites) |
+| 32-47 | Palette Banks | Video palette bank access (16 banks, shared resource) |
+| 48-51 | Nametables | Background nametable data (4 tables for double buffering and scrolling) |
+| 52-55 | Palette Tables | Palette selection tables (4 tables for double buffering and scrolling) |
+| 56 | Sprite OAM | Sprite Object Attribute Memory (256 sprites × 4 bytes, 8×8 pixels) |
+| 57 | Active Frame Control | Buffer set selection (0 or 1) for video transmission |
+| 58-63 | Video Reserved | Reserved for video expansion |
 | 64-79 | USB/Input | USB keyboard buffer and input devices |
 | 80-95 | System Control | Clock control, reset control, system registers |
 | 96-127 | Reserved System | Reserved for future system expansion |
-| 128-255 | User/Application | Available for user applications and general RAM |
+| 128-255 | User/Application | Available for user applications and general RAM (162KB) |
 
 ## Pre-configured Index Targets
 
 | Index | Target Memory Type | Description |
 |-------|-------------------|-------------|
 | 0 | System Error Log | Error details and system status information |
-| 16 | Character Table 0 | 256 characters × 64 pixels × 3 bits |
-| 17 | Character Table 1 | Second character table |
-| 18-31 | Character Tables 2-15 | Additional character tables |
-| 32 | Palette Bank 0 | 8 colors × 16-bit RGB565 |
-| 33 | Palette Bank 1 | Second palette bank |
-| 34-47 | Palette Banks 2-15 | Additional palette banks |
-| 48 | Sprite OAM | 256 sprites × 4 bytes (Y, tile, attr, X) |
-| 49 | Sprite Tile Data | Sprite character/tile definitions |
+| 16-23 | Character Tables 0-7 | 8 tables × 256 characters × 24 bytes (8×8 pixels, 3-bit color) |
+| 32-47 | Palette Banks 0-15 | 16 banks × 8 colors × 2 bytes (RGB565) |
+| 48-51 | Nametables 0-3 | 4 tables × 40×25 bytes (character indices for double buffering/scrolling) |
+| 52-55 | Palette Tables 0-3 | 4 tables × 40×25 bytes (palette bank selection for double buffering/scrolling) |
+| 56 | Sprite OAM | 256 sprites × 4 bytes (Y, tile index from character table, attributes, X) |
+| 57 | Active Frame Control | Buffer set selection (0 or 1) for video transmission |
 | 64 | USB Keyboard Buffer | Circular keyboard input buffer |
 | 65 | USB Status | USB device status and control |
 | 80 | Clock Control | PWM frequency control registers |

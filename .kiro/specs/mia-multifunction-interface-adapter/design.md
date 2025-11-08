@@ -238,9 +238,13 @@ typedef struct {
 **Index Allocation Strategy:**
 - **Index 0:** System error log and status information
 - **Indexes 1-15:** System/kernel reserved
-- **Indexes 16-31:** Character tables (video rendering)
-- **Indexes 32-47:** Palette banks (video colors)
-- **Indexes 48-63:** Sprite/OAM data (video objects)
+- **Indexes 16-23:** Character tables (8 tables for video rendering, shared by background and sprites)
+- **Indexes 32-47:** Palette banks (16 banks for video colors)
+- **Indexes 48-51:** Nametables (4 tables for double buffering and scrolling)
+- **Indexes 52-55:** Palette tables (4 tables for double buffering and scrolling)
+- **Indexes 56:** Sprite OAM data (256 sprites)
+- **Indexes 57:** Active frame control (buffer set selection for video transmission)
+- **Indexes 58-63:** Reserved for video expansion
 - **Indexes 64-79:** USB keyboard buffer and input devices
 - **Indexes 80-95:** System control (clock, reset, status)
 - **Indexes 96-127:** Reserved for system expansion
@@ -295,14 +299,15 @@ Index Table: 2KB (256 × 8 bytes)
 - Cache-aligned for optimal performance
 ```
 
-**MIA Memory Organization (520KB SRAM):**
+**MIA Memory Organization (256KB allocated from 520KB SRAM):**
 ```
-0x00000000 - 0x000007FF: Index Table (2KB)
-0x00000800 - 0x0000FFFF: System Control Area (30KB)
-0x00010000 - 0x0003FFFF: Video Data Area (192KB)
-0x00040000 - 0x0006FFFF: User Application Area (192KB)
-0x00070000 - 0x0007FFFF: USB and I/O Buffers (64KB)
-0x00080000 - 0x0007FFFF: Reserved/Stack/Heap (32KB)
+0x20000000 - 0x200007FF: Index Table (2KB)
+0x20000800 - 0x20004800: System Control Area (16KB)
+0x20004800 - 0x20013800: Video Data Area (60KB)
+0x20013800 - 0x2003C000: User Application Area (162KB)
+0x2003C000 - 0x20040000: USB and I/O Buffers (16KB)
+Total MIA Memory: 256KB
+Remaining for Pico Runtime: 264KB (stack, heap, SDK buffers, Wi-Fi/USB stacks)
 ```
 
 ### Graphics Memory Architecture (Accessed via Indexes)
@@ -313,6 +318,7 @@ Index Table: 2KB (256 × 8 bytes)
 Structure per character:
 - 8×8 pixel grid with 3-bit color depth
 - 64 pixels × 3 bits = 192 bits = 24 bytes per character
+- Shared by both background tiles and sprites (sprites reference character table entries)
 - Accessible via indexes 16-23 (one index per table)
 ```
 
@@ -321,6 +327,7 @@ Structure per character:
 16 banks × 8 colors × 2 bytes = 256 bytes
 Structure per palette:
 - 8 colors with 16-bit RGB565 format
+- Shared resource, not double buffered
 - Accessible via indexes 32-47 (one index per bank)
 ```
 
@@ -328,18 +335,42 @@ Structure per palette:
 ```
 4 buffers × 40×25 bytes = 4KB
 Structure:
-- 2 active nametables + 2 double-buffer nametables
+- 4 nametables for double buffering and scrolling support
+- Buffer Set 0: Nametables 0 & 1 (two nametables for scrolling viewport)
+- Buffer Set 1: Nametables 2 & 3 (two nametables for scrolling viewport)
 - Each entry: 8-bit character index (0-255)
-- Accessible via dedicated indexes for each buffer
+- Accessible via indexes 48-51 (one index per nametable)
+```
+
+**Palette Tables (4KB total):**
+```
+4 buffers × 40×25 bytes = 4KB
+Structure:
+- 4 palette tables matching the 4 nametables for double buffering
+- Buffer Set 0: Palette Tables 0 & 1
+- Buffer Set 1: Palette Tables 2 & 3
+- Each entry: 4-bit palette bank selection (0-15)
+- Accessible via indexes 52-55 (one index per palette table)
 ```
 
 **Object Attribute Memory (1KB):**
 ```
 256 sprites × 4 bytes = 1KB
 Structure per sprite:
-- Y position, tile index, attributes, X position
-- Accessible via index 48 (Sprite OAM)
+- Y position, tile index (references Character_Table), attributes, X position
+- Sprites use 8×8 pixel size only
+- Sprite graphics come from Character_Table data (no separate sprite tile storage)
+- Accessible via index 56 (Sprite OAM)
 - Auto-stepping enables sequential sprite access
+```
+
+**Active Frame Control:**
+```
+Control register accessible via index 57 (video control area)
+- Selects active buffer set (0 or 1) for video transmission
+- MIA transmits from active buffer set
+- 6502 writes to inactive buffer set
+- Buffer swap occurs on frame boundary to prevent tearing
 ```
 
 ### Boot Sequence Data Model
