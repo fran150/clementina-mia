@@ -34,6 +34,7 @@ void indexed_memory_init(void) {
     // Initialize system status
     g_state.status = STATUS_SYSTEM_READY;
     g_state.irq_cause = IRQ_NO_IRQ;
+    g_state.irq_mask = 0xFFFF; // All interrupts enabled by default (16-bit)
     
     // Pre-configure system indexes
     
@@ -130,6 +131,18 @@ void indexed_memory_init(void) {
     indexed_memory_set_index_step(81, 1);
     indexed_memory_set_index_flags(81, 0);
     
+    // Index 83: IRQ mask control low byte (enable/disable interrupt sources 0-7)
+    indexed_memory_set_index_address(83, sysctrl_base + 48);
+    indexed_memory_set_index_default(83, sysctrl_base + 48);
+    indexed_memory_set_index_step(83, 1);
+    indexed_memory_set_index_flags(83, 0);
+    
+    // Index 84: IRQ mask control high byte (enable/disable interrupt sources 8-15)
+    indexed_memory_set_index_address(84, sysctrl_base + 49);
+    indexed_memory_set_index_default(84, sysctrl_base + 49);
+    indexed_memory_set_index_step(84, 1);
+    indexed_memory_set_index_flags(84, 0);
+    
     // User area (indexes 128-255) - 162KB of user RAM
     // All user indexes start at the base of user memory
     // Users will reconfigure as needed for their applications
@@ -194,9 +207,8 @@ uint8_t indexed_memory_read(uint8_t idx) {
     uint32_t addr = g_state.indexes[idx].current_addr;
     uint8_t flags = g_state.indexes[idx].flags;
     
-    // Wrap address to valid range (modulo arithmetic for circular addressing)
-    uint32_t offset = (addr - MIA_MEMORY_BASE) % MIA_MEMORY_SIZE;
-    addr = MIA_MEMORY_BASE + offset;
+    // Wrap address to valid range using bitwise AND (fast, since size is power of 2)
+    uint32_t offset = (addr - MIA_MEMORY_BASE) & (MIA_MEMORY_SIZE - 1);
     
     // Read data
     uint8_t data = mia_memory[offset];
@@ -226,9 +238,8 @@ void indexed_memory_write(uint8_t idx, uint8_t data) {
     uint32_t addr = g_state.indexes[idx].current_addr;
     uint8_t flags = g_state.indexes[idx].flags;
     
-    // Wrap address to valid range (modulo arithmetic for circular addressing)
-    uint32_t offset = (addr - MIA_MEMORY_BASE) % MIA_MEMORY_SIZE;
-    addr = MIA_MEMORY_BASE + offset;
+    // Wrap address to valid range using bitwise AND (fast, since size is power of 2)
+    uint32_t offset = (addr - MIA_MEMORY_BASE) & (MIA_MEMORY_SIZE - 1);
     
     // Write data
     mia_memory[offset] = data;
@@ -255,8 +266,8 @@ void indexed_memory_write(uint8_t idx, uint8_t data) {
 uint8_t indexed_memory_read_no_step(uint8_t idx) {
     uint32_t addr = g_state.indexes[idx].current_addr;
     
-    // Wrap address to valid range
-    uint32_t offset = (addr - MIA_MEMORY_BASE) % MIA_MEMORY_SIZE;
+    // Wrap address to valid range using bitwise AND (fast, since size is power of 2)
+    uint32_t offset = (addr - MIA_MEMORY_BASE) & (MIA_MEMORY_SIZE - 1);
     
     return mia_memory[offset];
 }
@@ -267,8 +278,8 @@ uint8_t indexed_memory_read_no_step(uint8_t idx) {
 void indexed_memory_write_no_step(uint8_t idx, uint8_t data) {
     uint32_t addr = g_state.indexes[idx].current_addr;
     
-    // Wrap address to valid range
-    uint32_t offset = (addr - MIA_MEMORY_BASE) % MIA_MEMORY_SIZE;
+    // Wrap address to valid range using bitwise AND (fast, since size is power of 2)
+    uint32_t offset = (addr - MIA_MEMORY_BASE) & (MIA_MEMORY_SIZE - 1);
     
     mia_memory[offset] = data;
 }
@@ -419,26 +430,99 @@ uint8_t indexed_memory_get_status(void) {
 }
 
 /**
- * Get IRQ cause
+ * Get IRQ cause (full 16-bit value)
  */
-uint8_t indexed_memory_get_irq_cause(void) {
+uint16_t indexed_memory_get_irq_cause(void) {
     return g_state.irq_cause;
 }
 
 /**
+ * Get IRQ cause low byte (bits 0-7)
+ */
+uint8_t indexed_memory_get_irq_cause_low(void) {
+    return g_state.irq_cause & 0xFF;
+}
+
+/**
+ * Get IRQ cause high byte (bits 8-15)
+ */
+uint8_t indexed_memory_get_irq_cause_high(void) {
+    return (g_state.irq_cause >> 8) & 0xFF;
+}
+
+/**
+ * Write to IRQ cause low byte (write-1-to-clear)
+ * Writing 1 to a bit position clears that interrupt
+ */
+void indexed_memory_write_irq_cause_low(uint8_t clear_bits) {
+    // Clear bits where clear_bits has 1s (write-1-to-clear)
+    g_state.irq_cause &= ~((uint16_t)clear_bits);
+    
+    // If no enabled interrupts are pending, deassert IRQ line
+    if ((g_state.irq_cause & g_state.irq_mask) == 0) {
+        g_state.status &= ~STATUS_IRQ_PENDING;
+        // TODO: Deassert GPIO 26 (IRQ line) to 6502
+    }
+}
+
+/**
+ * Write to IRQ cause high byte (write-1-to-clear)
+ * Writing 1 to a bit position clears that interrupt
+ */
+void indexed_memory_write_irq_cause_high(uint8_t clear_bits) {
+    // Clear bits where clear_bits has 1s (write-1-to-clear)
+    // Shift clear_bits to high byte position
+    g_state.irq_cause &= ~((uint16_t)clear_bits << 8);
+    
+    // If no enabled interrupts are pending, deassert IRQ line
+    if ((g_state.irq_cause & g_state.irq_mask) == 0) {
+        g_state.status &= ~STATUS_IRQ_PENDING;
+        // TODO: Deassert GPIO 26 (IRQ line) to 6502
+    }
+}
+
+/**
  * Clear IRQ
+ * Clears all pending interrupts
  */
 void indexed_memory_clear_irq(void) {
-    g_state.status &= ~STATUS_IRQ_PENDING;
+    // Clear all pending interrupts
     g_state.irq_cause = IRQ_NO_IRQ;
+    g_state.status &= ~STATUS_IRQ_PENDING;
+    // TODO: Deassert GPIO 26 (IRQ line) to 6502
+}
+
+/**
+ * Clear specific IRQ
+ * Clears the specified interrupt bit(s) from the pending register
+ * If no enabled interrupts remain pending, deasserts the IRQ line
+ */
+void indexed_memory_clear_specific_irq(uint16_t cause) {
+    // Clear the specified interrupt bit(s)
+    g_state.irq_cause &= ~cause;
+    
+    // If no enabled interrupts are pending, clear the IRQ line
+    if ((g_state.irq_cause & g_state.irq_mask) == 0) {
+        g_state.status &= ~STATUS_IRQ_PENDING;
+        // TODO: Deassert GPIO 26 (IRQ line) to 6502
+    }
 }
 
 /**
  * Set IRQ
+ * Sets the specified interrupt bit(s) in the pending register
+ * Only asserts IRQ line if the interrupt source is enabled in the mask
  */
-void indexed_memory_set_irq(uint8_t cause) {
-    g_state.status |= STATUS_IRQ_PENDING;
-    g_state.irq_cause = cause;
+void indexed_memory_set_irq(uint16_t cause) {
+    // Set the interrupt bit(s) in the pending register (OR to accumulate)
+    g_state.irq_cause |= cause;
+    
+    // Check if this interrupt source is enabled in the 16-bit mask
+    // Only assert IRQ line if at least one enabled interrupt is pending
+    if ((g_state.irq_cause & g_state.irq_mask) != 0) {
+        g_state.status |= STATUS_IRQ_PENDING;
+        // TODO: Assert GPIO 26 (IRQ line) to 6502
+    }
 }
 
 /**

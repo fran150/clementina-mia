@@ -9,9 +9,9 @@
 | $C002 | CFG_FIELD_SELECT_A | CFG_FIELD_SELECT_B | R/W | Selects configuration field for active index |
 | $C003 | CFG_DATA_A | CFG_DATA_B | R/W | Read/write selected configuration field |
 | $C004 | COMMAND_A | COMMAND_B | W | Issues control commands |
-| $C005 | RESERVED_A | RESERVED_B | - | Reserved for future use |
-| $C006 | STATUS | STATUS | R | Device status bits (shared) |
-| $C007 | IRQ_CAUSE | IRQ_CAUSE | R | Interrupt source identification (shared) |
+| $C005 | STATUS | STATUS | R | Device status bits (shared) |
+| $C006 | IRQ_CAUSE_LOW | IRQ_CAUSE_LOW | R/W | Interrupt source identification low byte (bits 0-7, shared, write-1-to-clear) |
+| $C007 | IRQ_CAUSE_HIGH | IRQ_CAUSE_HIGH | R/W | Interrupt source identification high byte (bits 8-15, shared, write-1-to-clear) |
 
 **Address Range and Mirroring:**
 - **Active Range:** $C000-$C3FF (1KB total address space)
@@ -44,7 +44,7 @@
 | 57 | Active Frame Control | Buffer set selection (0 or 1) for video transmission |
 | 58-63 | Video Reserved | Reserved for video expansion |
 | 64-79 | USB/Input | USB keyboard buffer and input devices |
-| 80-95 | System Control | Clock control, reset control, system registers |
+| 80-95 | System Control | Clock control, reset control, IRQ mask, system registers |
 | 96-127 | Reserved System | Reserved for future system expansion |
 | 128-255 | User/Application | Available for user applications and general RAM (162KB) |
 
@@ -63,6 +63,8 @@
 | 65 | USB Status | USB device status and control |
 | 80 | Clock Control | PWM frequency control registers |
 | 81 | Reset Control | System reset control |
+| 83 | IRQ Mask Low | Enable/disable interrupt sources 0-7 (1=enabled, 0=disabled) |
+| 84 | IRQ Mask High | Enable/disable interrupt sources 8-15 (1=enabled, 0=disabled) |
 
 ## CFG_FIELD_SELECT Values
 
@@ -140,18 +142,124 @@
 
 ## IRQ_CAUSE Codes
 
-| Code | Name | Description |
-|------|------|-------------|
-| 0x00 | NO_IRQ | No interrupt pending |
-| 0x01 | MEMORY_ERROR | Invalid memory access |
-| 0x02 | INDEX_OVERFLOW | Address pointer overflow |
-| 0x03 | DMA_COMPLETE | DMA/copy operation completed |
-| 0x04 | DMA_ERROR | DMA/copy operation failed |
-| 0x10 | USB_KEYBOARD | Keyboard data received |
-| 0x11 | USB_DEVICE_CHANGE | USB device connected/disconnected |
-| 0x20 | VIDEO_FRAME_COMPLETE | Video frame transmission complete |
-| 0x21 | VIDEO_COLLISION | Sprite collision detected |
-| 0x30 | SYSTEM_ERROR | General system error |
+| Code | Name | Description | Mask Register | Bit |
+|------|------|-------------|---------------|-----|
+| 0x0000 | NO_IRQ | No interrupt pending | N/A | N/A |
+| 0x0001 | MEMORY_ERROR | Invalid memory access | Index 83 (Low) | 0 |
+| 0x0002 | INDEX_OVERFLOW | Address pointer overflow | Index 83 (Low) | 1 |
+| 0x0004 | DMA_COMPLETE | DMA/copy operation completed | Index 83 (Low) | 2 |
+| 0x0008 | DMA_ERROR | DMA/copy operation failed | Index 83 (Low) | 3 |
+| 0x0010 | USB_KEYBOARD | Keyboard data received | Index 83 (Low) | 4 |
+| 0x0020 | USB_DEVICE_CHANGE | USB device connected/disconnected | Index 83 (Low) | 5 |
+| 0x0040 | RESERVED | Reserved for future use | Index 83 (Low) | 6 |
+| 0x0080 | RESERVED | Reserved for future use | Index 83 (Low) | 7 |
+| 0x0100 | VIDEO_FRAME_COMPLETE | Video frame transmission complete | Index 84 (High) | 0 |
+| 0x0200 | VIDEO_COLLISION | Sprite collision detected | Index 84 (High) | 1 |
+| 0x0400-0x8000 | RESERVED | Reserved for future use | Index 84 (High) | 2-7 |
+
+**Note:** IRQ cause codes are bit masks (power of 2 values) that directly correspond to bits in the 16-bit IRQ_MASK register for efficient masking with a single AND operation.
+
+## IRQ_MASK Registers (16-bit)
+
+### Index 83: IRQ_MASK_LOW (Bits 0-7)
+
+| Bit | Name | Description |
+|-----|------|-------------|
+| 0 | MEMORY_ERROR | Enable/disable memory error interrupts |
+| 1 | INDEX_OVERFLOW | Enable/disable index overflow interrupts |
+| 2 | DMA_COMPLETE | Enable/disable DMA completion interrupts |
+| 3 | DMA_ERROR | Enable/disable DMA error interrupts |
+| 4 | USB_KEYBOARD | Enable/disable USB keyboard interrupts |
+| 5 | USB_DEVICE_CHANGE | Enable/disable USB device change interrupts |
+| 6 | RESERVED | Reserved for future use |
+| 7 | RESERVED | Reserved for future use |
+
+### Index 84: IRQ_MASK_HIGH (Bits 8-15)
+
+| Bit | Name | Description |
+|-----|------|-------------|
+| 0 (bit 8) | VIDEO_FRAME | Enable/disable video frame complete interrupts |
+| 1 (bit 9) | VIDEO_COLLISION | Enable/disable sprite collision interrupts |
+| 2-7 (bits 10-15) | RESERVED | Reserved for future use |
+
+**Default Value:** 0xFFFF (all interrupts enabled)
+
+**Usage:** Write 1 to enable an interrupt source, 0 to disable it. Only enabled interrupts will assert the IRQ line.
+
+## Interrupt Acknowledgment
+
+The IRQ_CAUSE register acts as a **pending interrupt register** where each bit represents a pending interrupt:
+
+1. **Interrupt occurs:** MIA sets the corresponding bit in IRQ_CAUSE and asserts IRQ line (if enabled in mask)
+2. **6502 reads IRQ_CAUSE:** Determines which interrupt(s) occurred
+3. **6502 acknowledges:** Writes to IRQ_CAUSE_LOW/HIGH to clear specific interrupts (write-1-to-clear)
+4. **MIA clears interrupts:** Clears specified bits in IRQ_CAUSE and deasserts IRQ line if no enabled interrupts remain
+5. **New interrupts can occur:** Same interrupt type can trigger again
+
+**Write-1-to-Clear Mechanism:**
+- Writing a 1 to a bit position in $C006 or $C007 clears that interrupt bit
+- Writing a 0 has no effect (bit remains unchanged)
+- Allows selective acknowledgment of specific interrupts
+- Multiple interrupts can be cleared in a single write
+
+**Multiple Pending Interrupts:**
+- Multiple interrupt bits can be set simultaneously in IRQ_CAUSE
+- IRQ line remains asserted until all enabled pending interrupts are cleared
+- 6502 can acknowledge interrupts individually or in groups
+
+**Example 1: Selective Acknowledgment**
+```assembly
+; Read which interrupts are pending
+LDA $C006       ; Read IRQ_CAUSE_LOW = 0x15 (bits 0, 2, 4 set)
+
+; Handle memory error (bit 0)
+; ...
+
+; Acknowledge only memory error interrupt
+LDA #$01        ; Write 1 to bit 0
+STA $C006       ; Clears bit 0, bits 2 and 4 remain pending
+
+; Later, acknowledge remaining interrupts
+LDA #$14        ; Write 1s to bits 2 and 4
+STA $C006       ; Clears bits 2 and 4
+```
+
+**Example 2: Acknowledge All at Once**
+```assembly
+; Read pending interrupts
+LDA $C006       ; Read IRQ_CAUSE_LOW
+PHA             ; Save for later
+
+; Handle all interrupts
+; ...
+
+; Acknowledge all low byte interrupts
+PLA             ; Restore IRQ_CAUSE_LOW value
+STA $C006       ; Clear all bits that were set
+
+; Or use CMD_CLEAR_IRQ to clear all interrupts (both low and high)
+LDA #$05        ; CMD_CLEAR_IRQ
+STA $C004       ; Clears all pending interrupts
+```
+
+**Example 3: Video Interrupt**
+```assembly
+; Read video interrupts
+LDA $C007       ; Read IRQ_CAUSE_HIGH
+
+; Check for video frame complete (bit 0 of high byte)
+AND #$01
+BEQ NO_FRAME
+
+; Handle frame complete
+; ...
+
+; Acknowledge video frame interrupt
+LDA #$01        ; Write 1 to bit 0 of high byte
+STA $C007       ; Clears video frame interrupt
+
+NO_FRAME:
+```
 
 ## Usage Examples
 

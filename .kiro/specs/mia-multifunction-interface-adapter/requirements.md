@@ -156,13 +156,18 @@ The MIA (Multifunction Interface Adapter) is a Raspberry Pi Pico 2 W-based syste
 #### Acceptance Criteria
 
 1. THE MIA SHALL provide an IRQ_Line on GPIO 26 to signal interrupts to the 6502 CPU
-2. THE MIA SHALL provide an IRQ_CAUSE register at $C007 and $C00F to identify the source of interrupts
-3. WHEN a memory access error occurs, THE MIA SHALL assert the IRQ_Line and set appropriate IRQ_CAUSE code
-4. WHEN an index address overflow or underflow occurs, THE MIA SHALL assert the IRQ_Line and set INDEX_OVERFLOW cause
-5. WHEN a DMA_Operation completes, THE MIA SHALL assert the IRQ_Line and set DMA_COMPLETE cause
-6. WHEN USB keyboard data is received, THE MIA SHALL assert the IRQ_Line and set USB_KEYBOARD cause
-7. THE MIA SHALL provide CLEAR_IRQ command to clear interrupt pending flags
-8. THE MIA SHALL maintain error information in Memory_Index 0 accessible through the standard indexed interface
+2. THE MIA SHALL provide a 16-bit IRQ_CAUSE register with low byte at $C006/$C00E and high byte at $C007/$C00F to identify the source of interrupts
+3. THE MIA SHALL provide a 16-bit IRQ_MASK register accessible via Memory_Index 83 (low byte) and Memory_Index 84 (high byte) to enable or disable specific interrupt sources
+4. WHEN a memory access error occurs and the corresponding mask bit is enabled, THE MIA SHALL assert the IRQ_Line and set appropriate IRQ_CAUSE code
+5. WHEN an index address overflow or underflow occurs and the corresponding mask bit is enabled, THE MIA SHALL assert the IRQ_Line and set INDEX_OVERFLOW cause
+6. WHEN a DMA_Operation completes and the corresponding mask bit is enabled, THE MIA SHALL assert the IRQ_Line and set DMA_COMPLETE cause
+7. WHEN USB keyboard data is received and the corresponding mask bit is enabled, THE MIA SHALL assert the IRQ_Line and set USB_KEYBOARD cause
+8. THE MIA SHALL provide write-1-to-clear functionality for IRQ_CAUSE registers where writing 1 to a bit position clears that interrupt
+9. THE MIA SHALL provide CLEAR_IRQ command to clear all interrupt pending flags at once
+10. THE MIA SHALL initialize all interrupt sources as enabled by default (IRQ_MASK = 0xFFFF)
+11. THE MIA SHALL organize interrupt sources with system and I/O interrupts in the low byte (bits 0-7) and video interrupts in the high byte (bits 8-15)
+12. THE MIA SHALL deassert the IRQ line when no enabled interrupts remain pending after acknowledgment
+13. THE MIA SHALL maintain error information in Memory_Index 0 accessible through the standard indexed interface
 
 ### Requirement 9
 
@@ -178,7 +183,7 @@ The MIA (Multifunction Interface Adapter) is a Raspberry Pi Pico 2 W-based syste
 6. THE MIA SHALL pre-configure Memory_Index 56 to point to Sprite OAM data for video objects (256 sprites)
 7. THE MIA SHALL pre-configure Memory_Index 57 to point to active frame control register for buffer set selection
 8. THE MIA SHALL pre-configure Memory_Index 64-79 to point to USB keyboard buffer and input device data
-9. THE MIA SHALL pre-configure Memory_Index 80-95 to point to system control registers including clock, reset, and status
+9. THE MIA SHALL pre-configure Memory_Index 80-95 to point to system control registers including clock, reset, 16-bit IRQ mask, and status
 10. THE MIA SHALL reserve Memory_Index 128-255 for user applications and general-purpose RAM access
 11. THE MIA SHALL allow reconfiguration of all pre-configured indexes through the standard CFG_FIELD_SELECT interface
 

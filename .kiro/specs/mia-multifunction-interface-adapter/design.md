@@ -119,9 +119,9 @@ The MIA operates in two distinct phases with different timing and processing req
 - $C002: CFG_FIELD_SELECT_A - Select configuration field for active index
 - $C003: CFG_DATA_A - Read/write selected configuration field
 - $C004: COMMAND_A - Issue control commands
-- $C005: RESERVED_A - Reserved for future use
-- $C006: STATUS - Device status bits (shared between windows)
-- $C007: IRQ_CAUSE - Interrupt source identification (shared between windows)
+- $C005: STATUS - Device status bits (shared between windows)
+- $C006: IRQ_CAUSE_LOW - Interrupt source identification low byte, bits 0-7 (shared between windows)
+- $C007: IRQ_CAUSE_HIGH - Interrupt source identification high byte, bits 8-15 (shared between windows)
 
 **Window B Registers ($C008-$C00F, mirrored):**
 - $C008: IDX_SELECT_B - Select active index (0-255) for Window B
@@ -129,9 +129,9 @@ The MIA operates in two distinct phases with different timing and processing req
 - $C00A: CFG_FIELD_SELECT_B - Select configuration field for active index
 - $C00B: CFG_DATA_B - Read/write selected configuration field
 - $C00C: COMMAND_B - Issue control commands
-- $C00D: RESERVED_B - Reserved for future use
-- $C00E: STATUS - Device status bits (shared between windows)
-- $C00F: IRQ_CAUSE - Interrupt source identification (shared between windows)
+- $C00D: STATUS - Device status bits (shared between windows)
+- $C00E: IRQ_CAUSE_LOW - Interrupt source identification low byte, bits 0-7 (shared between windows)
+- $C00F: IRQ_CAUSE_HIGH - Interrupt source identification high byte, bits 8-15 (shared between windows)
 
 **Index Memory Organization:**
 - 256 shared indexes (0-255) accessible from both windows
@@ -246,7 +246,7 @@ typedef struct {
 - **Indexes 57:** Active frame control (buffer set selection for video transmission)
 - **Indexes 58-63:** Reserved for video expansion
 - **Indexes 64-79:** USB keyboard buffer and input devices
-- **Indexes 80-95:** System control (clock, reset, status)
+- **Indexes 80-95:** System control (clock, reset, IRQ mask, status)
 - **Indexes 96-127:** Reserved for system expansion
 - **Indexes 128-255:** User applications and general-purpose RAM
 
@@ -601,8 +601,17 @@ Index 66-67: Reserved for mouse and additional USB devices
 
 **Interrupt-Driven Error Notification:**
 - IRQ line (GPIO 26) signals critical errors to 6502
-- IRQ_CAUSE register identifies specific error types
-- CLEAR_IRQ command acknowledges and clears error conditions
+- 16-bit IRQ_CAUSE register identifies specific error types (0-15)
+  - Low byte ($C006/$C00E): System and I/O interrupts (bits 0-7)
+  - High byte ($C007/$C00F): Video interrupts (bits 8-15)
+- Write-1-to-clear mechanism for selective interrupt acknowledgment
+  - Writing 1 to a bit position clears that specific interrupt
+  - Allows handling interrupts individually or in groups
+- 16-bit IRQ_MASK register (Index 83=low, Index 84=high) enables/disables individual interrupt sources
+- Each interrupt source has a corresponding mask bit (1=enabled, 0=disabled)
+- All interrupts enabled by default (mask = 0xFFFF)
+- CLEAR_IRQ command available to clear all interrupts at once
+- IRQ line deasserts when no enabled interrupts remain pending
 - Priority-based interrupt handling for multiple simultaneous errors
 
 ## Testing Strategy

@@ -51,7 +51,8 @@
   - Add DATA_PORT registers with automatic index stepping and memory access
   - Implement CFG_FIELD_SELECT and CFG_DATA for index configuration
   - Add COMMAND register for basic commands (RESET_INDEX, RESET_ALL, CLEAR_IRQ)
-  - Create shared STATUS and IRQ_CAUSE registers
+  - Create shared STATUS register at $C005/$C00D
+  - Create shared 16-bit IRQ_CAUSE register with low byte at $C006/$C00E and high byte at $C007/$C00F
   - Test: Verify dual-window operation, register mirroring, and window priority
   - _Requirements: 5.2, 5.3, 5.4, 6.1, 6.2, 6.3, 6.4, 6.5_
 
@@ -66,12 +67,18 @@
 
 - [ ] 8. Implement interrupt and error handling system
   - Configure IRQ line (GPIO 26) for interrupt notification to 6502
-  - Implement IRQ_CAUSE register with specific interrupt source codes
+  - Implement 16-bit IRQ_CAUSE register with low byte ($C006/$C00E) and high byte ($C007/$C00F) for interrupt source codes
+  - Implement write-1-to-clear functionality for IRQ_CAUSE registers for selective interrupt acknowledgment
+  - Implement 16-bit IRQ_MASK register accessible via Index 83 (low byte) and Index 84 (high byte) for enabling/disabling interrupt sources
+  - Add interrupt mask checking before asserting IRQ line
+  - Initialize IRQ mask to 0xFFFF (all interrupts enabled by default)
+  - Organize interrupts with system/I/O in low byte (0-7) and video in high byte (8-15)
+  - Implement automatic IRQ line deassertion when no enabled interrupts remain pending
   - Add error detection for memory access violations and index overflows
   - Create error logging system accessible via Index 0 (system error log)
-  - Implement CLEAR_IRQ command and interrupt management
-  - Test: Verify interrupt generation, error detection, and error reporting
-  - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 8.8_
+  - Implement CLEAR_IRQ command for clearing all interrupts at once
+  - Test: Verify interrupt generation, masking, write-1-to-clear acknowledgment, error detection, and error reporting
+  - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 8.8, 8.9, 8.10, 8.11, 8.12, 8.13_
 
 - [ ] 9. Implement graphics memory organization
   - Organize MIA memory layout: 256KB total (2KB index table, 16KB system, 60KB video, 162KB user, 16KB I/O)
