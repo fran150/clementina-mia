@@ -50,8 +50,9 @@ void indexed_memory_init(void) {
         uint32_t addr = MIA_VIDEO_AREA_BASE + (i * 256 * 24); // 256 chars × 24 bytes each
         indexed_memory_set_index_address(idx, addr);
         indexed_memory_set_index_default(idx, addr);
+        indexed_memory_set_index_limit(idx, addr + (256 * 24)); // Wrap at end of character table (6KB)
         indexed_memory_set_index_step(idx, 1);
-        indexed_memory_set_index_flags(idx, FLAG_AUTO_STEP);
+        indexed_memory_set_index_flags(idx, FLAG_AUTO_STEP | FLAG_WRAP_ON_LIMIT);
     }
     
     // Palette banks (indexes 32-47) - 16 banks, shared resource
@@ -61,8 +62,9 @@ void indexed_memory_init(void) {
         uint32_t addr = palette_base + (i * 16); // 8 colors × 2 bytes per bank
         indexed_memory_set_index_address(idx, addr);
         indexed_memory_set_index_default(idx, addr);
+        indexed_memory_set_index_limit(idx, addr + 16); // Wrap at end of palette bank (16 bytes)
         indexed_memory_set_index_step(idx, 1);
-        indexed_memory_set_index_flags(idx, FLAG_AUTO_STEP);
+        indexed_memory_set_index_flags(idx, FLAG_AUTO_STEP | FLAG_WRAP_ON_LIMIT);
     }
     
     // Nametables (indexes 48-51) - 4 tables for double buffering and scrolling
@@ -72,8 +74,9 @@ void indexed_memory_init(void) {
         uint32_t addr = nametable_base + (i * 40 * 25); // 40×25 bytes per nametable
         indexed_memory_set_index_address(idx, addr);
         indexed_memory_set_index_default(idx, addr);
+        indexed_memory_set_index_limit(idx, addr + (40 * 25)); // Wrap at end of nametable (1000 bytes)
         indexed_memory_set_index_step(idx, 1);
-        indexed_memory_set_index_flags(idx, FLAG_AUTO_STEP);
+        indexed_memory_set_index_flags(idx, FLAG_AUTO_STEP | FLAG_WRAP_ON_LIMIT);
     }
     
     // Palette tables (indexes 52-55) - 4 tables for double buffering and scrolling
@@ -83,16 +86,18 @@ void indexed_memory_init(void) {
         uint32_t addr = palette_table_base + (i * 40 * 25); // 40×25 bytes per palette table
         indexed_memory_set_index_address(idx, addr);
         indexed_memory_set_index_default(idx, addr);
+        indexed_memory_set_index_limit(idx, addr + (40 * 25)); // Wrap at end of palette table (1000 bytes)
         indexed_memory_set_index_step(idx, 1);
-        indexed_memory_set_index_flags(idx, FLAG_AUTO_STEP);
+        indexed_memory_set_index_flags(idx, FLAG_AUTO_STEP | FLAG_WRAP_ON_LIMIT);
     }
     
     // Sprite OAM (index 56) - 256 sprites × 4 bytes, sprites use character table graphics
     uint32_t sprite_oam_base = palette_table_base + (4 * 40 * 25); // After palette tables (4KB)
     indexed_memory_set_index_address(IDX_SPRITE_OAM, sprite_oam_base);
     indexed_memory_set_index_default(IDX_SPRITE_OAM, sprite_oam_base);
+    indexed_memory_set_index_limit(IDX_SPRITE_OAM, sprite_oam_base + (256 * 4)); // Wrap at end of OAM (1024 bytes)
     indexed_memory_set_index_step(IDX_SPRITE_OAM, 4); // Step by sprite record size (4 bytes)
-    indexed_memory_set_index_flags(IDX_SPRITE_OAM, FLAG_AUTO_STEP);
+    indexed_memory_set_index_flags(IDX_SPRITE_OAM, FLAG_AUTO_STEP | FLAG_WRAP_ON_LIMIT);
     
     // Active frame control (index 57) - selects which buffer set (0 or 1) for video transmission
     uint32_t active_frame_base = sprite_oam_base + (256 * 4); // After sprite OAM (1KB)
@@ -107,8 +112,9 @@ void indexed_memory_init(void) {
     // Index 64: USB keyboard circular buffer
     indexed_memory_set_index_address(64, usb_base);
     indexed_memory_set_index_default(64, usb_base);
+    indexed_memory_set_index_limit(64, usb_base + 64); // Wrap at end of keyboard buffer (64 bytes)
     indexed_memory_set_index_step(64, 1);
-    indexed_memory_set_index_flags(64, FLAG_AUTO_STEP);
+    indexed_memory_set_index_flags(64, FLAG_AUTO_STEP | FLAG_WRAP_ON_LIMIT);
     
     // Index 65: USB status
     indexed_memory_set_index_address(65, usb_base + 64);
@@ -180,6 +186,13 @@ void indexed_memory_set_index_default(uint8_t idx, uint32_t address) {
 }
 
 /**
+ * Set index limit address (for wrap-on-limit feature)
+ */
+void indexed_memory_set_index_limit(uint8_t idx, uint32_t address) {
+    g_state.indexes[idx].limit_addr = address & 0xFFFFFF;
+}
+
+/**
  * Set index step size
  */
 void indexed_memory_set_index_step(uint8_t idx, uint8_t step) {
@@ -217,14 +230,21 @@ uint8_t indexed_memory_read(uint8_t idx) {
     if (flags & FLAG_AUTO_STEP) {
         uint8_t step = g_state.indexes[idx].step;
         if (flags & FLAG_DIRECTION) {
-            // Backward stepping with wrap
+            // Backward stepping
             addr -= step;
         } else {
-            // Forward stepping with wrap
+            // Forward stepping
             addr += step;
         }
         
-        // Update address (will wrap on next access)
+        // Check wrap-on-limit if enabled
+        if (flags & FLAG_WRAP_ON_LIMIT) {
+            if (addr >= g_state.indexes[idx].limit_addr) {
+                addr = g_state.indexes[idx].default_addr;
+            }
+        }
+        
+        // Update address
         g_state.indexes[idx].current_addr = addr;
     }
     
@@ -248,14 +268,21 @@ void indexed_memory_write(uint8_t idx, uint8_t data) {
     if (flags & FLAG_AUTO_STEP) {
         uint8_t step = g_state.indexes[idx].step;
         if (flags & FLAG_DIRECTION) {
-            // Backward stepping with wrap
+            // Backward stepping
             addr -= step;
         } else {
-            // Forward stepping with wrap
+            // Forward stepping
             addr += step;
         }
         
-        // Update address (will wrap on next access)
+        // Check wrap-on-limit if enabled
+        if (flags & FLAG_WRAP_ON_LIMIT) {
+            if (addr >= g_state.indexes[idx].limit_addr) {
+                addr = g_state.indexes[idx].default_addr;
+            }
+        }
+        
+        // Update address
         g_state.indexes[idx].current_addr = addr;
     }
 }
@@ -301,6 +328,12 @@ uint8_t indexed_memory_get_config_field(uint8_t idx, uint8_t field) {
             return (g_state.indexes[idx].default_addr >> 8) & 0xFF;
         case CFG_DEFAULT_H:
             return (g_state.indexes[idx].default_addr >> 16) & 0xFF;
+        case CFG_LIMIT_L:
+            return g_state.indexes[idx].limit_addr & 0xFF;
+        case CFG_LIMIT_M:
+            return (g_state.indexes[idx].limit_addr >> 8) & 0xFF;
+        case CFG_LIMIT_H:
+            return (g_state.indexes[idx].limit_addr >> 16) & 0xFF;
         case CFG_STEP:
             return g_state.indexes[idx].step;
         case CFG_FLAGS:
@@ -340,6 +373,15 @@ void indexed_memory_set_config_field(uint8_t idx, uint8_t field, uint8_t value) 
             break;
         case CFG_DEFAULT_H:
             g_state.indexes[idx].default_addr = (g_state.indexes[idx].default_addr & 0x00FFFF) | (value << 16);
+            break;
+        case CFG_LIMIT_L:
+            g_state.indexes[idx].limit_addr = (g_state.indexes[idx].limit_addr & 0xFFFF00) | value;
+            break;
+        case CFG_LIMIT_M:
+            g_state.indexes[idx].limit_addr = (g_state.indexes[idx].limit_addr & 0xFF00FF) | (value << 8);
+            break;
+        case CFG_LIMIT_H:
+            g_state.indexes[idx].limit_addr = (g_state.indexes[idx].limit_addr & 0x00FFFF) | (value << 16);
             break;
         case CFG_STEP:
             g_state.indexes[idx].step = value;

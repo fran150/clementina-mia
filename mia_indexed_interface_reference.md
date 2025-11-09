@@ -77,17 +77,20 @@
 | 0x03 | DEFAULT_L | 8-bit | Low byte of default/base address |
 | 0x04 | DEFAULT_M | 8-bit | Mid byte of default/base address |
 | 0x05 | DEFAULT_H | 8-bit | High byte of default/base address |
-| 0x06 | STEP | 8-bit | Step size (0-255 bytes) for auto-increment |
-| 0x07 | FLAGS | 8-bit | Index behavior control flags |
+| 0x06 | LIMIT_L | 8-bit | Low byte of limit address for wrap-on-limit |
+| 0x07 | LIMIT_M | 8-bit | Mid byte of limit address for wrap-on-limit |
+| 0x08 | LIMIT_H | 8-bit | High byte of limit address for wrap-on-limit |
+| 0x09 | STEP | 8-bit | Step size (0-255 bytes) for auto-increment |
+| 0x0A | FLAGS | 8-bit | Index behavior control flags |
 
 ### DMA Configuration Fields
 | Field ID | Name | Width | Description |
 |----------|------|-------|-------------|
-| 0x08 | COPY_SRC_IDX | 8-bit | Source index for copy operations |
-| 0x09 | COPY_DST_IDX | 8-bit | Destination index for copy operations |
-| 0x0A | COPY_COUNT_L | 8-bit | Low byte of copy byte count |
-| 0x0B | COPY_COUNT_H | 8-bit | High byte of copy byte count (16-bit total) |
-| 0x0C-0x0F | RESERVED | 8-bit | Reserved for future expansion |
+| 0x0B | COPY_SRC_IDX | 8-bit | Source index for copy operations |
+| 0x0C | COPY_DST_IDX | 8-bit | Destination index for copy operations |
+| 0x0D | COPY_COUNT_L | 8-bit | Low byte of copy byte count |
+| 0x0E | COPY_COUNT_H | 8-bit | High byte of copy byte count (16-bit total) |
+| 0x0F | RESERVED | 8-bit | Reserved for future expansion |
 
 ## FLAGS Register Bits
 
@@ -95,7 +98,8 @@
 |-----|------|-------------|
 | 0 | AUTO_STEP | 0=Manual stepping, 1=Auto-step after DATA_PORT access |
 | 1 | DIRECTION | 0=Forward/increment, 1=Backward/decrement |
-| 2-7 | RESERVED | Reserved for future use |
+| 2 | WRAP_ON_LIMIT | 0=Disabled, 1=Wrap to default address when reaching limit address |
+| 3-7 | RESERVED | Reserved for future use |
 
 ## COMMAND Codes
 
@@ -259,6 +263,45 @@ LDA #$01        ; Write 1 to bit 0 of high byte
 STA $C007       ; Clears video frame interrupt
 
 NO_FRAME:
+```
+
+## Wrap-on-Limit Feature
+
+The wrap-on-limit feature allows an index to automatically reset to its default address when it reaches a specified limit address. This is useful for:
+- Circular buffers with custom sizes
+- Bounded iteration over memory regions
+- Tile/sprite processing with automatic wraparound
+
+**How it works:**
+1. Set the limit address using CFG_LIMIT_L/M/H fields
+2. Enable FLAG_WRAP_ON_LIMIT (bit 2) in the FLAGS register
+3. When auto-stepping causes the address to reach or exceed the limit, it wraps to the default address
+
+**Example: 64-byte circular buffer**
+```assembly
+; Configure index for 64-byte circular buffer at $20000
+LDA #64         ; Select index
+STA $C000
+
+; Set default address (buffer start)
+LDA #$02        ; CFG_DEFAULT_L
+STA $C002
+LDA #$00
+STA $C003       ; Default = $20000 (low byte)
+
+; Set limit address (buffer end + 1)
+LDA #$06        ; CFG_LIMIT_L
+STA $C002
+LDA #$40        ; 64 bytes = $40
+STA $C003       ; Limit = $20040
+
+; Enable auto-step and wrap-on-limit
+LDA #$0A        ; CFG_FLAGS
+STA $C002
+LDA #$05        ; AUTO_STEP | WRAP_ON_LIMIT
+STA $C003
+
+; Now reading/writing will automatically wrap at 64 bytes
 ```
 
 ## Usage Examples

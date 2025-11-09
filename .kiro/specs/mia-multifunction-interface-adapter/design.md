@@ -253,11 +253,19 @@ typedef struct {
 **Configuration Fields:**
 - **ADDR_L/M/H (0x00-0x02):** Current address pointer (24-bit)
 - **DEFAULT_L/M/H (0x03-0x05):** Default/base address (24-bit)
-- **STEP (0x06):** Auto-increment/decrement step size (0-255)
-- **FLAGS (0x07):** Behavior control (auto-step enable, direction)
-- **COPY_SRC_IDX (0x08):** Source index for DMA operations
-- **COPY_DST_IDX (0x09):** Destination index for DMA operations
-- **COPY_COUNT_L/H (0x0A-0x0B):** Byte count for block copy (16-bit)
+- **LIMIT_L/M/H (0x06-0x08):** Limit address for wrap-on-limit (24-bit)
+- **STEP (0x09):** Auto-increment/decrement step size (0-255)
+- **FLAGS (0x0A):** Behavior control (auto-step enable, direction, wrap-on-limit)
+- **COPY_SRC_IDX (0x0B):** Source index for DMA operations
+- **COPY_DST_IDX (0x0C):** Destination index for DMA operations
+- **COPY_COUNT_L/H (0x0D-0x0E):** Byte count for block copy (16-bit)
+
+**Wrap-on-Limit Feature:**
+- Allows automatic reset to default address when limit is reached
+- Useful for circular buffers, bounded iteration, and memory region constraints
+- Enabled via FLAG_WRAP_ON_LIMIT (bit 2) in FLAGS register
+- When enabled and address >= limit_addr after stepping, address resets to default_addr
+- Minimal performance impact (~3-5 cycles when enabled, 0 cycles when disabled)
 
 **Command System:**
 - **Basic Commands:** RESET_INDEX, RESET_ALL, CLEAR_IRQ

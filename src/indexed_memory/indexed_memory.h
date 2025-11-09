@@ -43,16 +43,20 @@
 #define CFG_DEFAULT_L           0x03
 #define CFG_DEFAULT_M           0x04
 #define CFG_DEFAULT_H           0x05
-#define CFG_STEP                0x06
-#define CFG_FLAGS               0x07
-#define CFG_COPY_SRC_IDX        0x08
-#define CFG_COPY_DST_IDX        0x09
-#define CFG_COPY_COUNT_L        0x0A
-#define CFG_COPY_COUNT_H        0x0B
+#define CFG_LIMIT_L             0x06
+#define CFG_LIMIT_M             0x07
+#define CFG_LIMIT_H             0x08
+#define CFG_STEP                0x09
+#define CFG_FLAGS               0x0A
+#define CFG_COPY_SRC_IDX        0x0B
+#define CFG_COPY_DST_IDX        0x0C
+#define CFG_COPY_COUNT_L        0x0D
+#define CFG_COPY_COUNT_H        0x0E
 
 // Flag bits
 #define FLAG_AUTO_STEP          0x01
 #define FLAG_DIRECTION          0x02    // 0=forward, 1=backward
+#define FLAG_WRAP_ON_LIMIT      0x04    // 0=disabled, 1=wrap to default when reaching limit
 
 // Command codes
 #define CMD_NOP                 0x00
@@ -110,12 +114,13 @@
 #define IRQ_MASK_VIDEO_FRAME        IRQ_VIDEO_FRAME_COMPLETE
 #define IRQ_MASK_VIDEO_COLLISION    IRQ_VIDEO_COLLISION
 
-// Memory index structure (12 bytes per index)
+// Memory index structure (16 bytes per index)
 typedef struct {
     uint32_t current_addr;      // 24-bit current address (upper 8 bits unused)
     uint32_t default_addr;      // 24-bit default address (upper 8 bits unused)
+    uint32_t limit_addr;        // 24-bit limit address for wrap-on-limit (upper 8 bits unused)
     uint8_t step;              // Step size (0-255 bytes)
-    uint8_t flags;             // Behavior flags (AUTO_STEP, DIRECTION)
+    uint8_t flags;             // Behavior flags (AUTO_STEP, DIRECTION, WRAP_ON_LIMIT)
     uint16_t reserved;         // Reserved for future use
 } index_t;
 
@@ -146,6 +151,7 @@ void indexed_memory_reset_all(void);
 // Index management
 void indexed_memory_set_index_address(uint8_t idx, uint32_t address);
 void indexed_memory_set_index_default(uint8_t idx, uint32_t address);
+void indexed_memory_set_index_limit(uint8_t idx, uint32_t address);
 void indexed_memory_set_index_step(uint8_t idx, uint8_t step);
 void indexed_memory_set_index_flags(uint8_t idx, uint8_t flags);
 void indexed_memory_reset_index(uint8_t idx);

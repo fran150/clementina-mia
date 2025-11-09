@@ -27,14 +27,15 @@
   - Add PICOHIRAM banking control, clock speed transition to 1 MHz, and indexed interface activation
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11_
 
-- [ ] 4. Implement indexed memory system core
-  - Create 256-index data structure with current address, default address, step, and flags
+- [x] 4. Implement indexed memory system core
+  - Create 256-index data structure with current address, default address, limit address, step, and flags
   - Implement index allocation and initialization (system, video, USB, user ranges)
-  - Add basic index configuration functions (set address, step, flags)
+  - Add basic index configuration functions (set address, default, limit, step, flags)
   - Create memory access functions for reading/writing via indexes
   - Add auto-stepping functionality (increment/decrement with configurable step size)
-  - Test: Verify index structure, basic memory access, and auto-stepping
-  - _Requirements: 5.5, 6.1, 6.8_
+  - Implement wrap-on-limit feature for automatic reset to default when reaching limit address
+  - Test: Verify index structure, basic memory access, auto-stepping, and wrap-on-limit
+  - _Requirements: 5.5, 6.1, 6.6, 6.7, 6.8, 6.9, 6.10_
 
 - [ ] 5. Implement PIO state machines for indexed interface
   - Design PIO state machine 0 for bus protocol and address decoding (GPIO 0-7, 18-21)

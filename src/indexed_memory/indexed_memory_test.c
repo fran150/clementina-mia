@@ -438,6 +438,101 @@ bool test_error_handling(void) {
 }
 
 /**
+ * Test wrap-on-limit functionality
+ */
+bool test_wrap_on_limit(void) {
+    printf("Testing wrap-on-limit functionality...\n");
+    
+    uint8_t test_idx = IDX_USER_START + 6;
+    
+    // Configure index with wrap-on-limit for a 16-byte circular buffer
+    uint32_t buffer_start = 0x20040400;
+    uint32_t buffer_limit = buffer_start + 16; // 16-byte buffer
+    
+    indexed_memory_set_index_address(test_idx, buffer_start);
+    indexed_memory_set_index_default(test_idx, buffer_start);
+    indexed_memory_set_index_limit(test_idx, buffer_limit);
+    indexed_memory_set_index_step(test_idx, 1);
+    indexed_memory_set_index_flags(test_idx, FLAG_AUTO_STEP | FLAG_WRAP_ON_LIMIT);
+    
+    // Write 20 bytes (more than buffer size) to test wrapping
+    uint8_t test_pattern[] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+                              0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF,
+                              0xF0, 0xF1, 0xF2, 0xF3}; // 20 bytes
+    
+    for (int i = 0; i < 20; i++) {
+        indexed_memory_write(test_idx, test_pattern[i]);
+    }
+    
+    // After writing 20 bytes to a 16-byte buffer with wrap, 
+    // the last 4 bytes should have overwritten the first 4 bytes
+    // Expected buffer content: [0xF0, 0xF1, 0xF2, 0xF3, 0x44, 0x55, ..., 0xFF]
+    
+    // Reset to start and verify
+    indexed_memory_reset_index(test_idx);
+    
+    // Check first 4 bytes (should be overwritten)
+    uint8_t expected_first_4[] = {0xF0, 0xF1, 0xF2, 0xF3};
+    for (int i = 0; i < 4; i++) {
+        uint8_t read_data = indexed_memory_read(test_idx);
+        if (read_data != expected_first_4[i]) {
+            printf("FAIL: Wrap-on-limit first 4 bytes at position %d (expected 0x%02X, got 0x%02X)\n", 
+                   i, expected_first_4[i], read_data);
+            return false;
+        }
+    }
+    
+    // Check remaining bytes (should be original pattern bytes 4-15)
+    for (int i = 4; i < 16; i++) {
+        uint8_t read_data = indexed_memory_read(test_idx);
+        if (read_data != test_pattern[i]) {
+            printf("FAIL: Wrap-on-limit remaining bytes at position %d (expected 0x%02X, got 0x%02X)\n", 
+                   i, test_pattern[i], read_data);
+            return false;
+        }
+    }
+    
+    // Test that limit address configuration fields work
+    indexed_memory_set_config_field(test_idx, CFG_LIMIT_L, 0xAB);
+    indexed_memory_set_config_field(test_idx, CFG_LIMIT_M, 0xCD);
+    indexed_memory_set_config_field(test_idx, CFG_LIMIT_H, 0xEF);
+    
+    if (indexed_memory_get_config_field(test_idx, CFG_LIMIT_L) != 0xAB ||
+        indexed_memory_get_config_field(test_idx, CFG_LIMIT_M) != 0xCD ||
+        indexed_memory_get_config_field(test_idx, CFG_LIMIT_H) != 0xEF) {
+        printf("FAIL: Limit address field configuration\n");
+        return false;
+    }
+    
+    // Test wrap-on-limit with backward stepping
+    indexed_memory_set_index_address(test_idx, buffer_start + 2);
+    indexed_memory_set_index_default(test_idx, buffer_start + 10);
+    indexed_memory_set_index_limit(test_idx, buffer_start); // Limit at start (for backward wrap)
+    indexed_memory_set_index_step(test_idx, 3);
+    indexed_memory_set_index_flags(test_idx, FLAG_AUTO_STEP | FLAG_DIRECTION | FLAG_WRAP_ON_LIMIT);
+    
+    // Read backward - should wrap to default when going below limit
+    indexed_memory_read(test_idx); // addr = buffer_start + 2 - 3 = buffer_start - 1 (below limit)
+    
+    // Should have wrapped to default address
+    uint8_t addr_l = indexed_memory_get_config_field(test_idx, CFG_ADDR_L);
+    uint8_t addr_m = indexed_memory_get_config_field(test_idx, CFG_ADDR_M);
+    uint8_t addr_h = indexed_memory_get_config_field(test_idx, CFG_ADDR_H);
+    
+    uint32_t current_addr = addr_l | (addr_m << 8) | (addr_h << 16);
+    uint32_t expected_addr = buffer_start + 10;
+    
+    if (current_addr != (expected_addr & 0xFFFFFF)) {
+        printf("FAIL: Backward wrap-on-limit (expected 0x%06lX, got 0x%06lX)\n", 
+               (unsigned long)(expected_addr & 0xFFFFFF), (unsigned long)current_addr);
+        return false;
+    }
+    
+    printf("PASS: Wrap-on-limit functionality\n");
+    return true;
+}
+
+/**
  * Run all indexed memory tests
  */
 bool run_indexed_memory_tests(void) {
@@ -453,6 +548,7 @@ bool run_indexed_memory_tests(void) {
     all_passed &= test_dma_operations();
     all_passed &= test_window_management();
     all_passed &= test_error_handling();
+    all_passed &= test_wrap_on_limit();
     
     printf("\n=== Test Results ===\n");
     if (all_passed) {

@@ -132,7 +132,9 @@ The MIA (Multifunction Interface Adapter) is a Raspberry Pi Pico 2 W-based syste
 5. THE MIA SHALL provide a CFG_DATA register at $C003 and $C00B to read or write the selected configuration field
 6. THE MIA SHALL support 24-bit addressing (16MB address space) for accessing the full MIA memory range
 7. THE MIA SHALL support step sizes from 0 to 255 bytes with configurable forward or backward direction
-8. THE MIA SHALL provide configuration fields for current address (3 bytes), default address (3 bytes), step size (1 byte), and flags (1 byte)
+8. THE MIA SHALL provide configuration fields for current address (3 bytes), default address (3 bytes), limit address (3 bytes), step size (1 byte), and flags (1 byte)
+9. THE MIA SHALL provide wrap-on-limit functionality where an index automatically resets to its default address when reaching the configured limit address
+10. THE MIA SHALL allow enabling or disabling wrap-on-limit behavior via the WRAP_ON_LIMIT flag bit
 
 ### Requirement 7
 
