@@ -40,11 +40,14 @@
 - [ ] 5. Implement PIO state machines for indexed interface
   - Design PIO state machine 0 for bus protocol and address decoding (GPIO 0-7, 18-21)
   - Implement IO0 chip select monitoring (GPIO 21) and dual-window detection
-  - Add WE/OE signal coordination (GPIO 18-19) with W65C02S timing compliance
+  - Add R/W and OE signal coordination (GPIO 18-19) with W65C02S6TPG-14 timing compliance
+  - Implement speculative preparation during 200-530ns window before R/W confirmation
   - Create fast path for simple register access (IDX_SELECT, STATUS) entirely in PIO
+  - Add READ data hold logic to continue driving for 15ns after OE goes HIGH (1000-1015ns)
+  - Implement WRITE data latching on PHI2 falling edge (1000ns)
   - Implement interrupt-driven coordination between PIO and C code for complex operations
-  - Test: Verify PIO timing, register access, and window priority handling
-  - _Requirements: 5.1, 5.2, 5.6, 5.7_
+  - Test: Verify PIO timing (785ns READ budget, 470ns WRITE budget), register access, and window priority handling
+  - _Requirements: 5.1, 5.2, 5.6, 5.7, 5.8, 5.9, 5.11_
 
 - [ ] 6. Implement dual-window register interface
   - Create register handlers for Window A ($C000-$C007) and Window B ($C008-$C00F)
@@ -124,11 +127,15 @@
 
 - [ ]* 13. Create comprehensive test suite
   - Write unit tests for indexed memory system and auto-stepping functionality
-  - Create PIO state machine timing validation tests for W65C02S compliance
+  - Create PIO state machine timing validation tests for W65C02S6TPG-14 compliance (785ns READ, 470ns WRITE budgets)
+  - Verify READ data hold timing (15ns after PHI2 falls, continuing after OE goes HIGH)
+  - Verify WRITE data latching on PHI2 falling edge within sampling window
+  - Test speculative preparation during 200-530ns window before R/W confirmation
   - Add dual-window register interface tests with conflict resolution
   - Implement DMA operation and command execution tests
   - Create interrupt and error handling validation tests
   - Add USB keyboard and graphics memory access tests via indexed interface
   - Write integration tests for complete boot sequence and indexed interface activation
-  - Create performance tests for 1 MHz timing requirements validation
+  - Create performance tests for 1 MHz timing requirements validation with logic analyzer
+  - Verify bus contention avoidance (OE signal compliance with tDHR extension)
   - _Requirements: All requirements - validation and verification_

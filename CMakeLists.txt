@@ -5,7 +5,7 @@ else()
     set(USERHOME $ENV{HOME})
 endif()
 set(sdkVersion 2.2.0)
-set(toolchainVersion 14_2_Rel1)
+set(toolchainVersion RISCV_ZCB_RPI_2_2_0_3)
 set(picotoolVersion 2.2.0-a4)
 set(picoVscode ${USERHOME}/.pico-sdk/cmake/pico-vscode.cmake)
 if (EXISTS ${picoVscode})
@@ -15,7 +15,7 @@ endif()
 cmake_minimum_required(VERSION 3.13)
 
 # Set board type for Pico W (must be set before including SDK)
-set(PICO_BOARD pico_w CACHE STRING "Board type")
+set(PICO_BOARD pico2_w CACHE STRING "Board type")
 
 # Set PICO_SDK_PATH if not already set
 if(NOT DEFINED ENV{PICO_SDK_PATH})

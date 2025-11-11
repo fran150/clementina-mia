@@ -2,12 +2,13 @@
 
 ## Introduction
 
-The MIA (Multifunction Interface Adapter) is a Raspberry Pi Pico 2 W-based system that provides multiple critical functions for a 6502-based computer: clock generation, ROM emulation for bootloading, and video output via Wi-Fi. The system eliminates the need for physical ROM chips by intercepting reset vector access and dynamically loading the kernel into system memory.
+The MIA (Multifunction Interface Adapter) is a Raspberry Pi Pico 2 W-based system that provides multiple critical functions for a 6502-based computer: clock generation, ROM emulation for bootloading, and video output via Wi-Fi. The system interfaces with the W65C02S6TPG-14 CPU and eliminates the need for physical ROM chips by intercepting reset vector access and dynamically loading the kernel into system memory.
 
 ## Glossary
 
 - **MIA**: Multifunction Interface Adapter - the Raspberry Pi Pico 2 W acting as the multifunction chip
-- **Clementina**: The main 6502-based computer system
+- **Clementina**: The main 6502-based computer system using the W65C02S6TPG-14 CPU
+- **W65C02S6TPG-14**: The WDC 65C02 microprocessor used as the CPU for Clementina, operating at 3.3V, a CMOS version of the 6502 with additional instructions and improved timing characteristics
 - **Reset_Vector**: Memory addresses $FFFC-$FFFD that contain the startup address for the 6502 processor
 - **Kernel**: The operating system code that needs to be loaded into system memory at startup
 
@@ -115,9 +116,12 @@ The MIA (Multifunction Interface Adapter) is a Raspberry Pi Pico 2 W-based syste
 3. THE MIA SHALL provide Window_B interface at addresses $C008-$C00F (and mirrored throughout $C000-$C3FF) with identical register layout to Window_A
 4. WHEN both windows are accessed simultaneously, THE MIA SHALL prioritize Window_A and ignore Window_B access
 5. THE MIA SHALL maintain exactly 256 shared Memory_Index entries (0-255) accessible from both windows, each containing current address, default address, step size, and behavior flags
-6. THE MIA SHALL respond to Clementina memory access within 500 nanoseconds to maintain CPU timing compatibility at 1 MHz operation
-7. THE MIA SHALL respond to Clementina memory access within 200 nanoseconds to maintain CPU timing compatibility at 1 MHz operation
-8. THE MIA SHALL maintain data integrity during concurrent operations through atomic memory operations
+6. THE MIA SHALL respond to Clementina READ operations by providing valid data within 785 nanoseconds from chip select assertion at 1 MHz operation
+7. THE MIA SHALL respond to Clementina READ operations by providing valid data within 455 nanoseconds from R/W signal confirmation at 1 MHz operation
+8. THE MIA SHALL hold READ data stable for 15 nanoseconds after PHI2 falling edge to meet W65C02S6TPG-14 data hold time requirements
+9. THE MIA SHALL latch WRITE data on PHI2 falling edge within the 470 nanosecond data valid window at 1 MHz operation
+10. THE MIA SHALL maintain data integrity during concurrent operations through atomic memory operations
+11. THE MIA SHALL NOT drive the data bus when OE signal is HIGH except during the 15 nanosecond data hold period after PHI2 falling edge for READ operations
 
 ### Requirement 6
 

@@ -141,29 +141,37 @@ The MIA operates in two distinct phases with different timing and processing req
 ### PIO State Machine Interface
 
 **W65C02S6TPG-14 Timing Requirements:**
-The MIA must comply with the specific timing requirements of the W65C02S6TPG-14 processor:
+The MIA must comply with the specific timing requirements of the W65C02S6TPG-14 processor as detailed in docs/BUS_TIMING.md:
 
 **Primary Target: 1 MHz Operation (1000ns cycle time):**
-- **Address Setup Time (tADS):** 30ns before PHI2 rising edge
-- **Address Hold Time (tAH):** 10ns after PHI2 falling edge  
-- **Data Setup Time (tDSR):** 100ns before PHI2 falling edge (reads)
-- **Data Hold Time (tDHR):** 10ns after PHI2 falling edge (reads)
-- **Write Data Valid (tDSW):** 300ns after PHI2 rising edge (writes)
-- **Chip Select Setup (tCSS):** 0ns (can be coincident with PHI2)
-- **Output Enable Response:** Data must be valid within 200ns of OE assertion
+- **Address Setup Time (tADS):** 40ns max after PHI2 falls
+- **Address Hold Time (tAH):** 10ns min after PHI2 falls  
+- **Data Setup Time (tDSR):** 15ns min before PHI2 falls (reads)
+- **Data Hold Time (tDHR):** 10ns min after PHI2 falls (reads)
+- **Write Data Delay (tMDS):** 40ns max after PHI2 rises (writes)
+- **Data Hold Time (tDHW):** 10ns min after PHI2 falls (writes)
+- **CS Decode Delay:** ~200ns (40ns tADS + 80ns decode + 80ns margin)
+- **R/W Decode Delay:** ~30ns propagation through external logic
+
+**MIA Response Requirements at 1 MHz:**
+- **READ Operations:**
+  - 785ns available from CS valid (200ns) to data deadline (985ns)
+  - 455ns available from R/W confirmation (530ns) to data deadline (985ns)
+  - Data must remain stable until 1015ns (15ns after PHI2 falls for tDHR)
+  - MIA can speculatively prepare data during 200-530ns window before R/W confirms
+- **WRITE Operations:**
+  - 340ns available from CS valid (200ns) to data arrival (540ns)
+  - 470ns data sampling window from data valid (540ns) to hold end (1010ns)
+  - MIA should latch data on PHI2 falling edge (1000ns) for most reliable capture
+- **Bus Contention Avoidance:**
+  - MIA drives bus only when OE is LOW, except for 15ns tDHR hold period after PHI2 falls
+  - OE goes HIGH at PHI2 falling edge (1000ns) but MIA continues driving until 1015ns
+  - This extended drive period is safe as CPU doesn't drive bus during this time
 
 **Future Optimization Target: 2 MHz Operation (500ns cycle time):**
-- **Output Enable Response:** Data must be valid within 100ns of OE assertion
-- **Write Data Valid (tDSW):** 150ns after PHI2 rising edge (writes)
-- **Data Setup Time (tDSR):** 50ns before PHI2 falling edge (reads)
-- Other timing requirements remain the same
-
-**MIA Response Requirements:**
-- PIO state machines provide deterministic timing for register access
-- Core 0 dedicated to meeting real-time bus interface requirements
-- Hybrid PIO + C implementation balances performance and functionality
-- **Primary target:** 200ns response budget at 1 MHz (100ns safety margin)
-- **Future goal:** 100ns response budget at 2 MHz (requires optimization)
+- READ preparation: 200ns to 485ns = 285ns available (still adequate)
+- Confirmed read response: 280ns to 485ns = 205ns available (tight but possible)
+- Would require PIO-only fast path and enhanced caching for reliable operation
 
 **PIO Implementation Strategy:**
 - PIO State Machine 0: Bus protocol and address decoding (GPIO 0-7, 18-21)
@@ -178,44 +186,56 @@ The MIA must comply with the specific timing requirements of the W65C02S6TPG-14 
 - Address decoding via GPIO 0-7 for register selection and window detection
 - Window priority: Window A takes precedence, Window B access ignored on conflicts
 - Bidirectional data handling via GPIO 8-15 with automatic direction control
-- **1 MHz Timing Compliance (200ns budget):**
+- **1 MHz Timing Compliance (785ns READ budget, 470ns WRITE budget):**
   - **CS Detection:** PIO responds to IO0_CS assertion within 15ns
-  - **OE Response:** Data valid on bus within 120ns of OE assertion (80ns safety margin)
-  - **WE Handling:** Data latched within 25ns of WE deassertion
+  - **Speculative Preparation:** 200-530ns window (330ns) for address decode and data fetch before R/W confirms
+  - **READ Response:** Data must be valid by 985ns (785ns from CS valid, 455ns from R/W confirmation)
+  - **READ Data Hold:** Continue driving data until 1015ns (15ns after PHI2 falls) even though OE goes HIGH at 1000ns
+  - **WRITE Sampling:** Latch data on PHI2 falling edge (1000ns) within 470ns sampling window
   - **Address Decode:** Complete within 40ns of address stable
-- Fast path: Simple register access handled entirely in PIO (~120ns total)
-- Slow path: Complex operations fall back to C code (~180ns total)
-- Comfortable timing margins for reliable operation at 1 MHz
+- Fast path: Simple register access handled entirely in PIO (~200ns total)
+- Slow path: Complex operations fall back to C code (~400ns total)
+- Excellent timing margins for reliable operation at 1 MHz (585ns+ margin for reads)
 - **Future 2 MHz optimization:** Will require PIO-only fast path and enhanced caching
 
 **W65C02S Bus Protocol Compliance (1 MHz Primary Target):**
 ```
-Read Cycle Timing (1000ns cycle, 200ns OE budget):
-1. PHI2 rises → Address becomes valid (CPU drives)
-2. CS asserted → PIO detects within 15ns
-3. Address decoded → Register identified within 40ns  
-4. OE asserted → PIO enables data output within 25ns
-5. Data valid → Must be stable within 120ns of OE (80ns margin)
-6. PHI2 falls → CPU latches data, OE deasserted
-7. Data hold → PIO maintains data for 10ns after PHI2 fall
+Read Cycle Timing (1000ns cycle, 785ns preparation budget):
+1. PHI2 falls (0ns) → Cycle start, address bus begins changing
+2. Address valid (40ns) → Address stable on A0-A15 (tADS)
+3. CS valid (200ns) → PIO detects CS assertion, begins speculative preparation
+4. Speculative window (200-530ns) → Decode address, fetch data, stage in buffer (330ns)
+5. PHI2 rises (500ns) → R/W signal becoming valid
+6. R/W valid (530ns) → Confirms READ operation, OE goes LOW
+7. Data drive (530-985ns) → Enable outputs and drive prepared data (455ns window)
+8. Data deadline (985ns) → Data must be valid (15ns before PHI2 falls)
+9. PHI2 falls (1000ns) → CPU samples data, OE goes HIGH
+10. Data hold (1000-1015ns) → Continue driving for tDHR (15ns after PHI2 falls)
+11. Tri-state (1015ns) → Release data bus
 
-Write Cycle Timing (1000ns cycle):
-1. PHI2 rises → Address becomes valid (CPU drives)
-2. CS asserted → PIO detects within 15ns
-3. Address decoded → Register identified within 40ns
-4. WE asserted → PIO prepares for data input
-5. Data valid → CPU drives data after 300ns
-6. WE deasserted → PIO latches data within 25ns
-7. PHI2 falls → Cycle complete
+Write Cycle Timing (1000ns cycle, 470ns sampling budget):
+1. PHI2 falls (0ns) → Cycle start, address bus begins changing
+2. Address valid (40ns) → Address stable on A0-A15 (tADS)
+3. CS valid (200ns) → PIO detects CS assertion, prepares for write
+4. Preparation window (200-530ns) → Decode address, configure for write (330ns)
+5. PHI2 rises (500ns) → R/W signal becoming valid, CPU begins driving data
+6. R/W valid (530ns) → Confirms WRITE operation, OE stays HIGH
+7. Data valid (540ns) → CPU data stable on bus (tMDS = 40ns after PHI2 rises)
+8. Sampling window (540-1010ns) → MIA can sample data anytime (470ns window)
+9. PHI2 falls (1000ns) → Optimal sampling point (latch data on falling edge)
+10. Data hold (1000-1010ns) → CPU maintains data for tDHW (10ns after PHI2 falls)
+11. Process write (1010ns+) → Update internal registers/memory
 ```
 
 **Timing Optimization:**
 - 80% of operations use PIO fast path (IDX_SELECT, simple DATA_PORT access)
 - 20% of operations use C slow path (configuration, commands, complex addressing)
+- Speculative preparation during 200-530ns window maximizes available time for memory access
 - No caching between PIO and C to avoid coherency issues
 - Atomic operations ensure data consistency
 - All timing verified against W65C02S6TPG-14 datasheet specifications for 1 MHz operation
-- Comfortable safety margins enable reliable operation and future optimization
+- Excellent safety margins (585ns+ for reads, 130ns+ for writes) enable reliable operation
+- See docs/BUS_TIMING.md for comprehensive timing analysis and implementation guidelines
 
 ### Indexed Memory System
 
@@ -712,15 +732,21 @@ The indexed memory interface uses a hybrid PIO + C architecture to meet stringen
 
 ### Timing Optimization Strategy
 
-**1 MHz Operation (500ns budget):**
-- PIO fast path: 132ns (74% margin)
-- C slow path: 200ns (60% margin)
-- Comfortable timing with room for optimization
+**1 MHz Operation (785ns READ budget, 470ns WRITE budget):**
+- READ preparation: 785ns available (200ns to 985ns)
+- READ confirmed response: 455ns available (530ns to 985ns)
+- WRITE sampling: 470ns window (540ns to 1010ns)
+- PIO fast path: ~200ns (585ns margin for reads)
+- C slow path: ~400ns (385ns margin for reads)
+- Excellent timing margins with substantial room for optimization
 
-**2 MHz Operation (250ns budget):**
-- PIO fast path: 132ns (47% margin)
-- C slow path: 200ns (20% margin)
-- Achievable with careful implementation
+**2 MHz Operation (285ns READ budget, 235ns WRITE budget):**
+- READ preparation: 285ns available (200ns to 485ns)
+- READ confirmed response: 205ns available (280ns to 485ns)
+- WRITE sampling: 235ns window (270ns to 505ns)
+- PIO fast path: ~200ns (85ns margin for reads)
+- C slow path: ~400ns (would exceed budget, requires optimization)
+- Achievable with PIO-only fast path and careful implementation
 
 **Performance Optimization:**
 - No caching between PIO and C to avoid coherency issues
