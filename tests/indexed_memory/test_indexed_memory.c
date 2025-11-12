@@ -4,9 +4,9 @@
  * Comprehensive test suite for the indexed memory system
  */
 
-#include "indexed_memory_test.h"
-#include "indexed_memory.h"
-#include "pico/stdlib.h"
+#include "test_indexed_memory.h"
+#include "indexed_memory/indexed_memory.h"
+#include "mocks/pico_mock.h"
 #include <stdio.h>
 #include <string.h>
 

@@ -8,6 +8,7 @@
 #include "indexed_memory.h"
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 // MIA memory layout (256KB allocated from 520KB SRAM)
 #define MIA_MEMORY_BASE         0x20000000
@@ -18,16 +19,42 @@
 #define MIA_IO_BUFFER_BASE      (MIA_MEMORY_BASE + 0x0003C000)  // 16KB
 #define MIA_MEMORY_SIZE         0x40000  // 256KB total MIA memory
 
+// For host testing, convert hardware addresses to offsets
+#ifndef PICO_BUILD
+#define MIA_ADDR_TO_OFFSET(addr) ((addr) - MIA_MEMORY_BASE)
+#define MIA_SYSTEM_AREA_OFFSET  MIA_ADDR_TO_OFFSET(MIA_SYSTEM_AREA_BASE)
+#define MIA_VIDEO_AREA_OFFSET   MIA_ADDR_TO_OFFSET(MIA_VIDEO_AREA_BASE)
+#define MIA_USER_AREA_OFFSET    MIA_ADDR_TO_OFFSET(MIA_USER_AREA_BASE)
+#define MIA_IO_BUFFER_OFFSET    MIA_ADDR_TO_OFFSET(MIA_IO_BUFFER_BASE)
+#endif
+
 // Global system state
 static indexed_memory_state_t g_state;
 
 // Memory area pointers for validation
+#ifdef PICO_BUILD
+// On hardware, use actual SRAM address
 static uint8_t* const mia_memory = (uint8_t*)MIA_MEMORY_BASE;
+#else
+// On host, allocate memory dynamically
+static uint8_t* mia_memory = NULL;
+#endif
 
 /**
  * Initialize the indexed memory system
  */
 void indexed_memory_init(void) {
+#ifndef PICO_BUILD
+    // On host, allocate memory if not already allocated
+    if (mia_memory == NULL) {
+        mia_memory = (uint8_t*)calloc(MIA_MEMORY_SIZE, 1);
+        if (mia_memory == NULL) {
+            printf("ERROR: Failed to allocate MIA memory for testing\n");
+            return;
+        }
+    }
+#endif
+    
     // Clear all state
     memset(&g_state, 0, sizeof(g_state));
     
@@ -221,6 +248,7 @@ uint8_t indexed_memory_read(uint8_t idx) {
     uint8_t flags = g_state.indexes[idx].flags;
     
     // Wrap address to valid range using bitwise AND (fast, since size is power of 2)
+    // Works for both hardware (subtracts base) and host (same calculation)
     uint32_t offset = (addr - MIA_MEMORY_BASE) & (MIA_MEMORY_SIZE - 1);
     
     // Read data
@@ -259,6 +287,7 @@ void indexed_memory_write(uint8_t idx, uint8_t data) {
     uint8_t flags = g_state.indexes[idx].flags;
     
     // Wrap address to valid range using bitwise AND (fast, since size is power of 2)
+    // Works for both hardware (subtracts base) and host (same calculation)
     uint32_t offset = (addr - MIA_MEMORY_BASE) & (MIA_MEMORY_SIZE - 1);
     
     // Write data
@@ -294,6 +323,7 @@ uint8_t indexed_memory_read_no_step(uint8_t idx) {
     uint32_t addr = g_state.indexes[idx].current_addr;
     
     // Wrap address to valid range using bitwise AND (fast, since size is power of 2)
+    // Works for both hardware (subtracts base) and host (same calculation)
     uint32_t offset = (addr - MIA_MEMORY_BASE) & (MIA_MEMORY_SIZE - 1);
     
     return mia_memory[offset];
@@ -306,6 +336,7 @@ void indexed_memory_write_no_step(uint8_t idx, uint8_t data) {
     uint32_t addr = g_state.indexes[idx].current_addr;
     
     // Wrap address to valid range using bitwise AND (fast, since size is power of 2)
+    // Works for both hardware (subtracts base) and host (same calculation)
     uint32_t offset = (addr - MIA_MEMORY_BASE) & (MIA_MEMORY_SIZE - 1);
     
     mia_memory[offset] = data;

@@ -1,7 +1,7 @@
 # MIA Makefile
 # Convenience wrapper for CMake build system
 
-.PHONY: all build clean setup flash help
+.PHONY: all build clean setup flash test help
 
 # Default target
 all: build
@@ -30,12 +30,18 @@ flash: build
 		echo "picotool not found. Please install picotool or manually copy build/mia.uf2 to your Pico."; \
 	fi
 
+# Run unit tests on host machine
+test:
+	@echo "Running unit tests..."
+	@cd tests && ./build_and_run.sh
+
 # Show help
 help:
 	@echo "MIA (Multifunction Interface Adapter) Build System"
 	@echo ""
 	@echo "Available targets:"
 	@echo "  build   - Build the firmware (default)"
+	@echo "  test    - Run unit tests on host machine"
 	@echo "  clean   - Clean build directory"
 	@echo "  setup   - Setup development environment"
 	@echo "  flash   - Flash firmware to Pico (requires picotool)"

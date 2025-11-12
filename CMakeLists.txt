@@ -59,14 +59,10 @@ add_executable(mia
     src/main.c
     src/hardware/gpio_mapping.c
     src/system/clock_control.c
-    src/system/clock_control_test.c
     src/system/reset_control.c
     src/rom_emulation/rom_emulator.c
-    src/rom_emulation/rom_emulator_test.c
     src/indexed_memory/indexed_memory.c
-    src/indexed_memory/indexed_memory_test.c
     src/bus_interface/bus_interface.c
-    src/bus_interface/bus_interface_test.c
     src/video/video_controller.c
     src/usb/usb_controller.c
     src/usb/usb_descriptors.c
@@ -122,8 +118,4 @@ target_compile_definitions(mia PRIVATE
     PICO_DEFAULT_UART_TX_PIN=0
     PICO_DEFAULT_UART_RX_PIN=1
     CYW43_HOST_NAME="MIA-Clementina"
-    # Uncomment to enable indexed memory tests at startup:
-    # RUN_INDEXED_MEMORY_TESTS
-    # Uncomment to enable bus interface tests at startup:
-    RUN_BUS_INTERFACE_TESTS
 )

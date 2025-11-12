@@ -8,8 +8,8 @@
  * Tests use 8-bit local addresses that MIA actually sees
  */
 
-#include "bus_interface_test.h"
-#include "bus_interface.h"
+#include "test_bus_interface.h"
+#include "bus_interface/bus_interface.h"
 #include <stdio.h>
 
 /**

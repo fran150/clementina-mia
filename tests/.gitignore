@@ -1,0 +1,5 @@
+# Test build artifacts
+build/
+*.o
+*.a
+mia_tests

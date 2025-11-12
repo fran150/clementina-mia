@@ -4,8 +4,8 @@
  * Test functions for verifying indexed memory system functionality
  */
 
-#ifndef INDEXED_MEMORY_TEST_H
-#define INDEXED_MEMORY_TEST_H
+#ifndef TEST_INDEXED_MEMORY_H
+#define TEST_INDEXED_MEMORY_H
 
 #include <stdbool.h>
 
@@ -22,4 +22,4 @@ bool test_error_handling(void);
 // Main test runner
 bool run_indexed_memory_tests(void);
 
-#endif // INDEXED_MEMORY_TEST_H
+#endif // TEST_INDEXED_MEMORY_H

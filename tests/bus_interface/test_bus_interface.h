@@ -4,8 +4,8 @@
  * Test functions for verifying bus interface functionality
  */
 
-#ifndef BUS_INTERFACE_TEST_H
-#define BUS_INTERFACE_TEST_H
+#ifndef TEST_BUS_INTERFACE_H
+#define TEST_BUS_INTERFACE_H
 
 #include <stdbool.h>
 
@@ -22,4 +22,4 @@ bool test_bus_interface_direct_access(void);
 // Main test runner
 bool run_bus_interface_tests(void);
 
-#endif // BUS_INTERFACE_TEST_H
+#endif // TEST_BUS_INTERFACE_H
