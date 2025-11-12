@@ -37,76 +37,207 @@
   - Test: Verify index structure, basic memory access, auto-stepping, and wrap-on-limit
   - _Requirements: 5.5, 6.1, 6.6, 6.7, 6.8, 6.9, 6.10_
 
-- [ ] 5. Implement PIO state machines for indexed interface
-  - Design PIO state machine 0 for bus protocol and address decoding (GPIO 0-7, 18-21)
-  - Implement IO0 chip select monitoring (GPIO 21) and dual-window detection
-  - Add R/W and OE signal coordination (GPIO 18-19) with W65C02S6TPG-14 timing compliance
-  - Implement speculative preparation during 200-530ns window before R/W confirmation
-  - Create fast path for simple register access (IDX_SELECT, STATUS) entirely in PIO
-  - Add READ data hold logic to continue driving for 15ns after OE goes HIGH (1000-1015ns)
-  - Implement WRITE data latching on PHI2 falling edge (1000ns)
-  - Implement interrupt-driven coordination between PIO and C code for complex operations
-  - Test: Verify PIO timing (785ns READ budget, 470ns WRITE budget), register access, and window priority handling
-  - _Requirements: 5.1, 5.2, 5.6, 5.7, 5.8, 5.9, 5.11_
+- [ ] 5. Implement bus interface foundation
+  - [ ] 5.1 Create bus interface module structure (bus_interface.h and bus_interface.c)
+    - Define register address constants for indexed interface mode ($C000-$C00F)
+    - Define window detection macros and helper functions
+    - Create function prototypes for main entry points (bus_interface_read/write)
+    - _Requirements: 5.1, 5.2_
+  - [ ] 5.2 Implement address decoding logic
+    - Create function to decode register offset from address (0-7 for each window)
+    - Implement window detection (Window A: bit 3 = 0, Window B: bit 3 = 1)
+    - Add address mirroring logic (16-byte window repeated throughout $C000-$C3FF)
+    - _Requirements: 5.1, 5.2_
+  - [ ] 5.3 Create main dispatcher functions
+    - Implement bus_interface_read(address) - main READ entry point
+    - Implement bus_interface_write(address, data) - main WRITE entry point
+    - Add basic switch statement structure for register routing
+    - _Requirements: 5.1, 5.2, 5.3_
+  - [ ] 5.4 Add unit tests for address decoding
+    - Test window detection for various addresses
+    - Test address mirroring across full range
+    - Verify register offset calculation
+    - _Requirements: 5.1, 5.2_
 
-- [ ] 6. Implement dual-window register interface
-  - Create register handlers for Window A ($C000-$C007) and Window B ($C008-$C00F)
-  - Implement IDX_SELECT registers for selecting active index in each window
-  - Add DATA_PORT registers with automatic index stepping and memory access
-  - Implement CFG_FIELD_SELECT and CFG_DATA for index configuration
-  - Add COMMAND register for basic commands (RESET_INDEX, RESET_ALL, CLEAR_IRQ)
-  - Create shared STATUS register at $C005/$C00D
-  - Create shared 16-bit IRQ_CAUSE register with low byte at $C006/$C00E and high byte at $C007/$C00F
-  - Test: Verify dual-window operation, register mirroring, and window priority
-  - _Requirements: 5.2, 5.3, 5.4, 6.1, 6.2, 6.3, 6.4, 6.5_
+- [ ] 6. Implement register handlers - Index selection
+  - [ ] 6.1 Implement IDX_SELECT read handler
+    - Create read_idx_select(window_b) function
+    - Return currently selected index for specified window
+    - Integrate with indexed_memory_get_window_index()
+    - _Requirements: 6.1_
+  - [ ] 6.2 Implement IDX_SELECT write handler
+    - Create write_idx_select(window_b, index) function
+    - Update active index selection for specified window
+    - Integrate with indexed_memory_set_window_index()
+    - _Requirements: 6.1_
+  - [ ] 6.3 Test index selection operations
+    - Test reading selected index for both windows
+    - Test changing selected index for both windows
+    - Verify window independence
+    - _Requirements: 6.1_
 
-- [ ] 7. Implement DMA and command system
-  - Add DMA configuration fields (COPY_SRC_IDX, COPY_DST_IDX, COPY_COUNT)
-  - Implement COPY_BYTE command for single-byte transfers between indexes
-  - Add COPY_BLOCK command for multi-byte hardware-accelerated transfers
-  - Create command processing system with immediate execution and status reporting
-  - Add system commands (PICO_REINIT) and subsystem command ranges
-  - Test: Verify DMA operations, command execution, and status reporting
-  - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 7.7, 7.8_
+- [ ] 7. Implement register handlers - Data port
+  - [ ] 7.1 Implement DATA_PORT read handler
+    - Create read_data_port(window_b) function
+    - Read byte from currently selected index with auto-stepping
+    - Integrate with indexed_memory_read()
+    - _Requirements: 6.2_
+  - [ ] 7.2 Implement DATA_PORT write handler
+    - Create write_data_port(window_b, data) function
+    - Write byte to currently selected index with auto-stepping
+    - Integrate with indexed_memory_write()
+    - _Requirements: 6.2_
+  - [ ] 7.3 Test data port operations
+    - Test sequential reads with auto-stepping
+    - Test sequential writes with auto-stepping
+    - Test with different step sizes and directions
+    - Verify wrap-on-limit functionality
+    - _Requirements: 6.2, 6.9, 6.10_
 
-- [ ] 8. Implement interrupt and error handling system
-  - Configure IRQ line (GPIO 26) for interrupt notification to 6502
-  - Implement 16-bit IRQ_CAUSE register with low byte ($C006/$C00E) and high byte ($C007/$C00F) for interrupt source codes
-  - Implement write-1-to-clear functionality for IRQ_CAUSE registers for selective interrupt acknowledgment
-  - Implement 16-bit IRQ_MASK register accessible via Index 83 (low byte) and Index 84 (high byte) for enabling/disabling interrupt sources
-  - Add interrupt mask checking before asserting IRQ line
-  - Initialize IRQ mask to 0xFFFF (all interrupts enabled by default)
-  - Organize interrupts with system/I/O in low byte (0-7) and video in high byte (8-15)
-  - Implement automatic IRQ line deassertion when no enabled interrupts remain pending
-  - Add error detection for memory access violations and index overflows
-  - Create error logging system accessible via Index 0 (system error log)
-  - Implement CLEAR_IRQ command for clearing all interrupts at once
-  - Test: Verify interrupt generation, masking, write-1-to-clear acknowledgment, error detection, and error reporting
-  - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 8.8, 8.9, 8.10, 8.11, 8.12, 8.13_
+- [ ] 8. Implement register handlers - Configuration
+  - [ ] 8.1 Implement CFG_FIELD_SELECT handlers
+    - Create read_cfg_field_select(window_b) function
+    - Create write_cfg_field_select(window_b, field) function
+    - Integrate with indexed_memory_get/set_config_field_select()
+    - _Requirements: 6.4_
+  - [ ] 8.2 Implement CFG_DATA read handler
+    - Create read_cfg_data(window_b) function
+    - Read selected configuration field from active index
+    - Integrate with indexed_memory_get_config_field()
+    - _Requirements: 6.5_
+  - [ ] 8.3 Implement CFG_DATA write handler
+    - Create write_cfg_data(window_b, data) function
+    - Write to selected configuration field of active index
+    - Integrate with indexed_memory_set_config_field()
+    - _Requirements: 6.5_
+  - [ ] 8.4 Test configuration access
+    - Test reading all configuration field types (address, default, limit, step, flags)
+    - Test writing all configuration field types
+    - Test multi-byte field access (24-bit addresses)
+    - Verify DMA configuration fields (COPY_SRC_IDX, COPY_DST_IDX, COPY_COUNT)
+    - _Requirements: 6.4, 6.5, 6.8_
 
-- [ ] 9. Implement graphics memory organization
-  - Organize MIA memory layout: 256KB total (2KB index table, 16KB system, 60KB video, 162KB user, 16KB I/O)
+- [ ] 9. Implement register handlers - Status and interrupts
+  - [ ] 9.1 Implement STATUS read handler
+    - Create read_status() function
+    - Return system status register value
+    - Integrate with indexed_memory_get_status()
+    - _Requirements: 7.7_
+  - [ ] 9.2 Implement IRQ_CAUSE_LOW handlers
+    - Create read_irq_cause_low() function
+    - Create write_irq_cause_low(clear_bits) function with write-1-to-clear logic
+    - Integrate with indexed_memory_get/write_irq_cause_low()
+    - _Requirements: 8.2, 8.3_
+  - [ ] 9.3 Implement IRQ_CAUSE_HIGH handlers
+    - Create read_irq_cause_high() function
+    - Create write_irq_cause_high(clear_bits) function with write-1-to-clear logic
+    - Integrate with indexed_memory_get/write_irq_cause_high()
+    - _Requirements: 8.2, 8.3_
+  - [ ] 9.4 Test status and interrupt handling
+    - Test status register reading
+    - Test interrupt cause reading (both bytes)
+    - Test write-1-to-clear functionality for individual interrupt bits
+    - Verify IRQ line behavior (assert/deassert based on mask)
+    - _Requirements: 7.7, 8.2, 8.3, 8.8, 8.12_
+
+- [ ] 10. Implement register handlers - Commands
+  - [ ] 10.1 Implement COMMAND write handler
+    - Create write_command(window_b, command) function
+    - Route command to indexed_memory_execute_command()
+    - Handle command execution and status updates
+    - _Requirements: 7.1, 7.2_
+  - [ ] 10.2 Test basic commands
+    - Test CMD_RESET_INDEX (reset active index to default address)
+    - Test CMD_RESET_ALL (reset all indexes)
+    - Test CMD_CLEAR_IRQ (clear all pending interrupts)
+    - Test CMD_PICO_REINIT (reinitialize system)
+    - _Requirements: 7.2, 7.3, 7.6_
+  - [ ] 10.3 Test DMA commands
+    - Test CMD_COPY_BYTE (single byte copy between indexes)
+    - Test CMD_COPY_BLOCK (multi-byte block copy)
+    - Verify DMA configuration via CFG_DATA (source, destination, count)
+    - Test DMA completion interrupt generation
+    - _Requirements: 7.4, 7.5, 7.8_
+
+- [ ] 11. Implement PIO integration for bus timing
+  - [ ] 11.1 Design PIO state machine for bus protocol
+    - Create PIO program to monitor CS signals (HIRAM_CS on GPIO 20, IO0_CS on GPIO 21)
+    - Implement address capture from GPIO 0-7 when CS is active
+    - Add R/W signal detection (GPIO 18) to distinguish READ vs WRITE
+    - Implement OE signal monitoring (GPIO 19) for bus direction control
+    - _Requirements: 5.6, 5.7, 5.8_
+  - [ ] 11.2 Implement READ cycle timing in PIO
+    - Wait for R/W HIGH to confirm READ operation
+    - Configure data bus (GPIO 8-15) as output when OE goes LOW
+    - Drive data onto bus with proper timing (valid by 985ns)
+    - Hold data for 15ns after PHI2 falls (1000-1015ns) even after OE goes HIGH
+    - Tri-state bus after hold period
+    - _Requirements: 5.7, 5.8, 5.9_
+  - [ ] 11.3 Implement WRITE cycle timing in PIO
+    - Wait for R/W LOW to confirm WRITE operation
+    - Keep data bus (GPIO 8-15) as input during WRITE
+    - Latch data on PHI2 falling edge (1000ns)
+    - Pass captured data to C code for processing
+    - _Requirements: 5.9_
+  - [ ] 11.4 Implement PIO-C communication
+    - Set up FIFO communication between PIO and C code
+    - PIO sends: operation type (READ/WRITE), address, data (for WRITE)
+    - C code sends: data value (for READ)
+    - Add interrupt mechanism for operation notification
+    - _Requirements: 5.6, 5.7_
+  - [ ] 11.5 Integrate PIO with C bus interface handlers
+    - Connect PIO interrupt handler to bus_interface_read/write functions
+    - Implement speculative preparation during 200-530ns window
+    - Add fast path for simple operations (IDX_SELECT, STATUS)
+    - Verify timing budgets: 785ns for READ, 470ns for WRITE
+    - _Requirements: 5.6, 5.7, 5.8, 5.9, 5.11_
+  - [ ] 11.6 Test PIO timing and integration
+    - Verify READ cycle timing with logic analyzer
+    - Verify WRITE cycle timing with logic analyzer
+    - Test back-to-back operations
+    - Verify bus contention avoidance (OE signal compliance)
+    - Test window priority (Window A takes precedence)
+    - _Requirements: 5.6, 5.7, 5.8, 5.9, 5.11_
+
+- [ ] 12. Complete indexed interface end-to-end testing
+  - [ ] 12.1 Test dual-window operations
+    - Test simultaneous access to different indexes via Window A and B
+    - Verify window priority when both accessed simultaneously
+    - Test efficient data copying using both windows
+    - _Requirements: 5.3, 5.4_
+  - [ ] 12.2 Test complete register set
+    - Test all registers in both windows
+    - Verify register mirroring throughout $C000-$C3FF range
+    - Test edge cases and boundary conditions
+    - _Requirements: 5.1, 5.2, 5.3_
+  - [ ] 12.3 Performance and timing validation
+    - Measure response times for all register operations
+    - Verify 1 MHz operation compliance
+    - Test sustained throughput with continuous operations
+    - Profile timing margins and identify optimization opportunities
+    - _Requirements: 5.6, 5.7, 5.8, 5.9_
+
+- [ ] 13. Implement graphics memory organization via indexed interface
   - Pre-configure indexes 16-23 for character table access (8 tables, shared by background and sprites)
   - Pre-configure indexes 32-47 for palette bank access (16 banks, shared resource)
   - Pre-configure indexes 48-51 for nametable access (4 tables for double buffering and scrolling)
   - Pre-configure indexes 52-55 for palette table access (4 tables for double buffering and scrolling)
   - Pre-configure index 56 for sprite OAM data (256 sprites, 8x8 pixels, using character table graphics)
   - Pre-configure index 57 for active frame control register for buffer set selection
-  - Create graphics data structures accessible via indexed interface
-  - Test: Verify graphics memory layout, index-based access, and double buffering
+  - Test: Verify graphics memory layout and index-based access
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 9.2, 9.3, 9.4, 9.5, 9.6, 9.7_
 
-- [ ] 10. Implement USB keyboard system via indexed interface
+- [ ] 14. Implement USB keyboard system via indexed interface
   - Add build-time configuration for USB Host/Device mode selection
   - Configure TinyUSB stack for selected mode
   - Pre-configure indexes 64-79 for USB keyboard buffer and status
-  - Implement 16-byte circular keyboard buffer accessible via Index 64
+  - Implement circular keyboard buffer accessible via Index 64
   - Add USB status information accessible via Index 65
   - Create IRQ generation for keyboard events
   - Test: Verify USB operation and keyboard data access via indexes
   - _Requirements: 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7, 10.8, 10.9, 10.10, 10.11, 10.12_
 
-- [ ] 11. Implement Wi-Fi video transmission system
+- [ ] 15. Implement Wi-Fi video transmission system
   - Configure Wi-Fi connection and UDP-based communication
   - Create frame data transmission using graphics data from indexed memory (active buffer set)
   - Implement 30 FPS transmission timing (33.33ms intervals)
@@ -116,7 +247,7 @@
   - Test: Verify Wi-Fi connectivity, video data transmission, and double buffering
   - _Requirements: 3.9, 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7_
 
-- [ ] 12. Implement dual-core coordination and system integration
+- [ ] 16. Implement dual-core coordination and system integration
   - Configure Core 0 for real-time operations (ROM emulation, PIO coordination, bus interface)
   - Configure Core 1 for background processing (video, Wi-Fi, USB, error handling)
   - Implement inter-core communication and shared memory management
@@ -125,17 +256,10 @@
   - Test: Verify complete system operation from boot through indexed interface
   - _Requirements: All requirements - system integration_
 
-- [ ]* 13. Create comprehensive test suite
-  - Write unit tests for indexed memory system and auto-stepping functionality
-  - Create PIO state machine timing validation tests for W65C02S6TPG-14 compliance (785ns READ, 470ns WRITE budgets)
-  - Verify READ data hold timing (15ns after PHI2 falls, continuing after OE goes HIGH)
-  - Verify WRITE data latching on PHI2 falling edge within sampling window
-  - Test speculative preparation during 200-530ns window before R/W confirmation
-  - Add dual-window register interface tests with conflict resolution
-  - Implement DMA operation and command execution tests
-  - Create interrupt and error handling validation tests
-  - Add USB keyboard and graphics memory access tests via indexed interface
-  - Write integration tests for complete boot sequence and indexed interface activation
-  - Create performance tests for 1 MHz timing requirements validation with logic analyzer
-  - Verify bus contention avoidance (OE signal compliance with tDHR extension)
+- [ ]* 17. Create comprehensive test suite
+  - Write unit tests for all bus interface register handlers
+  - Create integration tests for dual-window operations
+  - Add performance tests for timing validation with logic analyzer
+  - Test error handling and edge cases
+  - Verify complete boot sequence and indexed interface activation
   - _Requirements: All requirements - validation and verification_
