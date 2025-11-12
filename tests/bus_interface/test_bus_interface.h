@@ -19,6 +19,10 @@ bool test_bus_interface_config_field_access(void);
 bool test_bus_interface_window_independence(void);
 bool test_bus_interface_direct_access(void);
 bool test_bus_interface_idx_select_read(void);
+bool test_bus_interface_data_port_step_sizes(void);
+bool test_bus_interface_data_port_directions(void);
+bool test_bus_interface_data_port_wrap_on_limit(void);
+bool test_bus_interface_data_port_sequential_operations(void);
 
 // Main test runner
 bool run_bus_interface_tests(void);

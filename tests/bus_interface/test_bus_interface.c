@@ -10,6 +10,7 @@
 
 #include "test_bus_interface.h"
 #include "bus_interface/bus_interface.h"
+#include "indexed_memory/indexed_memory.h"
 #include <stdio.h>
 
 /**
@@ -735,6 +736,732 @@ bool test_bus_interface_idx_select_integration(void) {
 }
 
 /**
+ * Test DATA_PORT read handler for all windows
+ */
+bool test_bus_interface_data_port_read(void) {
+    printf("Testing DATA_PORT read handler...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Test reading DATA_PORT for Window A (address 0x01)
+    // Select index 64 (USB keyboard buffer) for Window A
+    bus_interface_write(0x00, 64);
+    
+    // Write some test data to the index
+    indexed_memory_write(64, 0xAA);
+    indexed_memory_write(64, 0xBB);
+    indexed_memory_write(64, 0xCC);
+    
+    // Reset index to read back the data
+    indexed_memory_reset_index(64);
+    
+    // Read data via DATA_PORT
+    uint8_t value = bus_interface_read(0x01);
+    if (value != 0xAA) {
+        printf("  FAIL: Window A DATA_PORT should return 0xAA, got 0x%02X\n", value);
+        return false;
+    }
+    
+    // Auto-stepping should advance to next byte
+    value = bus_interface_read(0x01);
+    if (value != 0xBB) {
+        printf("  FAIL: Window A DATA_PORT should return 0xBB after auto-step, got 0x%02X\n", value);
+        return false;
+    }
+    
+    // Test reading DATA_PORT for Window B (address 0x11)
+    bus_interface_write(0x10, 128);  // Select user index
+    indexed_memory_write(128, 0x11);
+    indexed_memory_write(128, 0x22);
+    indexed_memory_reset_index(128);
+    
+    value = bus_interface_read(0x11);
+    if (value != 0x11) {
+        printf("  FAIL: Window B DATA_PORT should return 0x11, got 0x%02X\n", value);
+        return false;
+    }
+    
+    // Test reading DATA_PORT for Window C (address 0x21)
+    bus_interface_write(0x20, 129);  // Select user index
+    indexed_memory_write(129, 0x33);
+    indexed_memory_reset_index(129);
+    
+    value = bus_interface_read(0x21);
+    if (value != 0x33) {
+        printf("  FAIL: Window C DATA_PORT should return 0x33, got 0x%02X\n", value);
+        return false;
+    }
+    
+    // Test reading DATA_PORT for Window D (address 0x31)
+    bus_interface_write(0x30, 130);  // Select user index
+    indexed_memory_write(130, 0x44);
+    indexed_memory_reset_index(130);
+    
+    value = bus_interface_read(0x31);
+    if (value != 0x44) {
+        printf("  FAIL: Window D DATA_PORT should return 0x44, got 0x%02X\n", value);
+        return false;
+    }
+    
+    printf("  PASS: DATA_PORT read handler works correctly for all windows\n");
+    return true;
+}
+
+/**
+ * Test DATA_PORT read with auto-stepping
+ */
+bool test_bus_interface_data_port_auto_step(void) {
+    printf("Testing DATA_PORT read with auto-stepping...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Select index 128 (user area) for Window A
+    bus_interface_write(0x00, 128);
+    
+    // Write a sequence of bytes
+    for (uint8_t i = 0; i < 10; i++) {
+        indexed_memory_write(128, i * 10);
+    }
+    
+    // Reset index to start
+    indexed_memory_reset_index(128);
+    
+    // Read back the sequence via DATA_PORT with auto-stepping
+    for (uint8_t i = 0; i < 10; i++) {
+        uint8_t value = bus_interface_read(0x01);
+        if (value != i * 10) {
+            printf("  FAIL: Expected 0x%02X at position %d, got 0x%02X\n", i * 10, i, value);
+            return false;
+        }
+    }
+    
+    printf("  PASS: DATA_PORT auto-stepping works correctly\n");
+    return true;
+}
+
+/**
+ * Test DATA_PORT read with multiple windows
+ */
+bool test_bus_interface_data_port_multi_window(void) {
+    printf("Testing DATA_PORT read with multiple windows...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Configure indexes to point to different memory locations
+    // User indexes all start at the same base address, so we need to offset them
+    uint32_t base_addr = 0x20013800;  // MIA_USER_AREA_BASE
+    indexed_memory_set_index_address(128, base_addr + 0);
+    indexed_memory_set_index_default(128, base_addr + 0);
+    
+    indexed_memory_set_index_address(129, base_addr + 100);
+    indexed_memory_set_index_default(129, base_addr + 100);
+    
+    indexed_memory_set_index_address(130, base_addr + 200);
+    indexed_memory_set_index_default(130, base_addr + 200);
+    
+    indexed_memory_set_index_address(131, base_addr + 300);
+    indexed_memory_set_index_default(131, base_addr + 300);
+    
+    // Set up different indexes for each window
+    bus_interface_write(0x00, 128);  // Window A -> index 128
+    bus_interface_write(0x10, 129);  // Window B -> index 129
+    bus_interface_write(0x20, 130);  // Window C -> index 130
+    bus_interface_write(0x30, 131);  // Window D -> index 131
+    
+    // Write different data to each index
+    indexed_memory_write(128, 0xAA);
+    indexed_memory_write(129, 0xBB);
+    indexed_memory_write(130, 0xCC);
+    indexed_memory_write(131, 0xDD);
+    
+    // Reset all indexes to read from the beginning
+    indexed_memory_reset_index(128);
+    indexed_memory_reset_index(129);
+    indexed_memory_reset_index(130);
+    indexed_memory_reset_index(131);
+    
+    // Read from each window and verify independence
+    uint8_t val_a = bus_interface_read(0x01);
+    uint8_t val_b = bus_interface_read(0x11);
+    uint8_t val_c = bus_interface_read(0x21);
+    uint8_t val_d = bus_interface_read(0x31);
+    
+    if (val_a != 0xAA) {
+        printf("  FAIL: Window A should return 0xAA, got 0x%02X\n", val_a);
+        return false;
+    }
+    if (val_b != 0xBB) {
+        printf("  FAIL: Window B should return 0xBB, got 0x%02X\n", val_b);
+        return false;
+    }
+    if (val_c != 0xCC) {
+        printf("  FAIL: Window C should return 0xCC, got 0x%02X\n", val_c);
+        return false;
+    }
+    if (val_d != 0xDD) {
+        printf("  FAIL: Window D should return 0xDD, got 0x%02X\n", val_d);
+        return false;
+    }
+    
+    printf("  PASS: DATA_PORT multi-window access works correctly\n");
+    return true;
+}
+
+/**
+ * Test DATA_PORT write handler for all windows
+ */
+bool test_bus_interface_data_port_write(void) {
+    printf("Testing DATA_PORT write handler...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Test writing DATA_PORT for Window A (address 0x01)
+    // Select index 128 (user area) for Window A
+    bus_interface_write(0x00, 128);
+    
+    // Reset index to start
+    indexed_memory_reset_index(128);
+    
+    // Write data via DATA_PORT
+    bus_interface_write(0x01, 0xAA);
+    bus_interface_write(0x01, 0xBB);
+    bus_interface_write(0x01, 0xCC);
+    
+    // Reset index and read back to verify
+    indexed_memory_reset_index(128);
+    uint8_t value = indexed_memory_read(128);
+    if (value != 0xAA) {
+        printf("  FAIL: Window A DATA_PORT write failed, expected 0xAA, got 0x%02X\n", value);
+        return false;
+    }
+    
+    value = indexed_memory_read(128);
+    if (value != 0xBB) {
+        printf("  FAIL: Window A DATA_PORT write failed, expected 0xBB, got 0x%02X\n", value);
+        return false;
+    }
+    
+    value = indexed_memory_read(128);
+    if (value != 0xCC) {
+        printf("  FAIL: Window A DATA_PORT write failed, expected 0xCC, got 0x%02X\n", value);
+        return false;
+    }
+    
+    // Test writing DATA_PORT for Window B (address 0x11)
+    bus_interface_write(0x10, 129);  // Select user index
+    indexed_memory_reset_index(129);
+    
+    bus_interface_write(0x11, 0x11);
+    bus_interface_write(0x11, 0x22);
+    
+    indexed_memory_reset_index(129);
+    value = indexed_memory_read(129);
+    if (value != 0x11) {
+        printf("  FAIL: Window B DATA_PORT write failed, expected 0x11, got 0x%02X\n", value);
+        return false;
+    }
+    
+    // Test writing DATA_PORT for Window C (address 0x21)
+    bus_interface_write(0x20, 130);  // Select user index
+    indexed_memory_reset_index(130);
+    
+    bus_interface_write(0x21, 0x33);
+    
+    indexed_memory_reset_index(130);
+    value = indexed_memory_read(130);
+    if (value != 0x33) {
+        printf("  FAIL: Window C DATA_PORT write failed, expected 0x33, got 0x%02X\n", value);
+        return false;
+    }
+    
+    // Test writing DATA_PORT for Window D (address 0x31)
+    bus_interface_write(0x30, 131);  // Select user index
+    indexed_memory_reset_index(131);
+    
+    bus_interface_write(0x31, 0x44);
+    
+    indexed_memory_reset_index(131);
+    value = indexed_memory_read(131);
+    if (value != 0x44) {
+        printf("  FAIL: Window D DATA_PORT write failed, expected 0x44, got 0x%02X\n", value);
+        return false;
+    }
+    
+    printf("  PASS: DATA_PORT write handler works correctly for all windows\n");
+    return true;
+}
+
+/**
+ * Test DATA_PORT write with auto-stepping
+ */
+bool test_bus_interface_data_port_write_auto_step(void) {
+    printf("Testing DATA_PORT write with auto-stepping...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Select index 128 (user area) for Window A
+    bus_interface_write(0x00, 128);
+    
+    // Reset index to start
+    indexed_memory_reset_index(128);
+    
+    // Write a sequence of bytes via DATA_PORT with auto-stepping
+    for (uint8_t i = 0; i < 10; i++) {
+        bus_interface_write(0x01, i * 10);
+    }
+    
+    // Reset index and read back to verify
+    indexed_memory_reset_index(128);
+    for (uint8_t i = 0; i < 10; i++) {
+        uint8_t value = indexed_memory_read(128);
+        if (value != i * 10) {
+            printf("  FAIL: Expected 0x%02X at position %d, got 0x%02X\n", i * 10, i, value);
+            return false;
+        }
+    }
+    
+    printf("  PASS: DATA_PORT write auto-stepping works correctly\n");
+    return true;
+}
+
+/**
+ * Test DATA_PORT write with multiple windows
+ */
+bool test_bus_interface_data_port_write_multi_window(void) {
+    printf("Testing DATA_PORT write with multiple windows...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Configure indexes to point to different memory locations
+    uint32_t base_addr = 0x20013800;  // MIA_USER_AREA_BASE
+    indexed_memory_set_index_address(128, base_addr + 0);
+    indexed_memory_set_index_default(128, base_addr + 0);
+    
+    indexed_memory_set_index_address(129, base_addr + 100);
+    indexed_memory_set_index_default(129, base_addr + 100);
+    
+    indexed_memory_set_index_address(130, base_addr + 200);
+    indexed_memory_set_index_default(130, base_addr + 200);
+    
+    indexed_memory_set_index_address(131, base_addr + 300);
+    indexed_memory_set_index_default(131, base_addr + 300);
+    
+    // Set up different indexes for each window
+    bus_interface_write(0x00, 128);  // Window A -> index 128
+    bus_interface_write(0x10, 129);  // Window B -> index 129
+    bus_interface_write(0x20, 130);  // Window C -> index 130
+    bus_interface_write(0x30, 131);  // Window D -> index 131
+    
+    // Reset all indexes
+    indexed_memory_reset_index(128);
+    indexed_memory_reset_index(129);
+    indexed_memory_reset_index(130);
+    indexed_memory_reset_index(131);
+    
+    // Write different data to each window
+    bus_interface_write(0x01, 0xAA);  // Window A
+    bus_interface_write(0x11, 0xBB);  // Window B
+    bus_interface_write(0x21, 0xCC);  // Window C
+    bus_interface_write(0x31, 0xDD);  // Window D
+    
+    // Reset all indexes and read back to verify independence
+    indexed_memory_reset_index(128);
+    indexed_memory_reset_index(129);
+    indexed_memory_reset_index(130);
+    indexed_memory_reset_index(131);
+    
+    uint8_t val_a = indexed_memory_read(128);
+    uint8_t val_b = indexed_memory_read(129);
+    uint8_t val_c = indexed_memory_read(130);
+    uint8_t val_d = indexed_memory_read(131);
+    
+    if (val_a != 0xAA) {
+        printf("  FAIL: Window A should have written 0xAA, got 0x%02X\n", val_a);
+        return false;
+    }
+    if (val_b != 0xBB) {
+        printf("  FAIL: Window B should have written 0xBB, got 0x%02X\n", val_b);
+        return false;
+    }
+    if (val_c != 0xCC) {
+        printf("  FAIL: Window C should have written 0xCC, got 0x%02X\n", val_c);
+        return false;
+    }
+    if (val_d != 0xDD) {
+        printf("  FAIL: Window D should have written 0xDD, got 0x%02X\n", val_d);
+        return false;
+    }
+    
+    printf("  PASS: DATA_PORT write multi-window access works correctly\n");
+    return true;
+}
+
+/**
+ * Test DATA_PORT read/write integration
+ */
+bool test_bus_interface_data_port_read_write_integration(void) {
+    printf("Testing DATA_PORT read/write integration...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Select index 128 for Window A
+    bus_interface_write(0x00, 128);
+    indexed_memory_reset_index(128);
+    
+    // Write data via DATA_PORT
+    bus_interface_write(0x01, 0x12);
+    bus_interface_write(0x01, 0x34);
+    bus_interface_write(0x01, 0x56);
+    
+    // Reset index and read back via DATA_PORT
+    indexed_memory_reset_index(128);
+    
+    uint8_t val1 = bus_interface_read(0x01);
+    uint8_t val2 = bus_interface_read(0x01);
+    uint8_t val3 = bus_interface_read(0x01);
+    
+    if (val1 != 0x12 || val2 != 0x34 || val3 != 0x56) {
+        printf("  FAIL: Read/write integration failed: got 0x%02X, 0x%02X, 0x%02X\n", 
+               val1, val2, val3);
+        return false;
+    }
+    
+    // Test interleaved read/write operations
+    indexed_memory_reset_index(128);
+    
+    bus_interface_write(0x01, 0xAA);  // Write 0xAA at position 0
+    indexed_memory_reset_index(128);
+    uint8_t read_val = bus_interface_read(0x01);  // Read 0xAA from position 0
+    
+    if (read_val != 0xAA) {
+        printf("  FAIL: Interleaved read/write failed: expected 0xAA, got 0x%02X\n", read_val);
+        return false;
+    }
+    
+    bus_interface_write(0x01, 0xBB);  // Write 0xBB at position 1 (after read advanced)
+    
+    // Reset and verify both values
+    indexed_memory_reset_index(128);
+    val1 = bus_interface_read(0x01);
+    val2 = bus_interface_read(0x01);
+    
+    if (val1 != 0xAA || val2 != 0xBB) {
+        printf("  FAIL: Interleaved operations failed: got 0x%02X, 0x%02X\n", val1, val2);
+        return false;
+    }
+    
+    printf("  PASS: DATA_PORT read/write integration works correctly\n");
+    return true;
+}
+
+/**
+ * Test DATA_PORT with different step sizes
+ */
+bool test_bus_interface_data_port_step_sizes(void) {
+    printf("Testing DATA_PORT with different step sizes...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Test step size of 1 (default)
+    bus_interface_write(0x00, 128);  // Select index 128
+    indexed_memory_reset_index(128);
+    indexed_memory_set_index_step(128, 1);
+    indexed_memory_set_index_flags(128, FLAG_AUTO_STEP);
+    
+    // Write data with step size 1
+    bus_interface_write(0x01, 0x10);
+    bus_interface_write(0x01, 0x20);
+    bus_interface_write(0x01, 0x30);
+    
+    // Read back with step size 1
+    indexed_memory_reset_index(128);
+    if (bus_interface_read(0x01) != 0x10 || 
+        bus_interface_read(0x01) != 0x20 || 
+        bus_interface_read(0x01) != 0x30) {
+        printf("  FAIL: Step size 1 failed\n");
+        return false;
+    }
+    
+    // Test step size of 2
+    indexed_memory_reset_index(128);
+    indexed_memory_set_index_step(128, 2);
+    
+    // Write data with step size 2 (should skip every other byte)
+    bus_interface_write(0x01, 0xAA);  // Position 0
+    bus_interface_write(0x01, 0xBB);  // Position 2
+    bus_interface_write(0x01, 0xCC);  // Position 4
+    
+    // Read back with step size 2
+    indexed_memory_reset_index(128);
+    if (bus_interface_read(0x01) != 0xAA || 
+        bus_interface_read(0x01) != 0xBB || 
+        bus_interface_read(0x01) != 0xCC) {
+        printf("  FAIL: Step size 2 failed\n");
+        return false;
+    }
+    
+    // Test step size of 4
+    indexed_memory_reset_index(128);
+    indexed_memory_set_index_step(128, 4);
+    
+    // Write data with step size 4
+    bus_interface_write(0x01, 0x11);  // Position 0
+    bus_interface_write(0x01, 0x22);  // Position 4
+    bus_interface_write(0x01, 0x33);  // Position 8
+    
+    // Read back with step size 4
+    indexed_memory_reset_index(128);
+    if (bus_interface_read(0x01) != 0x11 || 
+        bus_interface_read(0x01) != 0x22 || 
+        bus_interface_read(0x01) != 0x33) {
+        printf("  FAIL: Step size 4 failed\n");
+        return false;
+    }
+    
+    printf("  PASS: DATA_PORT with different step sizes works correctly\n");
+    return true;
+}
+
+/**
+ * Test DATA_PORT with forward and backward directions
+ */
+bool test_bus_interface_data_port_directions(void) {
+    printf("Testing DATA_PORT with forward and backward directions...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Test forward direction (default)
+    bus_interface_write(0x00, 128);  // Select index 128
+    indexed_memory_reset_index(128);
+    indexed_memory_set_index_step(128, 1);
+    indexed_memory_set_index_flags(128, FLAG_AUTO_STEP);  // Forward direction
+    
+    // Write data in forward direction
+    bus_interface_write(0x01, 0x01);
+    bus_interface_write(0x01, 0x02);
+    bus_interface_write(0x01, 0x03);
+    bus_interface_write(0x01, 0x04);
+    
+    // Read back in forward direction
+    indexed_memory_reset_index(128);
+    if (bus_interface_read(0x01) != 0x01 || 
+        bus_interface_read(0x01) != 0x02 || 
+        bus_interface_read(0x01) != 0x03 || 
+        bus_interface_read(0x01) != 0x04) {
+        printf("  FAIL: Forward direction failed\n");
+        return false;
+    }
+    
+    // Test backward direction
+    // Set address to position 10 and step backward
+    uint32_t base_addr = 0x20013800;  // MIA_USER_AREA_BASE
+    indexed_memory_set_index_address(128, base_addr + 10);
+    indexed_memory_set_index_default(128, base_addr + 10);
+    indexed_memory_set_index_step(128, 1);
+    indexed_memory_set_index_flags(128, FLAG_AUTO_STEP | FLAG_DIRECTION);  // Backward
+    
+    // Write data in backward direction (from position 10 going down)
+    bus_interface_write(0x01, 0xAA);  // Position 10
+    bus_interface_write(0x01, 0xBB);  // Position 9
+    bus_interface_write(0x01, 0xCC);  // Position 8
+    bus_interface_write(0x01, 0xDD);  // Position 7
+    
+    // Read back in backward direction
+    indexed_memory_set_index_address(128, base_addr + 10);
+    if (bus_interface_read(0x01) != 0xAA || 
+        bus_interface_read(0x01) != 0xBB || 
+        bus_interface_read(0x01) != 0xCC || 
+        bus_interface_read(0x01) != 0xDD) {
+        printf("  FAIL: Backward direction failed\n");
+        return false;
+    }
+    
+    // Test backward with step size 2
+    indexed_memory_set_index_address(128, base_addr + 20);
+    indexed_memory_set_index_step(128, 2);
+    indexed_memory_set_index_flags(128, FLAG_AUTO_STEP | FLAG_DIRECTION);
+    
+    bus_interface_write(0x01, 0x11);  // Position 20
+    bus_interface_write(0x01, 0x22);  // Position 18
+    bus_interface_write(0x01, 0x33);  // Position 16
+    
+    indexed_memory_set_index_address(128, base_addr + 20);
+    if (bus_interface_read(0x01) != 0x11 || 
+        bus_interface_read(0x01) != 0x22 || 
+        bus_interface_read(0x01) != 0x33) {
+        printf("  FAIL: Backward direction with step size 2 failed\n");
+        return false;
+    }
+    
+    printf("  PASS: DATA_PORT with forward and backward directions works correctly\n");
+    return true;
+}
+
+/**
+ * Test DATA_PORT with wrap-on-limit functionality
+ */
+bool test_bus_interface_data_port_wrap_on_limit(void) {
+    printf("Testing DATA_PORT with wrap-on-limit functionality...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Configure index 128 with wrap-on-limit
+    // Wrap happens when address >= limit, so limit should be one past the last valid position
+    uint32_t base_addr = 0x20013800;  // MIA_USER_AREA_BASE
+    uint32_t default_addr = base_addr + 0;
+    uint32_t limit_addr = base_addr + 5;  // Wrap when reaching position 5
+    
+    bus_interface_write(0x00, 128);  // Select index 128
+    indexed_memory_set_index_address(128, default_addr);
+    indexed_memory_set_index_default(128, default_addr);
+    indexed_memory_set_index_limit(128, limit_addr);
+    indexed_memory_set_index_step(128, 1);
+    indexed_memory_set_index_flags(128, FLAG_AUTO_STEP | FLAG_WRAP_ON_LIMIT);
+    
+    // Write data that will trigger wrap
+    // Positions 0-4 are valid, position 5 triggers wrap
+    bus_interface_write(0x01, 0x00);  // Write to position 0, then step to 1
+    bus_interface_write(0x01, 0x01);  // Write to position 1, then step to 2
+    bus_interface_write(0x01, 0x02);  // Write to position 2, then step to 3
+    bus_interface_write(0x01, 0x03);  // Write to position 3, then step to 4
+    bus_interface_write(0x01, 0x04);  // Write to position 4, then step to 5 (>= limit, wraps to 0)
+    bus_interface_write(0x01, 0x05);  // Write to position 0 (wrapped), then step to 1
+    
+    // Read back and verify wrap occurred
+    indexed_memory_reset_index(128);
+    if (bus_interface_read(0x01) != 0x05) {  // Position 0 should have wrapped value
+        printf("  FAIL: Wrap-on-limit did not wrap correctly, expected 0x05, got 0x%02X\n", 
+               bus_interface_read(0x01));
+        indexed_memory_reset_index(128);
+        uint8_t val = bus_interface_read(0x01);
+        printf("  DEBUG: Position 0 contains 0x%02X\n", val);
+        return false;
+    }
+    if (bus_interface_read(0x01) != 0x01) {  // Position 1
+        printf("  FAIL: Position 1 incorrect after wrap\n");
+        return false;
+    }
+    
+    // Test wrap with step size 2
+    indexed_memory_set_index_address(128, default_addr);
+    indexed_memory_set_index_limit(128, base_addr + 6);  // Wrap when reaching position 6
+    indexed_memory_set_index_step(128, 2);
+    indexed_memory_set_index_flags(128, FLAG_AUTO_STEP | FLAG_WRAP_ON_LIMIT);
+    
+    bus_interface_write(0x01, 0xAA);  // Write to position 0, step to 2
+    bus_interface_write(0x01, 0xBB);  // Write to position 2, step to 4
+    bus_interface_write(0x01, 0xCC);  // Write to position 4, step to 6 (>= limit, wraps to 0)
+    bus_interface_write(0x01, 0xDD);  // Write to position 0 (wrapped), step to 2
+    
+    indexed_memory_reset_index(128);
+    if (bus_interface_read(0x01) != 0xDD) {  // Position 0 should have wrapped value
+        printf("  FAIL: Wrap-on-limit with step size 2 did not wrap correctly\n");
+        return false;
+    }
+    
+    // Skip position 1 (step size 2)
+    indexed_memory_set_index_address(128, base_addr + 2);
+    if (bus_interface_read(0x01) != 0xBB) {  // Position 2 should still have original value
+        printf("  FAIL: Position 2 incorrect after wrap with step size 2\n");
+        return false;
+    }
+    
+    // Test without wrap-on-limit (should not wrap)
+    indexed_memory_set_index_address(128, default_addr);
+    indexed_memory_set_index_step(128, 1);
+    indexed_memory_set_index_flags(128, FLAG_AUTO_STEP);  // No wrap flag
+    
+    bus_interface_write(0x01, 0x10);  // Position 0
+    bus_interface_write(0x01, 0x20);  // Position 1
+    bus_interface_write(0x01, 0x30);  // Position 2
+    bus_interface_write(0x01, 0x40);  // Position 3
+    bus_interface_write(0x01, 0x50);  // Position 4
+    bus_interface_write(0x01, 0x60);  // Position 5
+    bus_interface_write(0x01, 0x70);  // Position 6 (no wrap, continues)
+    
+    indexed_memory_reset_index(128);
+    if (bus_interface_read(0x01) != 0x10) {  // Position 0 should be original value
+        printf("  FAIL: Non-wrap mode incorrectly wrapped\n");
+        return false;
+    }
+    
+    printf("  PASS: DATA_PORT with wrap-on-limit functionality works correctly\n");
+    return true;
+}
+
+/**
+ * Test DATA_PORT sequential operations with auto-stepping
+ */
+bool test_bus_interface_data_port_sequential_operations(void) {
+    printf("Testing DATA_PORT sequential operations with auto-stepping...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Test sequential reads
+    bus_interface_write(0x00, 128);  // Select index 128
+    indexed_memory_reset_index(128);
+    indexed_memory_set_index_step(128, 1);
+    indexed_memory_set_index_flags(128, FLAG_AUTO_STEP);
+    
+    // Write a sequence
+    for (uint8_t i = 0; i < 20; i++) {
+        bus_interface_write(0x01, i);
+    }
+    
+    // Read back the sequence
+    indexed_memory_reset_index(128);
+    for (uint8_t i = 0; i < 20; i++) {
+        uint8_t value = bus_interface_read(0x01);
+        if (value != i) {
+            printf("  FAIL: Sequential read failed at position %d, expected %d, got %d\n", 
+                   i, i, value);
+            return false;
+        }
+    }
+    
+    // Test sequential writes
+    indexed_memory_reset_index(128);
+    for (uint8_t i = 0; i < 15; i++) {
+        bus_interface_write(0x01, 0xFF - i);
+    }
+    
+    // Verify sequential writes
+    indexed_memory_reset_index(128);
+    for (uint8_t i = 0; i < 15; i++) {
+        uint8_t value = bus_interface_read(0x01);
+        if (value != (0xFF - i)) {
+            printf("  FAIL: Sequential write failed at position %d\n", i);
+            return false;
+        }
+    }
+    
+    printf("  PASS: DATA_PORT sequential operations work correctly\n");
+    return true;
+}
+
+/**
  * Run all bus interface tests
  */
 bool run_bus_interface_tests(void) {
@@ -757,6 +1484,17 @@ bool run_bus_interface_tests(void) {
     all_passed &= test_bus_interface_idx_select_read();
     all_passed &= test_bus_interface_idx_select_write();
     all_passed &= test_bus_interface_idx_select_integration();
+    all_passed &= test_bus_interface_data_port_read();
+    all_passed &= test_bus_interface_data_port_auto_step();
+    all_passed &= test_bus_interface_data_port_multi_window();
+    all_passed &= test_bus_interface_data_port_write();
+    all_passed &= test_bus_interface_data_port_write_auto_step();
+    all_passed &= test_bus_interface_data_port_write_multi_window();
+    all_passed &= test_bus_interface_data_port_read_write_integration();
+    all_passed &= test_bus_interface_data_port_step_sizes();
+    all_passed &= test_bus_interface_data_port_directions();
+    all_passed &= test_bus_interface_data_port_wrap_on_limit();
+    all_passed &= test_bus_interface_data_port_sequential_operations();
     
     if (all_passed) {
         printf("\n=== All Bus Interface Tests PASSED ===\n\n");

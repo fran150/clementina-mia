@@ -9,6 +9,7 @@
  */
 
 #include "bus_interface.h"
+#include "indexed_memory/indexed_memory.h"
 #include <stddef.h>
 #include <string.h>
 
@@ -46,6 +47,38 @@ static uint8_t read_idx_select(uint8_t window_num) {
 static void write_idx_select(uint8_t window_num, uint8_t index) {
     // Update the active index for the specified window
     g_window_state[window_num].active_index = index;
+}
+
+/**
+ * Read DATA_PORT register
+ * Reads a byte from the currently selected index with auto-stepping
+ * 
+ * @param window_num Window number (0-7 for Windows A-H)
+ * @return Data byte read from the current index address
+ */
+static uint8_t read_data_port(uint8_t window_num) {
+    // Get the currently selected index for this window
+    uint8_t idx = g_window_state[window_num].active_index;
+    
+    // Read byte from index with auto-stepping
+    // indexed_memory_read() handles auto-stepping based on index configuration
+    return indexed_memory_read(idx);
+}
+
+/**
+ * Write DATA_PORT register
+ * Writes a byte to the currently selected index with auto-stepping
+ * 
+ * @param window_num Window number (0-7 for Windows A-H)
+ * @param data Data byte to write to the current index address
+ */
+static void write_data_port(uint8_t window_num, uint8_t data) {
+    // Get the currently selected index for this window
+    uint8_t idx = g_window_state[window_num].active_index;
+    
+    // Write byte to index with auto-stepping
+    // indexed_memory_write() handles auto-stepping based on index configuration
+    indexed_memory_write(idx, data);
 }
 
 // ============================================================================
@@ -129,8 +162,7 @@ uint8_t bus_interface_read(uint8_t local_addr) {
             return read_idx_select(window_num);
             
         case REG_OFFSET_DATA_PORT:
-            // TODO: Implement DATA_PORT read handler
-            return 0x00;
+            return read_data_port(window_num);
             
         case REG_OFFSET_CFG_FIELD_SELECT:
             // TODO: Implement CFG_FIELD_SELECT read handler
@@ -209,7 +241,7 @@ void bus_interface_write(uint8_t local_addr, uint8_t data) {
             break;
             
         case REG_OFFSET_DATA_PORT:
-            // TODO: Implement DATA_PORT write handler
+            write_data_port(window_num, data);
             break;
             
         case REG_OFFSET_CFG_FIELD_SELECT:

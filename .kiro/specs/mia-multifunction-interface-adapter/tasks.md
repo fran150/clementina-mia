@@ -80,24 +80,24 @@
     - Update active index selection for specified window
     - Integrate with indexed_memory_set_window_index()
     - _Requirements: 6.1_
-  - [ ] 6.3 Test index selection operations
+  - [x] 6.3 Test index selection operations
     - Test reading selected index for all windows (A, B, C, D)
     - Test changing selected index for all windows
     - Verify window independence across all four windows
     - _Requirements: 6.1_
 
 - [ ] 7. Implement register handlers - Data port
-  - [ ] 7.1 Implement DATA_PORT read handler
+  - [x] 7.1 Implement DATA_PORT read handler
     - Create read_data_port(window_num) function supporting all windows (A, B, C, D)
     - Read byte from currently selected index with auto-stepping
     - Integrate with indexed_memory_read()
     - _Requirements: 6.2_
-  - [ ] 7.2 Implement DATA_PORT write handler
+  - [x] 7.2 Implement DATA_PORT write handler
     - Create write_data_port(window_num, data) function supporting all windows (A, B, C, D)
     - Write byte to currently selected index with auto-stepping
     - Integrate with indexed_memory_write()
     - _Requirements: 6.2_
-  - [ ] 7.3 Test data port operations
+  - [x] 7.3 Test data port operations
     - Test sequential reads with auto-stepping
     - Test sequential writes with auto-stepping
     - Test with different step sizes and directions
