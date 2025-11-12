@@ -48,7 +48,7 @@ At 1 MHz operation:
 | **0ns** | PHI2 falls | Cycle start, address bus begins changing |
 | **40ns** | Address valid | Address stable on A0-A15 (tADS max) |
 | **200ns** | CS valid | Chip select signals stable after decode |
-| **500ns** | PHI2 rises | Clock goes high, R/W and OE become reliable |
+| **500ns** | PHI2 rises | Clock goes high, decoding for OE and R/W starts |
 | **530ns** | R/W valid | R/W signal stable after propagation delay |
 | **540ns** | Write data valid | Data valid on bus for write operations (tMDS) |
 | **985ns** | Read data deadline | Data must be valid for read operations (15ns before sample) |

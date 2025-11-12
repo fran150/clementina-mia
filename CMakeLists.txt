@@ -5,7 +5,7 @@ else()
     set(USERHOME $ENV{HOME})
 endif()
 set(sdkVersion 2.2.0)
-set(toolchainVersion RISCV_ZCB_RPI_2_2_0_3)
+set(toolchainVersion 14_2_Rel1)
 set(picotoolVersion 2.2.0-a4)
 set(picoVscode ${USERHOME}/.pico-sdk/cmake/pico-vscode.cmake)
 if (EXISTS ${picoVscode})
@@ -65,6 +65,8 @@ add_executable(mia
     src/rom_emulation/rom_emulator_test.c
     src/indexed_memory/indexed_memory.c
     src/indexed_memory/indexed_memory_test.c
+    src/bus_interface/bus_interface.c
+    src/bus_interface/bus_interface_test.c
     src/video/video_controller.c
     src/usb/usb_controller.c
     src/usb/usb_descriptors.c
@@ -79,6 +81,7 @@ target_include_directories(mia PRIVATE
     src/system/
     src/rom_emulation/
     src/indexed_memory/
+    src/bus_interface/
     src/video/
     src/usb/
     src/network/
@@ -121,4 +124,6 @@ target_compile_definitions(mia PRIVATE
     CYW43_HOST_NAME="MIA-Clementina"
     # Uncomment to enable indexed memory tests at startup:
     # RUN_INDEXED_MEMORY_TESTS
+    # Uncomment to enable bus interface tests at startup:
+    RUN_BUS_INTERFACE_TESTS
 )

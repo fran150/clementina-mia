@@ -38,7 +38,7 @@
   - _Requirements: 5.5, 6.1, 6.6, 6.7, 6.8, 6.9, 6.10_
 
 - [ ] 5. Implement bus interface foundation
-  - [ ] 5.1 Create bus interface module structure (bus_interface.h and bus_interface.c)
+  - [x] 5.1 Create bus interface module structure (bus_interface.h and bus_interface.c)
     - Define register address constants for indexed interface mode ($C000-$C00F)
     - Define window detection macros and helper functions
     - Create function prototypes for main entry points (bus_interface_read/write)

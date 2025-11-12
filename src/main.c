@@ -18,6 +18,10 @@
 #ifdef RUN_INDEXED_MEMORY_TESTS
 #include "indexed_memory/indexed_memory_test.h"
 #endif
+#include "bus_interface/bus_interface.h"
+#ifdef RUN_BUS_INTERFACE_TESTS
+#include "bus_interface/bus_interface_test.h"
+#endif
 #include "video/video_controller.h"
 #include "usb/usb_controller.h"
 #include "network/wifi_controller.h"
@@ -71,6 +75,15 @@ int main() {
         printf("Indexed memory tests passed\n");
     } else {
         printf("WARNING: Indexed memory tests failed\n");
+    }
+#endif
+
+#ifdef RUN_BUS_INTERFACE_TESTS
+    // Run bus interface tests (only when explicitly enabled)
+    if (run_bus_interface_tests()) {
+        printf("Bus interface tests passed\n");
+    } else {
+        printf("WARNING: Bus interface tests failed\n");
     }
 #endif
     
