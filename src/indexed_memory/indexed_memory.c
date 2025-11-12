@@ -260,15 +260,22 @@ uint8_t indexed_memory_read(uint8_t idx) {
         if (flags & FLAG_DIRECTION) {
             // Backward stepping
             addr -= step;
+            
+            // Check wrap-on-limit if enabled (for backward, wrap when going below limit)
+            if (flags & FLAG_WRAP_ON_LIMIT) {
+                if (addr < g_state.indexes[idx].limit_addr) {
+                    addr = g_state.indexes[idx].default_addr;
+                }
+            }
         } else {
             // Forward stepping
             addr += step;
-        }
-        
-        // Check wrap-on-limit if enabled
-        if (flags & FLAG_WRAP_ON_LIMIT) {
-            if (addr >= g_state.indexes[idx].limit_addr) {
-                addr = g_state.indexes[idx].default_addr;
+            
+            // Check wrap-on-limit if enabled (for forward, wrap when reaching or exceeding limit)
+            if (flags & FLAG_WRAP_ON_LIMIT) {
+                if (addr >= g_state.indexes[idx].limit_addr) {
+                    addr = g_state.indexes[idx].default_addr;
+                }
             }
         }
         
@@ -299,15 +306,22 @@ void indexed_memory_write(uint8_t idx, uint8_t data) {
         if (flags & FLAG_DIRECTION) {
             // Backward stepping
             addr -= step;
+            
+            // Check wrap-on-limit if enabled (for backward, wrap when going below limit)
+            if (flags & FLAG_WRAP_ON_LIMIT) {
+                if (addr < g_state.indexes[idx].limit_addr) {
+                    addr = g_state.indexes[idx].default_addr;
+                }
+            }
         } else {
             // Forward stepping
             addr += step;
-        }
-        
-        // Check wrap-on-limit if enabled
-        if (flags & FLAG_WRAP_ON_LIMIT) {
-            if (addr >= g_state.indexes[idx].limit_addr) {
-                addr = g_state.indexes[idx].default_addr;
+            
+            // Check wrap-on-limit if enabled (for forward, wrap when reaching or exceeding limit)
+            if (flags & FLAG_WRAP_ON_LIMIT) {
+                if (addr >= g_state.indexes[idx].limit_addr) {
+                    addr = g_state.indexes[idx].default_addr;
+                }
             }
         }
         
@@ -474,22 +488,49 @@ void indexed_memory_execute_command(uint8_t cmd) {
 
 /**
  * Copy single byte between indexes
+ * Uses auto-stepping versions to respect index configurations
  */
 void indexed_memory_copy_byte(uint8_t src_idx, uint8_t dst_idx) {
+    // Save current flags
+    uint8_t src_flags = g_state.indexes[src_idx].flags;
+    uint8_t dst_flags = g_state.indexes[dst_idx].flags;
+    
+    // Temporarily enable auto-step for both indexes
+    g_state.indexes[src_idx].flags |= FLAG_AUTO_STEP;
+    g_state.indexes[dst_idx].flags |= FLAG_AUTO_STEP;
+    
+    // Perform copy with auto-stepping
     uint8_t data = indexed_memory_read(src_idx);
     indexed_memory_write(dst_idx, data);
+    
+    // Restore original flags
+    g_state.indexes[src_idx].flags = src_flags;
+    g_state.indexes[dst_idx].flags = dst_flags;
 }
 
 /**
  * Copy block of bytes between indexes
+ * Uses auto-stepping versions to respect index configurations
  */
 void indexed_memory_copy_block(uint8_t src_idx, uint8_t dst_idx, uint16_t count) {
     g_state.status |= STATUS_DMA_ACTIVE;
+    
+    // Save current flags
+    uint8_t src_flags = g_state.indexes[src_idx].flags;
+    uint8_t dst_flags = g_state.indexes[dst_idx].flags;
+    
+    // Temporarily enable auto-step for both indexes
+    g_state.indexes[src_idx].flags |= FLAG_AUTO_STEP;
+    g_state.indexes[dst_idx].flags |= FLAG_AUTO_STEP;
     
     for (uint16_t i = 0; i < count; i++) {
         uint8_t data = indexed_memory_read(src_idx);
         indexed_memory_write(dst_idx, data);
     }
+    
+    // Restore original flags
+    g_state.indexes[src_idx].flags = src_flags;
+    g_state.indexes[dst_idx].flags = dst_flags;
     
     g_state.status &= ~STATUS_DMA_ACTIVE;
     indexed_memory_set_irq(IRQ_DMA_COMPLETE);

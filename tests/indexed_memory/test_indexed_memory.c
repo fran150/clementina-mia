@@ -172,6 +172,7 @@ bool test_auto_stepping(void) {
     
     // Configure index with auto-stepping
     uint32_t start_addr = 0x20040100;
+    indexed_memory_set_index_default(test_idx, start_addr);
     indexed_memory_set_index_address(test_idx, start_addr);
     indexed_memory_set_index_step(test_idx, 2); // Step by 2 bytes
     indexed_memory_set_index_flags(test_idx, FLAG_AUTO_STEP); // Forward stepping
@@ -284,12 +285,14 @@ bool test_dma_operations(void) {
     
     // Set up source index with test data
     uint32_t src_addr = 0x20040200;
+    indexed_memory_set_index_default(src_idx, src_addr);
     indexed_memory_set_index_address(src_idx, src_addr);
     indexed_memory_set_index_step(src_idx, 1);
     indexed_memory_set_index_flags(src_idx, FLAG_AUTO_STEP);
     
     // Set up destination index
     uint32_t dst_addr = 0x20040300;
+    indexed_memory_set_index_default(dst_idx, dst_addr);
     indexed_memory_set_index_address(dst_idx, dst_addr);
     indexed_memory_set_index_step(dst_idx, 1);
     indexed_memory_set_index_flags(dst_idx, FLAG_AUTO_STEP);
