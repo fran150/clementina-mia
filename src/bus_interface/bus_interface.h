@@ -94,6 +94,29 @@
 
 
 // ============================================================================
+// Window State Management
+// ============================================================================
+
+// Maximum number of windows supported (A-H = 8 windows)
+#define MAX_WINDOWS 8
+
+/**
+ * Window state structure
+ * Tracks per-window state for independent operation
+ */
+typedef struct {
+    uint8_t active_index;           // Currently selected index (0-255) for this window
+    uint8_t config_field_select;    // Selected configuration field for this window
+} window_state_t;
+
+/**
+ * Global window state array
+ * Direct access for efficiency - window_num is always valid (0-7) from address decoding
+ * Usage: g_window_state[window_num].active_index = idx;
+ */
+extern window_state_t g_window_state[MAX_WINDOWS];
+
+// ============================================================================
 // Main Entry Points
 // ============================================================================
 

@@ -369,6 +369,182 @@ bool test_bus_interface_shared_registers(void) {
 }
 
 /**
+ * Test window state management initialization
+ */
+bool test_bus_interface_window_state_init(void) {
+    printf("Testing bus interface window state initialization...\n");
+    
+    // Initialize the bus interface
+    bus_interface_init();
+    
+    // Verify all windows are initialized to index 0
+    for (uint8_t window = 0; window < MAX_WINDOWS; window++) {
+        if (g_window_state[window].active_index != 0) {
+            printf("  FAIL: Window %d should be initialized to index 0, got %d\n", 
+                   window, g_window_state[window].active_index);
+            return false;
+        }
+        
+        if (g_window_state[window].config_field_select != 0) {
+            printf("  FAIL: Window %d config field should be initialized to 0, got %d\n", 
+                   window, g_window_state[window].config_field_select);
+            return false;
+        }
+    }
+    
+    printf("  PASS: Window state initialization works correctly\n");
+    return true;
+}
+
+/**
+ * Test window state get/set for active index
+ */
+bool test_bus_interface_window_index_access(void) {
+    printf("Testing bus interface window index access...\n");
+    
+    // Initialize the bus interface
+    bus_interface_init();
+    
+    // Test setting and getting index for each window
+    for (uint8_t window = 0; window < MAX_WINDOWS; window++) {
+        uint8_t test_index = 10 + window;  // Use different index for each window
+        
+        g_window_state[window].active_index = test_index;
+        
+        if (g_window_state[window].active_index != test_index) {
+            printf("  FAIL: Window %d index should be %d, got %d\n", 
+                   window, test_index, g_window_state[window].active_index);
+            return false;
+        }
+    }
+    
+    // Test that windows are independent
+    g_window_state[0].active_index = 100;
+    g_window_state[1].active_index = 200;
+    
+    if (g_window_state[0].active_index != 100) {
+        printf("  FAIL: Window A index should be 100\n");
+        return false;
+    }
+    
+    if (g_window_state[1].active_index != 200) {
+        printf("  FAIL: Window B index should be 200\n");
+        return false;
+    }
+    
+    printf("  PASS: Window index access works correctly\n");
+    return true;
+}
+
+/**
+ * Test window state get/set for config field
+ */
+bool test_bus_interface_config_field_access(void) {
+    printf("Testing bus interface config field access...\n");
+    
+    // Initialize the bus interface
+    bus_interface_init();
+    
+    // Test setting and getting config field for each window
+    for (uint8_t window = 0; window < MAX_WINDOWS; window++) {
+        uint8_t test_field = 5 + window;  // Use different field for each window
+        
+        g_window_state[window].config_field_select = test_field;
+        
+        if (g_window_state[window].config_field_select != test_field) {
+            printf("  FAIL: Window %d config field should be %d, got %d\n", 
+                   window, test_field, g_window_state[window].config_field_select);
+            return false;
+        }
+    }
+    
+    // Test that windows are independent
+    g_window_state[0].config_field_select = 0x0A;
+    g_window_state[1].config_field_select = 0x0B;
+    
+    if (g_window_state[0].config_field_select != 0x0A) {
+        printf("  FAIL: Window A config field should be 0x0A\n");
+        return false;
+    }
+    
+    if (g_window_state[1].config_field_select != 0x0B) {
+        printf("  FAIL: Window B config field should be 0x0B\n");
+        return false;
+    }
+    
+    printf("  PASS: Config field access works correctly\n");
+    return true;
+}
+
+/**
+ * Test window state independence across all windows
+ */
+bool test_bus_interface_window_independence(void) {
+    printf("Testing bus interface window independence...\n");
+    
+    // Initialize the bus interface
+    bus_interface_init();
+    
+    // Set unique values for each window
+    for (uint8_t window = 0; window < MAX_WINDOWS; window++) {
+        g_window_state[window].active_index = 10 * window;
+        g_window_state[window].config_field_select = window;
+    }
+    
+    // Verify each window retained its unique values
+    for (uint8_t window = 0; window < MAX_WINDOWS; window++) {
+        if (g_window_state[window].active_index != 10 * window) {
+            printf("  FAIL: Window %d index should be %d, got %d\n", 
+                   window, 10 * window, g_window_state[window].active_index);
+            return false;
+        }
+        
+        if (g_window_state[window].config_field_select != window) {
+            printf("  FAIL: Window %d config field should be %d, got %d\n", 
+                   window, window, g_window_state[window].config_field_select);
+            return false;
+        }
+    }
+    
+    printf("  PASS: Window independence works correctly\n");
+    return true;
+}
+
+/**
+ * Test direct array access pattern
+ */
+bool test_bus_interface_direct_access(void) {
+    printf("Testing bus interface direct array access...\n");
+    
+    // Initialize the bus interface
+    bus_interface_init();
+    
+    // Test direct access pattern (simulating what register handlers will do)
+    uint8_t window_num = 2;  // Window C
+    g_window_state[window_num].active_index = 42;
+    g_window_state[window_num].config_field_select = 0x0A;
+    
+    if (g_window_state[window_num].active_index != 42) {
+        printf("  FAIL: Direct access to active_index failed\n");
+        return false;
+    }
+    
+    if (g_window_state[window_num].config_field_select != 0x0A) {
+        printf("  FAIL: Direct access to config_field_select failed\n");
+        return false;
+    }
+    
+    // Verify other windows weren't affected
+    if (g_window_state[0].active_index != 0 || g_window_state[1].active_index != 0) {
+        printf("  FAIL: Other windows were affected by direct access\n");
+        return false;
+    }
+    
+    printf("  PASS: Direct array access works correctly\n");
+    return true;
+}
+
+/**
  * Run all bus interface tests
  */
 bool run_bus_interface_tests(void) {
@@ -383,6 +559,11 @@ bool run_bus_interface_tests(void) {
     all_passed &= test_bus_interface_address_validation();
     all_passed &= test_bus_interface_multiwindow_edge_cases();
     all_passed &= test_bus_interface_shared_registers();
+    all_passed &= test_bus_interface_window_state_init();
+    all_passed &= test_bus_interface_window_index_access();
+    all_passed &= test_bus_interface_config_field_access();
+    all_passed &= test_bus_interface_window_independence();
+    all_passed &= test_bus_interface_direct_access();
     
     if (all_passed) {
         printf("\n=== All Bus Interface Tests PASSED ===\n\n");

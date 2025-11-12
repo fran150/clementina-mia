@@ -10,12 +10,30 @@
 
 #include "bus_interface.h"
 #include <stddef.h>
+#include <string.h>
+
+// ============================================================================
+// Window State Management
+// ============================================================================
+
+// Global window state array supporting up to 8 windows (A-H)
+// Exposed for direct access - window_num is always valid (0-7) from address decoding
+window_state_t g_window_state[MAX_WINDOWS];
 
 // ============================================================================
 // Module Initialization
 // ============================================================================
 
 void bus_interface_init(void) {
+    // Initialize all window states to default values
+    memset(g_window_state, 0, sizeof(g_window_state));
+    
+    // Set default active index for all windows to 0
+    for (int i = 0; i < MAX_WINDOWS; i++) {
+        g_window_state[i].active_index = 0;
+        g_window_state[i].config_field_select = 0;
+    }
+    
     // Note: indexed_memory_init() should be called before this function
     // It is initialized in main.c before bus_interface_init()
     

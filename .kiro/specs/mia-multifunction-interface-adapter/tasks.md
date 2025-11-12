@@ -50,7 +50,7 @@
     - Implement shared space detection (bit 7 set: $C080-$C0FF)
     - Add support for 4 active windows plus 4 future windows (E-H)
     - _Requirements: 5.1, 5.2_
-  - [ ] 5.3 Create window state management structures
+  - [x] 5.3 Create window state management structures
     - Define window_state_t structure to track per-window state (active_index, config_field_select)
     - Create global window_state array supporting up to 8 windows (A-H)
     - Implement window state initialization in bus_interface_init()
