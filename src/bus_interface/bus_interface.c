@@ -21,6 +21,34 @@
 window_state_t g_window_state[MAX_WINDOWS];
 
 // ============================================================================
+// Register Handler Functions
+// ============================================================================
+
+/**
+ * Read IDX_SELECT register
+ * Returns the currently selected index for the specified window
+ * 
+ * @param window_num Window number (0-7 for Windows A-H)
+ * @return Currently selected index (0-255)
+ */
+static uint8_t read_idx_select(uint8_t window_num) {
+    // Return the active index for the specified window
+    return g_window_state[window_num].active_index;
+}
+
+/**
+ * Write IDX_SELECT register
+ * Updates the active index selection for the specified window
+ * 
+ * @param window_num Window number (0-7 for Windows A-H)
+ * @param index Index to select (0-255)
+ */
+static void write_idx_select(uint8_t window_num, uint8_t index) {
+    // Update the active index for the specified window
+    g_window_state[window_num].active_index = index;
+}
+
+// ============================================================================
 // Module Initialization
 // ============================================================================
 
@@ -95,14 +123,10 @@ uint8_t bus_interface_read(uint8_t local_addr) {
     }
     
     // Handle window register reads
-    // Window selection will be used in future tasks for multi-window operations
-    (void)window_num;  // Suppress unused warning for now
-    
     // Route to appropriate register handler based on offset
     switch (reg_offset) {
         case REG_OFFSET_IDX_SELECT:
-            // TODO: Implement IDX_SELECT read handler
-            return 0x00;
+            return read_idx_select(window_num);
             
         case REG_OFFSET_DATA_PORT:
             // TODO: Implement DATA_PORT read handler
@@ -178,14 +202,10 @@ void bus_interface_write(uint8_t local_addr, uint8_t data) {
     }
     
     // Handle window register writes
-    // Window selection will be used in future tasks for multi-window operations
-    (void)window_num;  // Suppress unused warning for now
-    (void)data;  // Suppress unused warning until implementation is complete
-    
     // Route to appropriate register handler based on offset
     switch (reg_offset) {
         case REG_OFFSET_IDX_SELECT:
-            // TODO: Implement IDX_SELECT write handler
+            write_idx_select(window_num, data);
             break;
             
         case REG_OFFSET_DATA_PORT:

@@ -18,6 +18,7 @@ bool test_bus_interface_window_index_access(void);
 bool test_bus_interface_config_field_access(void);
 bool test_bus_interface_window_independence(void);
 bool test_bus_interface_direct_access(void);
+bool test_bus_interface_idx_select_read(void);
 
 // Main test runner
 bool run_bus_interface_tests(void);

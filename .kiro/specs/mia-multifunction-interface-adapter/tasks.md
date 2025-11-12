@@ -56,7 +56,7 @@
     - Implement window state initialization in bus_interface_init()
     - Add helper functions for window state access (get/set active index, config field)
     - _Requirements: 5.5, 6.1_
-  - [ ] 5.4 Create main dispatcher functions
+  - [x] 5.4 Create main dispatcher functions
     - Implement bus_interface_read(address) - main READ entry point with shared register support
     - Implement bus_interface_write(address, data) - main WRITE entry point with shared register support
     - Add switch statement structure for window register routing
@@ -70,12 +70,12 @@
     - _Requirements: 5.1, 5.2_
 
 - [ ] 6. Implement register handlers - Index selection
-  - [ ] 6.1 Implement IDX_SELECT read handler
+  - [x] 6.1 Implement IDX_SELECT read handler
     - Create read_idx_select(window_num) function supporting all windows (A, B, C, D)
     - Return currently selected index for specified window
     - Integrate with indexed_memory_get_window_index()
     - _Requirements: 6.1_
-  - [ ] 6.2 Implement IDX_SELECT write handler
+  - [x] 6.2 Implement IDX_SELECT write handler
     - Create write_idx_select(window_num, index) function supporting all windows (A, B, C, D)
     - Update active index selection for specified window
     - Integrate with indexed_memory_set_window_index()

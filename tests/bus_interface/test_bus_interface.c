@@ -545,6 +545,196 @@ bool test_bus_interface_direct_access(void) {
 }
 
 /**
+ * Test IDX_SELECT read handler for all windows
+ */
+bool test_bus_interface_idx_select_read(void) {
+    printf("Testing IDX_SELECT read handler...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    
+    // Test reading IDX_SELECT for Window A (address 0x00)
+    g_window_state[0].active_index = 42;
+    uint8_t value = bus_interface_read(0x00);
+    if (value != 42) {
+        printf("  FAIL: Window A IDX_SELECT should return 42, got %d\n", value);
+        return false;
+    }
+    
+    // Test reading IDX_SELECT for Window B (address 0x10)
+    g_window_state[1].active_index = 100;
+    value = bus_interface_read(0x10);
+    if (value != 100) {
+        printf("  FAIL: Window B IDX_SELECT should return 100, got %d\n", value);
+        return false;
+    }
+    
+    // Test reading IDX_SELECT for Window C (address 0x20)
+    g_window_state[2].active_index = 200;
+    value = bus_interface_read(0x20);
+    if (value != 200) {
+        printf("  FAIL: Window C IDX_SELECT should return 200, got %d\n", value);
+        return false;
+    }
+    
+    // Test reading IDX_SELECT for Window D (address 0x30)
+    g_window_state[3].active_index = 255;
+    value = bus_interface_read(0x30);
+    if (value != 255) {
+        printf("  FAIL: Window D IDX_SELECT should return 255, got %d\n", value);
+        return false;
+    }
+    
+    // Test that windows are independent
+    g_window_state[0].active_index = 10;
+    g_window_state[1].active_index = 20;
+    g_window_state[2].active_index = 30;
+    g_window_state[3].active_index = 40;
+    
+    if (bus_interface_read(0x00) != 10) {
+        printf("  FAIL: Window A should return 10\n");
+        return false;
+    }
+    if (bus_interface_read(0x10) != 20) {
+        printf("  FAIL: Window B should return 20\n");
+        return false;
+    }
+    if (bus_interface_read(0x20) != 30) {
+        printf("  FAIL: Window C should return 30\n");
+        return false;
+    }
+    if (bus_interface_read(0x30) != 40) {
+        printf("  FAIL: Window D should return 40\n");
+        return false;
+    }
+    
+    printf("  PASS: IDX_SELECT read handler works correctly for all windows\n");
+    return true;
+}
+
+/**
+ * Test IDX_SELECT write handler for all windows
+ */
+bool test_bus_interface_idx_select_write(void) {
+    printf("Testing IDX_SELECT write handler...\n");
+    
+    // Initialize the bus interface
+    bus_interface_init();
+    
+    // Test writing IDX_SELECT for Window A (address 0x00)
+    bus_interface_write(0x00, 42);
+    if (g_window_state[0].active_index != 42) {
+        printf("  FAIL: Window A IDX_SELECT should be 42, got %d\n", g_window_state[0].active_index);
+        return false;
+    }
+    
+    // Test writing IDX_SELECT for Window B (address 0x10)
+    bus_interface_write(0x10, 100);
+    if (g_window_state[1].active_index != 100) {
+        printf("  FAIL: Window B IDX_SELECT should be 100, got %d\n", g_window_state[1].active_index);
+        return false;
+    }
+    
+    // Test writing IDX_SELECT for Window C (address 0x20)
+    bus_interface_write(0x20, 200);
+    if (g_window_state[2].active_index != 200) {
+        printf("  FAIL: Window C IDX_SELECT should be 200, got %d\n", g_window_state[2].active_index);
+        return false;
+    }
+    
+    // Test writing IDX_SELECT for Window D (address 0x30)
+    bus_interface_write(0x30, 255);
+    if (g_window_state[3].active_index != 255) {
+        printf("  FAIL: Window D IDX_SELECT should be 255, got %d\n", g_window_state[3].active_index);
+        return false;
+    }
+    
+    // Test that windows are independent
+    bus_interface_write(0x00, 10);
+    bus_interface_write(0x10, 20);
+    bus_interface_write(0x20, 30);
+    bus_interface_write(0x30, 40);
+    
+    if (g_window_state[0].active_index != 10) {
+        printf("  FAIL: Window A should be 10\n");
+        return false;
+    }
+    if (g_window_state[1].active_index != 20) {
+        printf("  FAIL: Window B should be 20\n");
+        return false;
+    }
+    if (g_window_state[2].active_index != 30) {
+        printf("  FAIL: Window C should be 30\n");
+        return false;
+    }
+    if (g_window_state[3].active_index != 40) {
+        printf("  FAIL: Window D should be 40\n");
+        return false;
+    }
+    
+    printf("  PASS: IDX_SELECT write handler works correctly for all windows\n");
+    return true;
+}
+
+/**
+ * Test IDX_SELECT read/write integration for all windows
+ */
+bool test_bus_interface_idx_select_integration(void) {
+    printf("Testing IDX_SELECT read/write integration...\n");
+    
+    // Initialize the bus interface
+    bus_interface_init();
+    
+    // Test write then read for each window
+    for (uint8_t window = 0; window < 4; window++) {
+        uint8_t addr = window << 4;  // 0x00, 0x10, 0x20, 0x30
+        uint8_t test_value = 50 + window;
+        
+        // Write value
+        bus_interface_write(addr, test_value);
+        
+        // Read it back
+        uint8_t read_value = bus_interface_read(addr);
+        
+        if (read_value != test_value) {
+            printf("  FAIL: Window %d write/read mismatch: wrote %d, read %d\n", 
+                   window, test_value, read_value);
+            return false;
+        }
+    }
+    
+    // Test multiple writes to same window
+    bus_interface_write(0x00, 100);
+    if (bus_interface_read(0x00) != 100) {
+        printf("  FAIL: First write to Window A failed\n");
+        return false;
+    }
+    
+    bus_interface_write(0x00, 200);
+    if (bus_interface_read(0x00) != 200) {
+        printf("  FAIL: Second write to Window A failed\n");
+        return false;
+    }
+    
+    // Test that other windows weren't affected
+    bus_interface_write(0x10, 111);
+    bus_interface_write(0x00, 222);
+    
+    if (bus_interface_read(0x10) != 111) {
+        printf("  FAIL: Window B was affected by Window A write\n");
+        return false;
+    }
+    
+    if (bus_interface_read(0x00) != 222) {
+        printf("  FAIL: Window A write failed\n");
+        return false;
+    }
+    
+    printf("  PASS: IDX_SELECT read/write integration works correctly\n");
+    return true;
+}
+
+/**
  * Run all bus interface tests
  */
 bool run_bus_interface_tests(void) {
@@ -564,6 +754,9 @@ bool run_bus_interface_tests(void) {
     all_passed &= test_bus_interface_config_field_access();
     all_passed &= test_bus_interface_window_independence();
     all_passed &= test_bus_interface_direct_access();
+    all_passed &= test_bus_interface_idx_select_read();
+    all_passed &= test_bus_interface_idx_select_write();
+    all_passed &= test_bus_interface_idx_select_integration();
     
     if (all_passed) {
         printf("\n=== All Bus Interface Tests PASSED ===\n\n");
