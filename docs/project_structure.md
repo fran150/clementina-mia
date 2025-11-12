@@ -92,9 +92,13 @@ mia-multifunction-interface-adapter/
 - **Normal Phase**: 1 MHz clock, PIO-based video I/O, full functionality
 
 ### Memory-Mapped Interface
-- **$C000-$C3FF**: General interface (USB keyboard, reset control)
-- **$D000-$D3FF**: Video interface (graphics data, PPU registers)
-- **$E000-$FFFF**: ROM emulation space (boot phase only)
+- **$C000-$C3FF**: Indexed memory interface (multi-window architecture with shared registers)
+  - **$C000-$C03F**: Windows A-D (4 windows × 16 registers each)
+  - **$C040-$C07F**: Reserved for future windows (E-H)
+  - **$C080-$C0FF**: Shared register space (device 
+  status, interrupts, identification)
+  - **$C100-$C3FF**: Mirrored 3 times (from 6502 perspective)
+- **$E000-$FFFF**: ROM emulation space (boot phase only, 256-byte mirrored)
 
 ### Hardware Abstraction
 - Clean separation between hardware interface and functional modules

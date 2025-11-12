@@ -34,10 +34,14 @@ The MIA (Multifunction Interface Adapter) is a Raspberry Pi Pico 2 W-based syste
 - **Key_Code**: ASCII representation of keyboard input transmitted to Clementina
 - **USB_Host_Mode**: MIA operates as USB host accepting multiple devices via hub
 - **USB_Device_Mode**: MIA operates as USB device for development console and debugging
-- **Indexed_Memory_Interface**: Dual-window register-based interface providing access to MIA's internal memory via 256 shared indexes accessible from both windows
-- **Memory_Index**: One of 256 shared pointers (0-255) that maintains current address, default address, step size, and behavior flags, accessible from either Window_A or Window_B
-- **Window_A**: Primary register interface at $C000-$C007 with full functionality and access to all 256 shared indexes
-- **Window_B**: Secondary register interface at $C008-$C00F with identical functionality to Window A and access to the same 256 shared indexes
+- **Indexed_Memory_Interface**: Multi-window register-based interface providing access to MIA's internal memory via 256 shared indexes accessible from any window
+- **Memory_Index**: One of 256 shared pointers (0-255) that maintains current address, default address, step size, and behavior flags, accessible from any window
+- **Window_A**: Primary register interface at $C000-$C00F (16 registers, 0-4 active, 5-15 reserved) with full functionality and access to all 256 shared indexes
+- **Window_B**: Secondary register interface at $C010-$C01F (16 registers, 0-4 active, 5-15 reserved) with identical functionality to Window A and access to the same 256 shared indexes
+- **Window_C**: Tertiary register interface at $C020-$C02F (16 registers, 0-4 active, 5-15 reserved) with identical functionality to Windows A and B and access to the same 256 shared indexes
+- **Window_D**: Quaternary register interface at $C030-$C03F (16 registers, 0-4 active, 5-15 reserved) with identical functionality to Windows A, B, and C and access to the same 256 shared indexes
+- **Shared_Registers**: Common register space at $C0F0-$C0FF (16 registers, 8 active, 8 reserved) for device-wide status, interrupts, and identification accessible from all windows
+- **Address_Mirroring**: MIA only sees 8 address lines (A0-A7), so the 256-byte register space ($00-$FF from MIA perspective) mirrors 4 times throughout the 6502's 1KB address range ($C000-$C3FF)
 - **DATA_PORT**: Register that reads/writes bytes at the current index address with automatic stepping
 - **Auto_Step**: Automatic address increment or decrement after DATA_PORT access based on index configuration
 - **DMA_Operation**: Hardware-accelerated memory copy between any two indexes within MIA memory space
@@ -111,17 +115,21 @@ The MIA (Multifunction Interface Adapter) is a Raspberry Pi Pico 2 W-based syste
 
 #### Acceptance Criteria
 
-1. THE MIA SHALL respond to I/O operations in the $C000-$C3FF address range using chip select line IO0 on GPIO 21 (active low), with 16-byte register space mirrored throughout the 1KB range
-2. THE MIA SHALL provide Window_A interface at addresses $C000-$C007 (and mirrored throughout $C000-$C3FF) with full read/write functionality
-3. THE MIA SHALL provide Window_B interface at addresses $C008-$C00F (and mirrored throughout $C000-$C3FF) with identical register layout to Window_A
-4. WHEN both windows are accessed simultaneously, THE MIA SHALL prioritize Window_A and ignore Window_B access
-5. THE MIA SHALL maintain exactly 256 shared Memory_Index entries (0-255) accessible from both windows, each containing current address, default address, step size, and behavior flags
-6. THE MIA SHALL respond to Clementina READ operations by providing valid data within 785 nanoseconds from chip select assertion at 1 MHz operation
-7. THE MIA SHALL respond to Clementina READ operations by providing valid data within 455 nanoseconds from R/W signal confirmation at 1 MHz operation
-8. THE MIA SHALL hold READ data stable for 15 nanoseconds after PHI2 falling edge to meet W65C02S6TPG-14 data hold time requirements
-9. THE MIA SHALL latch WRITE data on PHI2 falling edge within the 470 nanosecond data valid window at 1 MHz operation
-10. THE MIA SHALL maintain data integrity during concurrent operations through atomic memory operations
-11. THE MIA SHALL NOT drive the data bus when OE signal is HIGH except during the 15 nanosecond data hold period after PHI2 falling edge for READ operations
+1. THE MIA SHALL respond to I/O operations in the $C000-$C3FF address range (1KB) using chip select line IO0 on GPIO 21 (active low)
+2. THE MIA SHALL use only 8 address lines (A0-A7 on GPIO 0-7) creating a 256-byte address space that mirrors 4 times throughout the 1KB range
+3. THE MIA SHALL provide Window_A interface at addresses $C000-$C00F (and mirrored at $C100-$C10F, $C200-$C20F, $C300-$C30F) with 16 registers (0-4 active, 5-15 reserved) and full read/write functionality
+4. THE MIA SHALL provide Window_B interface at addresses $C010-$C01F (and mirrored) with 16 registers (0-4 active, 5-15 reserved) and identical register layout to Window_A
+5. THE MIA SHALL provide Window_C interface at addresses $C020-$C02F (and mirrored) with 16 registers (0-4 active, 5-15 reserved) and identical register layout to Windows A and B
+6. THE MIA SHALL provide Window_D interface at addresses $C030-$C03F (and mirrored) with 16 registers (0-4 active, 5-15 reserved) and identical register layout to Windows A, B, and C
+7. THE MIA SHALL reserve addresses $C040-$C07F (and mirrored) for future window expansion (Windows E-H)
+8. THE MIA SHALL provide Shared_Registers at addresses $C080-$C0FF (and mirrored) with 128 bytes total, active registers at $C0F0-$C0FF (16 registers, 8 active, 8 reserved)
+9. THE MIA SHALL maintain exactly 256 shared Memory_Index entries (0-255) accessible from all windows, each containing current address, default address, step size, and behavior flags
+9. THE MIA SHALL respond to Clementina READ operations by providing valid data within 785 nanoseconds from chip select assertion at 1 MHz operation
+10. THE MIA SHALL respond to Clementina READ operations by providing valid data within 455 nanoseconds from R/W signal confirmation at 1 MHz operation
+11. THE MIA SHALL hold READ data stable for 15 nanoseconds after PHI2 falling edge to meet W65C02S6TPG-14 data hold time requirements
+12. THE MIA SHALL latch WRITE data on PHI2 falling edge within the 470 nanosecond data valid window at 1 MHz operation
+13. THE MIA SHALL maintain data integrity during concurrent operations through atomic memory operations
+14. THE MIA SHALL NOT drive the data bus when OE signal is HIGH except during the 15 nanosecond data hold period after PHI2 falling edge for READ operations
 
 ### Requirement 6
 
@@ -129,11 +137,11 @@ The MIA (Multifunction Interface Adapter) is a Raspberry Pi Pico 2 W-based syste
 
 #### Acceptance Criteria
 
-1. THE MIA SHALL provide an IDX_SELECT register at $C000 and $C008 to select the active Memory_Index (0-255) for each window from the shared pool of 256 indexes
-2. THE MIA SHALL provide a DATA_PORT register at $C001 and $C009 that reads or writes one byte at the current index address
+1. THE MIA SHALL provide an IDX_SELECT register at offset +0 in each window ($C000, $C010, $C020, $C030) to select the active Memory_Index (0-255) for that window from the shared pool of 256 indexes
+2. THE MIA SHALL provide a DATA_PORT register at offset +1 in each window ($C001, $C011, $C021, $C031) that reads or writes one byte at the current index address
 3. WHEN DATA_PORT is accessed and Auto_Step is enabled, THE MIA SHALL automatically increment or decrement the current address by the configured step size
-4. THE MIA SHALL provide a CFG_FIELD_SELECT register at $C002 and $C00A to select which configuration field to access
-5. THE MIA SHALL provide a CFG_DATA register at $C003 and $C00B to read or write the selected configuration field
+4. THE MIA SHALL provide a CFG_FIELD_SELECT register at offset +2 in each window ($C002, $C012, $C022, $C032) to select which configuration field to access
+5. THE MIA SHALL provide a CFG_DATA register at offset +3 in each window ($C003, $C013, $C023, $C033) to read or write the selected configuration field
 6. THE MIA SHALL support 24-bit addressing (16MB address space) for accessing the full MIA memory range
 7. THE MIA SHALL support step sizes from 0 to 255 bytes with configurable forward or backward direction
 8. THE MIA SHALL provide configuration fields for current address (3 bytes), default address (3 bytes), limit address (3 bytes), step size (1 byte), and flags (1 byte)
@@ -146,14 +154,14 @@ The MIA (Multifunction Interface Adapter) is a Raspberry Pi Pico 2 W-based syste
 
 #### Acceptance Criteria
 
-1. THE MIA SHALL provide a COMMAND register at $C004 and $C00C for issuing control commands
+1. THE MIA SHALL provide a COMMAND register at offset +4 in each window ($C004, $C014, $C024, $C034) for issuing control commands
 2. THE MIA SHALL support RESET_INDEX command to copy default address to current address for the active index
 3. THE MIA SHALL support RESET_ALL command to reset all 256 indexes to their default addresses
 4. THE MIA SHALL support COPY_BYTE command to copy one byte between any two specified indexes
 5. THE MIA SHALL support COPY_BLOCK command to copy up to 65535 bytes between any two specified indexes
 6. THE MIA SHALL support PICO_REINIT command to reinitialize MIA internal state without asserting the 6502 Reset_Line
-7. THE MIA SHALL provide STATUS register at $C006 and $C00E indicating command completion, errors, and system state
-8. THE MIA SHALL complete all commands deterministically with immediate effect or set STATUS.BUSY until completion
+7. THE MIA SHALL provide DEVICE_STATUS register at $C0F0 in shared space indicating command completion, errors, and system state
+8. THE MIA SHALL complete all commands deterministically with immediate effect or set DEVICE_STATUS.BUSY until completion
 
 ### Requirement 8
 
@@ -162,18 +170,20 @@ The MIA (Multifunction Interface Adapter) is a Raspberry Pi Pico 2 W-based syste
 #### Acceptance Criteria
 
 1. THE MIA SHALL provide an IRQ_Line on GPIO 26 to signal interrupts to the 6502 CPU
-2. THE MIA SHALL provide a 16-bit IRQ_CAUSE register with low byte at $C006/$C00E and high byte at $C007/$C00F to identify the source of interrupts
-3. THE MIA SHALL provide a 16-bit IRQ_MASK register accessible via Memory_Index 83 (low byte) and Memory_Index 84 (high byte) to enable or disable specific interrupt sources
-4. WHEN a memory access error occurs and the corresponding mask bit is enabled, THE MIA SHALL assert the IRQ_Line and set appropriate IRQ_CAUSE code
-5. WHEN an index address overflow or underflow occurs and the corresponding mask bit is enabled, THE MIA SHALL assert the IRQ_Line and set INDEX_OVERFLOW cause
-6. WHEN a DMA_Operation completes and the corresponding mask bit is enabled, THE MIA SHALL assert the IRQ_Line and set DMA_COMPLETE cause
-7. WHEN USB keyboard data is received and the corresponding mask bit is enabled, THE MIA SHALL assert the IRQ_Line and set USB_KEYBOARD cause
-8. THE MIA SHALL provide write-1-to-clear functionality for IRQ_CAUSE registers where writing 1 to a bit position clears that interrupt
-9. THE MIA SHALL provide CLEAR_IRQ command to clear all interrupt pending flags at once
-10. THE MIA SHALL initialize all interrupt sources as enabled by default (IRQ_MASK = 0xFFFF)
-11. THE MIA SHALL organize interrupt sources with system and I/O interrupts in the low byte (bits 0-7) and video interrupts in the high byte (bits 8-15)
-12. THE MIA SHALL deassert the IRQ line when no enabled interrupts remain pending after acknowledgment
-13. THE MIA SHALL maintain error information in Memory_Index 0 accessible through the standard indexed interface
+2. THE MIA SHALL provide a 16-bit IRQ_CAUSE register in shared space with low byte at $C0F1 and high byte at $C0F2 to identify the source of interrupts
+3. THE MIA SHALL provide a 16-bit IRQ_MASK register in shared space with low byte at $C0F3 and high byte at $C0F4 to enable or disable specific interrupt sources
+4. THE MIA SHALL provide an IRQ_ENABLE register at $C0F5 in shared space for global interrupt enable/disable control
+5. WHEN a memory access error occurs and the corresponding mask bit is enabled, THE MIA SHALL assert the IRQ_Line and set appropriate IRQ_CAUSE code
+6. WHEN an index address overflow or underflow occurs and the corresponding mask bit is enabled, THE MIA SHALL assert the IRQ_Line and set INDEX_OVERFLOW cause
+7. WHEN a DMA_Operation completes and the corresponding mask bit is enabled, THE MIA SHALL assert the IRQ_Line and set DMA_COMPLETE cause
+8. WHEN USB keyboard data is received and the corresponding mask bit is enabled, THE MIA SHALL assert the IRQ_Line and set USB_KEYBOARD cause
+9. THE MIA SHALL provide write-1-to-clear functionality for IRQ_CAUSE registers where writing 1 to a bit position clears that interrupt
+10. THE MIA SHALL provide CLEAR_IRQ command to clear all interrupt pending flags at once
+11. THE MIA SHALL initialize all interrupt sources as enabled by default (IRQ_MASK = 0xFFFF, IRQ_ENABLE = 0x01)
+12. THE MIA SHALL organize interrupt sources with system and I/O interrupts in the low byte (bits 0-7) and video interrupts in the high byte (bits 8-15)
+13. THE MIA SHALL deassert the IRQ line when no enabled interrupts remain pending after acknowledgment
+14. THE MIA SHALL maintain error information in Memory_Index 0 accessible through the standard indexed interface
+15. THE MIA SHALL provide device identification in shared space with low byte at $C0F6 and high byte at $C0F7
 
 ### Requirement 9
 

@@ -39,51 +39,61 @@
 
 - [ ] 5. Implement bus interface foundation
   - [x] 5.1 Create bus interface module structure (bus_interface.h and bus_interface.c)
-    - Define register address constants for indexed interface mode ($C000-$C00F)
+    - Define register address constants for indexed interface mode ($C000-$C0FF)
+    - Define multi-window architecture (Windows A-D) and shared register space
     - Define window detection macros and helper functions
     - Create function prototypes for main entry points (bus_interface_read/write)
     - _Requirements: 5.1, 5.2_
-  - [ ] 5.2 Implement address decoding logic
-    - Create function to decode register offset from address (0-7 for each window)
-    - Implement window detection (Window A: bit 3 = 0, Window B: bit 3 = 1)
-    - Add address mirroring logic (16-byte window repeated throughout $C000-$C3FF)
+  - [x] 5.2 Implement address decoding logic
+    - Create function to decode register offset from address (0-15 for each window)
+    - Implement window detection (bits 4-6 determine window: 0=A, 1=B, 2=C, 3=D)
+    - Implement shared space detection (bit 7 set: $C080-$C0FF)
+    - Add support for 4 active windows plus 4 future windows (E-H)
     - _Requirements: 5.1, 5.2_
-  - [ ] 5.3 Create main dispatcher functions
-    - Implement bus_interface_read(address) - main READ entry point
-    - Implement bus_interface_write(address, data) - main WRITE entry point
-    - Add basic switch statement structure for register routing
+  - [ ] 5.3 Create window state management structures
+    - Define window_state_t structure to track per-window state (active_index, config_field_select)
+    - Create global window_state array supporting up to 8 windows (A-H)
+    - Implement window state initialization in bus_interface_init()
+    - Add helper functions for window state access (get/set active index, config field)
+    - _Requirements: 5.5, 6.1_
+  - [ ] 5.4 Create main dispatcher functions
+    - Implement bus_interface_read(address) - main READ entry point with shared register support
+    - Implement bus_interface_write(address, data) - main WRITE entry point with shared register support
+    - Add switch statement structure for window register routing
+    - Add switch statement structure for shared register routing
     - _Requirements: 5.1, 5.2, 5.3_
-  - [ ] 5.4 Add unit tests for address decoding
-    - Test window detection for various addresses
-    - Test address mirroring across full range
-    - Verify register offset calculation
+  - [x] 5.5 Add unit tests for address decoding
+    - Test window detection for all windows (A, B, C, D)
+    - Test shared space detection ($C080-$C0FF)
+    - Test register offset calculation for multi-window architecture
+    - Verify boundary conditions between windows and shared space
     - _Requirements: 5.1, 5.2_
 
 - [ ] 6. Implement register handlers - Index selection
   - [ ] 6.1 Implement IDX_SELECT read handler
-    - Create read_idx_select(window_b) function
+    - Create read_idx_select(window_num) function supporting all windows (A, B, C, D)
     - Return currently selected index for specified window
     - Integrate with indexed_memory_get_window_index()
     - _Requirements: 6.1_
   - [ ] 6.2 Implement IDX_SELECT write handler
-    - Create write_idx_select(window_b, index) function
+    - Create write_idx_select(window_num, index) function supporting all windows (A, B, C, D)
     - Update active index selection for specified window
     - Integrate with indexed_memory_set_window_index()
     - _Requirements: 6.1_
   - [ ] 6.3 Test index selection operations
-    - Test reading selected index for both windows
-    - Test changing selected index for both windows
-    - Verify window independence
+    - Test reading selected index for all windows (A, B, C, D)
+    - Test changing selected index for all windows
+    - Verify window independence across all four windows
     - _Requirements: 6.1_
 
 - [ ] 7. Implement register handlers - Data port
   - [ ] 7.1 Implement DATA_PORT read handler
-    - Create read_data_port(window_b) function
+    - Create read_data_port(window_num) function supporting all windows (A, B, C, D)
     - Read byte from currently selected index with auto-stepping
     - Integrate with indexed_memory_read()
     - _Requirements: 6.2_
   - [ ] 7.2 Implement DATA_PORT write handler
-    - Create write_data_port(window_b, data) function
+    - Create write_data_port(window_num, data) function supporting all windows (A, B, C, D)
     - Write byte to currently selected index with auto-stepping
     - Integrate with indexed_memory_write()
     - _Requirements: 6.2_
@@ -117,28 +127,45 @@
     - Verify DMA configuration fields (COPY_SRC_IDX, COPY_DST_IDX, COPY_COUNT)
     - _Requirements: 6.4, 6.5, 6.8_
 
-- [ ] 9. Implement register handlers - Status and interrupts
-  - [ ] 9.1 Implement STATUS read handler
-    - Create read_status() function
+- [ ] 9. Implement shared register handlers - Status and interrupts
+  - [ ] 9.1 Implement DEVICE_STATUS read handler
+    - Create read_device_status() function for shared register at $C0F0
     - Return system status register value
     - Integrate with indexed_memory_get_status()
-    - _Requirements: 7.7_
+    - _Requirements: 7.7, 8.4_
   - [ ] 9.2 Implement IRQ_CAUSE_LOW handlers
-    - Create read_irq_cause_low() function
+    - Create read_irq_cause_low() function for shared register at $C0F1
     - Create write_irq_cause_low(clear_bits) function with write-1-to-clear logic
     - Integrate with indexed_memory_get/write_irq_cause_low()
     - _Requirements: 8.2, 8.3_
   - [ ] 9.3 Implement IRQ_CAUSE_HIGH handlers
-    - Create read_irq_cause_high() function
+    - Create read_irq_cause_high() function for shared register at $C0F2
     - Create write_irq_cause_high(clear_bits) function with write-1-to-clear logic
     - Integrate with indexed_memory_get/write_irq_cause_high()
     - _Requirements: 8.2, 8.3_
-  - [ ] 9.4 Test status and interrupt handling
-    - Test status register reading
+  - [ ] 9.4 Implement IRQ_MASK handlers
+    - Create read_irq_mask_low() function for shared register at $C0F3
+    - Create write_irq_mask_low(mask) function
+    - Create read_irq_mask_high() function for shared register at $C0F4
+    - Create write_irq_mask_high(mask) function
+    - _Requirements: 8.3, 8.11_
+  - [ ] 9.5 Implement IRQ_ENABLE handler
+    - Create read_irq_enable() function for shared register at $C0F5
+    - Create write_irq_enable(enable) function for global interrupt control
+    - _Requirements: 8.4, 8.11_
+  - [ ] 9.6 Implement DEVICE_ID handlers
+    - Create read_device_id_low() function for shared register at $C0F6 (returns 'M' = 0x4D)
+    - Create read_device_id_high() function for shared register at $C0F7 (returns 'I' = 0x49)
+    - _Requirements: 8.15_
+  - [ ] 9.7 Test shared register handling
+    - Test device status register reading
     - Test interrupt cause reading (both bytes)
+    - Test interrupt mask reading and writing (both bytes)
+    - Test global interrupt enable/disable
+    - Test device identification reading
     - Test write-1-to-clear functionality for individual interrupt bits
-    - Verify IRQ line behavior (assert/deassert based on mask)
-    - _Requirements: 7.7, 8.2, 8.3, 8.8, 8.12_
+    - Verify IRQ line behavior (assert/deassert based on mask and enable)
+    - _Requirements: 7.7, 8.2, 8.3, 8.4, 8.8, 8.11, 8.12, 8.15_
 
 - [ ] 10. Implement register handlers - Commands
   - [ ] 10.1 Implement COMMAND write handler
@@ -200,22 +227,25 @@
     - _Requirements: 5.6, 5.7, 5.8, 5.9, 5.11_
 
 - [ ] 12. Complete indexed interface end-to-end testing
-  - [ ] 12.1 Test dual-window operations
-    - Test simultaneous access to different indexes via Window A and B
-    - Verify window priority when both accessed simultaneously
-    - Test efficient data copying using both windows
-    - _Requirements: 5.3, 5.4_
+  - [ ] 12.1 Test multi-window operations
+    - Test simultaneous access to different indexes via Windows A, B, C, and D
+    - Test efficient data copying using multiple windows
+    - Verify independent operation of all windows
+    - _Requirements: 5.2, 5.3, 5.4, 5.5, 5.6, 5.7_
   - [ ] 12.2 Test complete register set
-    - Test all registers in both windows
-    - Verify register mirroring throughout $C000-$C3FF range
-    - Test edge cases and boundary conditions
-    - _Requirements: 5.1, 5.2, 5.3_
+    - Test all active registers in Windows A and B
+    - Test reserved registers in Windows C and D
+    - Test all shared registers ($C0F0-$C0FF)
+    - Verify proper address decoding across full $C000-$C0FF range
+    - Test edge cases and boundary conditions between windows and shared space
+    - _Requirements: 5.1, 5.2, 5.3, 5.7, 8.15_
   - [ ] 12.3 Performance and timing validation
-    - Measure response times for all register operations
+    - Measure response times for window register operations
+    - Measure response times for shared register operations
     - Verify 1 MHz operation compliance
     - Test sustained throughput with continuous operations
     - Profile timing margins and identify optimization opportunities
-    - _Requirements: 5.6, 5.7, 5.8, 5.9_
+    - _Requirements: 5.9, 5.10, 5.11, 5.12_
 
 - [ ] 13. Implement graphics memory organization via indexed interface
   - Pre-configure indexes 16-23 for character table access (8 tables, shared by background and sprites)

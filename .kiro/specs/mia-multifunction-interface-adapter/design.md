@@ -109,32 +109,75 @@ The MIA operates in two distinct phases with different timing and processing req
 - Active during boot phase only (HIRAM_CS on GPIO 20)
 
 **Indexed Memory Interface ($C000-$C3FF):**
-- 1KB address space with 16-byte register window mirrored throughout
+- 1KB address space (6502 perspective) with multi-window architecture and shared registers
+- MIA only sees 8 address lines (A0-A7 on GPIO 0-7), creating 256-byte address space
+- 256-byte pattern mirrors 4 times throughout 1KB range ($C000-$C0FF, $C100-$C1FF, $C200-$C2FF, $C300-$C3FF)
 - Active during normal operation (IO0_CS on GPIO 21)
-- Dual-window architecture for efficient data access and copying
+- Four-window architecture (A-D) with room for expansion (E-H) plus shared register space
 
-**Window A Registers ($C000-$C007, mirrored):**
-- $C000: IDX_SELECT_A - Select active index (0-255) for Window A
-- $C001: DATA_PORT_A - Read/write byte at current index address with auto-step
-- $C002: CFG_FIELD_SELECT_A - Select configuration field for active index
-- $C003: CFG_DATA_A - Read/write selected configuration field
-- $C004: COMMAND_A - Issue control commands
-- $C005: STATUS - Device status bits (shared between windows)
-- $C006: IRQ_CAUSE_LOW - Interrupt source identification low byte, bits 0-7 (shared between windows)
-- $C007: IRQ_CAUSE_HIGH - Interrupt source identification high byte, bits 8-15 (shared between windows)
+**Address Mapping Note:**
+From MIA's perspective (8-bit addresses):
+- $00-$0F: Window A registers
+- $10-$1F: Window B registers
+- $20-$2F: Window C registers
+- $30-$3F: Window D registers
+- $40-$7F: Reserved for future windows (E-H)
+- $80-$FF: Shared register space
 
-**Window B Registers ($C008-$C00F, mirrored):**
-- $C008: IDX_SELECT_B - Select active index (0-255) for Window B
-- $C009: DATA_PORT_B - Read/write byte at current index address with auto-step
-- $C00A: CFG_FIELD_SELECT_B - Select configuration field for active index
-- $C00B: CFG_DATA_B - Read/write selected configuration field
-- $C00C: COMMAND_B - Issue control commands
-- $C00D: STATUS - Device status bits (shared between windows)
-- $C00E: IRQ_CAUSE_LOW - Interrupt source identification low byte, bits 0-7 (shared between windows)
-- $C00F: IRQ_CAUSE_HIGH - Interrupt source identification high byte, bits 8-15 (shared between windows)
+From 6502's perspective (16-bit addresses, with mirroring):
+- $C000-$C00F: Window A (mirrors at $C100, $C200, $C300)
+- $C010-$C01F: Window B (mirrors at $C110, $C210, $C310)
+- $C020-$C02F: Window C (mirrors at $C120, $C220, $C320)
+- $C030-$C03F: Window D (mirrors at $C130, $C230, $C330)
+- $C0F0-$C0FF: Shared registers (mirrors at $C1F0, $C2F0, $C3F0)
+
+**Window A Registers ($C000-$C00F, MIA sees $00-$0F):**
+- $C000 (MIA $00): IDX_SELECT_A - Select active index (0-255) for Window A
+- $C001 (MIA $01): DATA_PORT_A - Read/write byte at current index address with auto-step
+- $C002 (MIA $02): CFG_FIELD_SELECT_A - Select configuration field for active index
+- $C003 (MIA $03): CFG_DATA_A - Read/write selected configuration field
+- $C004 (MIA $04): COMMAND_A - Issue control commands
+- $C005-$C00F (MIA $05-$0F): Reserved for future use (11 registers)
+
+**Window B Registers ($C010-$C01F, MIA sees $10-$1F):**
+- $C010 (MIA $10): IDX_SELECT_B - Select active index (0-255) for Window B
+- $C011 (MIA $11): DATA_PORT_B - Read/write byte at current index address with auto-step
+- $C012 (MIA $12): CFG_FIELD_SELECT_B - Select configuration field for active index
+- $C013 (MIA $13): CFG_DATA_B - Read/write selected configuration field
+- $C014 (MIA $14): COMMAND_B - Issue control commands
+- $C015-$C01F (MIA $15-$1F): Reserved for future use (11 registers)
+
+**Window C Registers ($C020-$C02F, MIA sees $20-$2F):**
+- $C020 (MIA $20): IDX_SELECT_C - Select active index (0-255) for Window C
+- $C021 (MIA $21): DATA_PORT_C - Read/write byte at current index address with auto-step
+- $C022 (MIA $22): CFG_FIELD_SELECT_C - Select configuration field for active index
+- $C023 (MIA $23): CFG_DATA_C - Read/write selected configuration field
+- $C024 (MIA $24): COMMAND_C - Issue control commands
+- $C025-$C02F (MIA $25-$2F): Reserved for future use (11 registers)
+
+**Window D Registers ($C030-$C03F, MIA sees $30-$3F):**
+- $C030 (MIA $30): IDX_SELECT_D - Select active index (0-255) for Window D
+- $C031 (MIA $31): DATA_PORT_D - Read/write byte at current index address with auto-step
+- $C032 (MIA $32): CFG_FIELD_SELECT_D - Select configuration field for active index
+- $C033 (MIA $33): CFG_DATA_D - Read/write selected configuration field
+- $C034 (MIA $34): COMMAND_D - Issue control commands
+- $C035-$C03F (MIA $35-$3F): Reserved for future use (11 registers)
+
+**Future Window Space ($C040-$C07F, MIA sees $40-$7F):**
+- Reserved for Windows E-H (64 bytes, 4 windows × 16 registers)
+
+**Shared Registers ($C0F0-$C0FF, MIA sees $F0-$FF):**
+- $C0F0 (MIA $F0): DEVICE_STATUS - Global device status (command completion, errors, system state)
+- $C0F1 (MIA $F1): IRQ_CAUSE_LOW - Interrupt source identification low byte (bits 0-7)
+- $C0F2 (MIA $F2): IRQ_CAUSE_HIGH - Interrupt source identification high byte (bits 8-15)
+- $C0F3 (MIA $F3): IRQ_MASK_LOW - Interrupt mask low byte (enable/disable interrupts 0-7)
+- $C0F4 (MIA $F4): IRQ_MASK_HIGH - Interrupt mask high byte (enable/disable interrupts 8-15)
+- $C0F5 (MIA $F5): IRQ_ENABLE - Global interrupt enable/disable
+- $C0F6-$C0FF (MIA $F6-$FF): Reserved shared registers (8 registers)
+- $C080-$C0EF (MIA $80-$EF): Reserved shared space (112 bytes for future expansion)
 
 **Index Memory Organization:**
-- 256 shared indexes (0-255) accessible from both windows
+- 256 shared indexes (0-255) accessible from all windows
 - Each index contains: current address (24-bit), default address (24-bit), step size (8-bit), flags (8-bit)
 - Pre-configured indexes for system functions, video data, USB input, and user applications
 
@@ -183,8 +226,9 @@ The MIA must comply with the specific timing requirements of the W65C02S6TPG-14 
 
 **Register Access Handling:**
 - PIO monitors IO0_CS (GPIO 21) for indexed interface activation
-- Address decoding via GPIO 0-7 for register selection and window detection
-- Window priority: Window A takes precedence, Window B access ignored on conflicts
+- Address decoding via GPIO 0-7 for register selection, window detection, and shared space detection
+- Window detection: bits 4-6 determine window number (0=A, 1=B, 2=C, 3=D, 4-7=future)
+- Shared space detection: bit 7 set indicates shared register space ($C080-$C0FF)
 - Bidirectional data handling via GPIO 8-15 with automatic direction control
 - **1 MHz Timing Compliance (785ns READ budget, 470ns WRITE budget):**
   - **CS Detection:** PIO responds to IO0_CS assertion within 15ns
@@ -240,10 +284,10 @@ Write Cycle Timing (1000ns cycle, 470ns sampling budget):
 ### Indexed Memory System
 
 **Architecture Overview:**
-- 256 independent memory indexes (0-255) shared between both windows
+- 256 independent memory indexes (0-255) shared between all windows
 - Each index acts as a smart pointer with automatic stepping capability
 - 24-bit addressing provides access to full 16MB address space
-- Dual-window design enables efficient copying between any two memory locations
+- Four-window design enables efficient copying and parallel access to multiple memory locations
 
 **Index Structure:**
 ```c
@@ -775,10 +819,11 @@ The video system leverages the indexed memory interface for efficient graphics d
 
 ### Memory Access Optimization
 
-**Dual-Window Efficiency:**
-- Window A and B enable simultaneous access to different memory regions
-- Efficient copying: read from Window A, write to Window B
+**Multi-Window Efficiency:**
+- Four active windows (A-D) enable simultaneous access to different memory regions
+- Efficient copying: read from one window, write to another
 - No manual address management required for sequential operations
+- Future expansion to 8 windows (E-H) for even more parallelism
 
 **DMA Acceleration:**
 - Hardware block copy between any two indexes

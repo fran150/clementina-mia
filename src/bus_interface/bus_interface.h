@@ -2,21 +2,34 @@
  * MIA Bus Interface Module
  * 
  * Provides the 6502 bus interface for the indexed memory system.
- * Handles register access for dual-window architecture ($C000-$C00F).
+ * Handles register access for multi-window architecture with shared registers.
  * 
- * Memory Map:
- * - Window A: $C000-$C007 (mirrored throughout $C000-$C3FF)
- * - Window B: $C008-$C00F (mirrored throughout $C000-$C3FF)
+ * Memory Map (8-bit address space: 0x00-0xFF):
+ * - Window A: 0x00-0x0F (16 registers, 0-4 active, 5-15 reserved)
+ * - Window B: 0x10-0x1F (16 registers, 0-4 active, 5-15 reserved)
+ * - Window C: 0x20-0x2F (16 registers, 0-4 active, 5-15 reserved)
+ * - Window D: 0x30-0x3F (16 registers, 0-4 active, 5-15 reserved)
+ * - Reserved: 0x40-0x7F (future window expansion E-H)
+ * - Shared:   0x80-0xFF (128 bytes, active from 0xF0-0xFF)
  * 
- * Register Layout (both windows):
+ * Register Layout (Windows A-D):
  * - +0: IDX_SELECT - Select active index (0-255)
  * - +1: DATA_PORT - Read/write byte at current index address with auto-step
  * - +2: CFG_FIELD_SELECT - Select configuration field
  * - +3: CFG_DATA - Read/write selected configuration field
  * - +4: COMMAND - Issue control commands
- * - +5: STATUS - Device status bits (shared)
- * - +6: IRQ_CAUSE_LOW - Interrupt source identification low byte (shared)
- * - +7: IRQ_CAUSE_HIGH - Interrupt source identification high byte (shared)
+ * - +5-15: Reserved for future use
+ * 
+ * Shared Register Layout (0xF0-0xFF):
+ * - 0xF0: DEVICE_STATUS - Global device status
+ * - 0xF1: IRQ_CAUSE_LOW - Interrupt source low byte (bits 0-7)
+ * - 0xF2: IRQ_CAUSE_HIGH - Interrupt source high byte (bits 8-15)
+ * - 0xF3: IRQ_MASK_LOW - Interrupt mask low byte
+ * - 0xF4: IRQ_MASK_HIGH - Interrupt mask high byte
+ * - 0xF5: IRQ_ENABLE - Global interrupt enable
+ * - 0xF6: DEVICE_ID_LOW - Device identification low byte
+ * - 0xF7: DEVICE_ID_HIGH - Device identification high byte
+ * - 0xF8-0xFF: Reserved shared registers
  */
 
 #ifndef BUS_INTERFACE_H
@@ -29,111 +42,56 @@
 // Register Address Constants
 // ============================================================================
 
-// Base addresses for indexed interface mode
-#define BUS_INTERFACE_BASE      0xC000  // Base address for indexed interface
-#define BUS_INTERFACE_SIZE      0x0400  // 1KB address space ($C000-$C3FF)
-#define BUS_INTERFACE_WINDOW    0x0010  // 16-byte register window
+// NOTE: MIA only sees 8 address lines (A0-A7 on GPIO 0-7)
+// The 6502 address space $C000-$C0FF is selected by IO0_CS chip select line
+// MIA sees only the lower 8 bits: 0x00-0xFF
 
-// Window A register offsets (absolute addresses)
-#define REG_IDX_SELECT_A        0xC000  // Window A: Index selection
-#define REG_DATA_PORT_A         0xC001  // Window A: Data port with auto-step
-#define REG_CFG_FIELD_SELECT_A  0xC002  // Window A: Configuration field selector
-#define REG_CFG_DATA_A          0xC003  // Window A: Configuration data
-#define REG_COMMAND_A           0xC004  // Window A: Command register
-#define REG_STATUS_A            0xC005  // Window A: Status register (shared)
-#define REG_IRQ_CAUSE_LOW_A     0xC006  // Window A: IRQ cause low byte (shared)
-#define REG_IRQ_CAUSE_HIGH_A    0xC007  // Window A: IRQ cause high byte (shared)
+// Window base addresses (8-bit local addresses)
+#define WINDOW_A_BASE           0x00    // Window A: 0x00-0x0F
+#define WINDOW_B_BASE           0x10    // Window B: 0x10-0x1F
+#define WINDOW_C_BASE           0x20    // Window C: 0x20-0x2F (reserved)
+#define WINDOW_D_BASE           0x30    // Window D: 0x30-0x3F (reserved)
+#define SHARED_BASE             0x80    // Shared registers: 0x80-0xFF
 
-// Window B register offsets (absolute addresses)
-#define REG_IDX_SELECT_B        0xC008  // Window B: Index selection
-#define REG_DATA_PORT_B         0xC009  // Window B: Data port with auto-step
-#define REG_CFG_FIELD_SELECT_B  0xC00A  // Window B: Configuration field selector
-#define REG_CFG_DATA_B          0xC00B  // Window B: Configuration data
-#define REG_COMMAND_B           0xC00C  // Window B: Command register
-#define REG_STATUS_B            0xC00D  // Window B: Status register (shared)
-#define REG_IRQ_CAUSE_LOW_B     0xC00E  // Window B: IRQ cause low byte (shared)
-#define REG_IRQ_CAUSE_HIGH_B    0xC00F  // Window B: IRQ cause high byte (shared)
+// Active shared register addresses (0xF0-0xFF)
+#define REG_DEVICE_STATUS       0xF0    // Shared: Global device status
+#define REG_IRQ_CAUSE_LOW       0xF1    // Shared: Interrupt source low byte
+#define REG_IRQ_CAUSE_HIGH      0xF2    // Shared: Interrupt source high byte
+#define REG_IRQ_MASK_LOW        0xF3    // Shared: Interrupt mask low byte
+#define REG_IRQ_MASK_HIGH       0xF4    // Shared: Interrupt mask high byte
+#define REG_IRQ_ENABLE          0xF5    // Shared: Global interrupt enable
+#define REG_DEVICE_ID_LOW       0xF6    // Shared: Device ID low byte
+#define REG_DEVICE_ID_HIGH      0xF7    // Shared: Device ID high byte
 
-// Register offsets within 16-byte window (0-7 for each window)
+// Register offsets within 16-byte window (0-15 for each window)
 #define REG_OFFSET_IDX_SELECT       0x00
 #define REG_OFFSET_DATA_PORT        0x01
 #define REG_OFFSET_CFG_FIELD_SELECT 0x02
 #define REG_OFFSET_CFG_DATA         0x03
 #define REG_OFFSET_COMMAND          0x04
-#define REG_OFFSET_STATUS           0x05
-#define REG_OFFSET_IRQ_CAUSE_LOW    0x06
-#define REG_OFFSET_IRQ_CAUSE_HIGH   0x07
+// Offsets 0x05-0x0F are reserved for future use
 
 // ============================================================================
-// Window Detection Macros
+// Address Decoding (8-bit local addresses)
 // ============================================================================
 
 /**
- * Check if an address is within the indexed interface range
- * @param addr 16-bit address to check
- * @return true if address is in $C000-$C3FF range
+ * Address decoding is performed inline in bus_interface_read/write:
+ * 
+ * Shared space detection:
+ *   is_shared = (local_addr & 0x80) != 0
+ *   Bit 7 set indicates shared register space (0x80-0xFF)
+ * 
+ * Window number extraction:
+ *   window_num = (local_addr >> 4) & 0x07
+ *   Bits 4-6 determine window: 0=A, 1=B, 2=C, 3=D, 4-7=future
+ * 
+ * Register offset extraction:
+ *   reg_offset = is_shared ? (local_addr & 0x7F) : (local_addr & 0x0F)
+ *   Shared space: bits 0-6 (0-127)
+ *   Window space: bits 0-3 (0-15)
  */
-#define IS_INDEXED_INTERFACE_ADDR(addr) \
-    (((addr) >= BUS_INTERFACE_BASE) && ((addr) < (BUS_INTERFACE_BASE + BUS_INTERFACE_SIZE)))
 
-/**
- * Extract register offset from address (0-15)
- * The 16-byte register window is mirrored throughout the 1KB space
- * @param addr 16-bit address
- * @return Register offset (0-15)
- */
-#define GET_REGISTER_OFFSET(addr) \
-    ((addr) & 0x000F)
-
-/**
- * Detect which window is being accessed
- * Window A: bit 3 = 0 (offsets 0-7)
- * Window B: bit 3 = 1 (offsets 8-15)
- * @param addr 16-bit address
- * @return true if Window B, false if Window A
- */
-#define IS_WINDOW_B(addr) \
-    ((GET_REGISTER_OFFSET(addr) & 0x08) != 0)
-
-/**
- * Get register offset within window (0-7)
- * Strips the window bit to get the actual register offset
- * @param addr 16-bit address
- * @return Register offset within window (0-7)
- */
-#define GET_WINDOW_REGISTER_OFFSET(addr) \
-    (GET_REGISTER_OFFSET(addr) & 0x07)
-
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-/**
- * Check if address is in indexed interface range
- * @param address 16-bit address to check
- * @return true if address is in $C000-$C3FF range
- */
-static inline bool bus_interface_is_indexed_addr(uint16_t address) {
-    return IS_INDEXED_INTERFACE_ADDR(address);
-}
-
-/**
- * Detect which window is being accessed
- * @param address 16-bit address
- * @return true if Window B, false if Window A
- */
-static inline bool bus_interface_is_window_b(uint16_t address) {
-    return IS_WINDOW_B(address);
-}
-
-/**
- * Get register offset within window (0-7)
- * @param address 16-bit address
- * @return Register offset (0-7)
- */
-static inline uint8_t bus_interface_get_register_offset(uint16_t address) {
-    return GET_WINDOW_REGISTER_OFFSET(address);
-}
 
 // ============================================================================
 // Main Entry Points
@@ -149,18 +107,24 @@ void bus_interface_init(void);
  * Handle a READ operation from the 6502 bus
  * Called by PIO interrupt handler or main loop
  * 
- * @param address 16-bit address being read
+ * NOTE: MIA only sees 8-bit addresses (A0-A7 on GPIO 0-7)
+ * The IO0_CS chip select line indicates we're in indexed interface mode
+ * 
+ * @param local_addr 8-bit local address (what MIA sees on GPIO 0-7)
  * @return Data byte to return to 6502
  */
-uint8_t bus_interface_read(uint16_t address);
+uint8_t bus_interface_read(uint8_t local_addr);
 
 /**
  * Handle a WRITE operation from the 6502 bus
  * Called by PIO interrupt handler or main loop
  * 
- * @param address 16-bit address being written
+ * NOTE: MIA only sees 8-bit addresses (A0-A7 on GPIO 0-7)
+ * The IO0_CS chip select line indicates we're in indexed interface mode
+ * 
+ * @param local_addr 8-bit local address (what MIA sees on GPIO 0-7)
  * @param data Data byte from 6502
  */
-void bus_interface_write(uint16_t address, uint8_t data);
+void bus_interface_write(uint8_t local_addr, uint8_t data);
 
 #endif // BUS_INTERFACE_H
