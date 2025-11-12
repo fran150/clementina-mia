@@ -59,7 +59,7 @@ bool test_index_structure(void) {
     uint8_t test_idx = IDX_USER_START; // Use first user index
     
     // Test address setting
-    uint32_t test_addr = 0x20040000;
+    uint32_t test_addr = 0x20013800; // MIA_USER_AREA_BASE
     indexed_memory_set_index_address(test_idx, test_addr);
     
     uint8_t addr_l = indexed_memory_get_config_field(test_idx, CFG_ADDR_L);
@@ -73,7 +73,7 @@ bool test_index_structure(void) {
     }
     
     // Test default address setting
-    uint32_t default_addr = 0x20041000;
+    uint32_t default_addr = 0x20014800; // MIA_USER_AREA_BASE + 0x1000
     indexed_memory_set_index_default(test_idx, default_addr);
     
     uint8_t def_l = indexed_memory_get_config_field(test_idx, CFG_DEFAULT_L);
@@ -132,7 +132,7 @@ bool test_basic_memory_access(void) {
     uint8_t test_idx = IDX_USER_START;
     
     // Configure index for user memory area
-    uint32_t test_addr = 0x20040000; // User area base
+    uint32_t test_addr = 0x20013800; // MIA_USER_AREA_BASE
     indexed_memory_set_index_address(test_idx, test_addr);
     indexed_memory_set_index_step(test_idx, 1);
     indexed_memory_set_index_flags(test_idx, 0); // No auto-step for this test
@@ -171,7 +171,7 @@ bool test_auto_stepping(void) {
     uint8_t test_idx = IDX_USER_START + 1;
     
     // Configure index with auto-stepping
-    uint32_t start_addr = 0x20040100;
+    uint32_t start_addr = 0x20013900; // MIA_USER_AREA_BASE + 0x100
     indexed_memory_set_index_default(test_idx, start_addr);
     indexed_memory_set_index_address(test_idx, start_addr);
     indexed_memory_set_index_step(test_idx, 2); // Step by 2 bytes
@@ -284,14 +284,14 @@ bool test_dma_operations(void) {
     uint8_t dst_idx = IDX_USER_START + 4;
     
     // Set up source index with test data
-    uint32_t src_addr = 0x20040200;
+    uint32_t src_addr = 0x20013A00; // MIA_USER_AREA_BASE + 0x200
     indexed_memory_set_index_default(src_idx, src_addr);
     indexed_memory_set_index_address(src_idx, src_addr);
     indexed_memory_set_index_step(src_idx, 1);
     indexed_memory_set_index_flags(src_idx, FLAG_AUTO_STEP);
     
     // Set up destination index
-    uint32_t dst_addr = 0x20040300;
+    uint32_t dst_addr = 0x20013B00; // MIA_USER_AREA_BASE + 0x300
     indexed_memory_set_index_default(dst_idx, dst_addr);
     indexed_memory_set_index_address(dst_idx, dst_addr);
     indexed_memory_set_index_step(dst_idx, 1);
@@ -394,7 +394,8 @@ bool test_error_handling(void) {
     uint8_t test_idx = IDX_USER_START + 5;
     
     // Test invalid address access
-    indexed_memory_set_index_address(test_idx, 0x30000000); // Invalid address
+    // Use an address that's invalid even after 24-bit masking
+    indexed_memory_set_index_address(test_idx, 0x20080000); // 0x080000 after masking (beyond 256KB)
     indexed_memory_set_index_flags(test_idx, 0); // No auto-step
     
     (void)indexed_memory_read_no_step(test_idx); // Suppress unused variable warning
@@ -416,21 +417,24 @@ bool test_error_handling(void) {
     indexed_memory_clear_irq();
     
     // Test address overflow
-    indexed_memory_set_index_address(test_idx, 0x2007FFFF); // Near end of memory
+    indexed_memory_set_index_address(test_idx, 0x2003FFF8); // Near end of memory (8 bytes before end)
     indexed_memory_set_index_step(test_idx, 10);
     indexed_memory_set_index_flags(test_idx, FLAG_AUTO_STEP);
     
-    indexed_memory_write(test_idx, 0x55); // Should trigger overflow
+    indexed_memory_write(test_idx, 0x55); // Write succeeds, but steps to invalid address
+    
+    // Now try to access the invalid address - should trigger error
+    (void)indexed_memory_read(test_idx);
     
     status = indexed_memory_get_status();
-    if (!(status & STATUS_INDEX_OVERFLOW)) {
-        printf("FAIL: Index overflow not detected\n");
+    if (!(status & STATUS_MEMORY_ERROR)) {
+        printf("FAIL: Memory error not detected after overflow\n");
         return false;
     }
     
     irq_cause = indexed_memory_get_irq_cause();
-    if (irq_cause != IRQ_INDEX_OVERFLOW) {
-        printf("FAIL: Index overflow IRQ not set\n");
+    if (!(irq_cause & IRQ_MEMORY_ERROR)) {
+        printf("FAIL: Memory error IRQ not set after overflow\n");
         return false;
     }
     
@@ -449,7 +453,7 @@ bool test_wrap_on_limit(void) {
     uint8_t test_idx = IDX_USER_START + 6;
     
     // Configure index with wrap-on-limit for a 16-byte circular buffer
-    uint32_t buffer_start = 0x20040400;
+    uint32_t buffer_start = 0x20013C00; // MIA_USER_AREA_BASE + 0x400
     uint32_t buffer_limit = buffer_start + 16; // 16-byte buffer
     
     indexed_memory_set_index_address(test_idx, buffer_start);

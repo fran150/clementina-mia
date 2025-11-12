@@ -200,6 +200,8 @@ void indexed_memory_reset_all(void) {
 
 /**
  * Set index current address
+ * Stores the address as a 24-bit value (upper byte is masked off)
+ * Validation occurs during actual memory access operations
  */
 void indexed_memory_set_index_address(uint8_t idx, uint32_t address) {
     g_state.indexes[idx].current_addr = address & 0xFFFFFF;
@@ -207,6 +209,8 @@ void indexed_memory_set_index_address(uint8_t idx, uint32_t address) {
 
 /**
  * Set index default address
+ * Stores the address as a 24-bit value (upper byte is masked off)
+ * Validation occurs during actual memory access operations
  */
 void indexed_memory_set_index_default(uint8_t idx, uint32_t address) {
     g_state.indexes[idx].default_addr = address & 0xFFFFFF;
@@ -214,6 +218,8 @@ void indexed_memory_set_index_default(uint8_t idx, uint32_t address) {
 
 /**
  * Set index limit address (for wrap-on-limit feature)
+ * Stores the address as a 24-bit value (upper byte is masked off)
+ * Validation occurs during actual memory access operations
  */
 void indexed_memory_set_index_limit(uint8_t idx, uint32_t address) {
     g_state.indexes[idx].limit_addr = address & 0xFFFFFF;
@@ -241,22 +247,46 @@ void indexed_memory_reset_index(uint8_t idx) {
 }
 
 /**
+ * Validate memory address and set appropriate error flags
+ * Returns true if address is invalid (error occurred), false if valid
+ * Note: Addresses are stored as 24-bit values (0x000000-0xFFFFFF)
+ * 
+ * @param addr Address to validate
+ * @param status_flag Status flag to set on error (e.g., STATUS_MEMORY_ERROR)
+ * @param irq_cause IRQ cause to trigger on error (e.g., IRQ_MEMORY_ERROR)
+ * @return true if address is invalid, false if valid
+ */
+static bool validate_address_with_error(uint32_t addr, uint8_t status_flag, uint16_t irq_cause) {
+    // Addresses are 24-bit, check if within MIA memory size
+    if (addr >= MIA_MEMORY_SIZE) {
+        // Invalid address - set error flags
+        g_state.status |= status_flag;
+        indexed_memory_set_irq(irq_cause);
+        return true;  // Invalid
+    }
+    return false;  // Valid
+}
+
+/**
  * Read byte from index with auto-stepping
  */
 uint8_t indexed_memory_read(uint8_t idx) {
     uint32_t addr = g_state.indexes[idx].current_addr;
     uint8_t flags = g_state.indexes[idx].flags;
     
-    // Wrap address to valid range using bitwise AND (fast, since size is power of 2)
-    // Works for both hardware (subtracts base) and host (same calculation)
-    uint32_t offset = (addr - MIA_MEMORY_BASE) & (MIA_MEMORY_SIZE - 1);
+    // Validate address before access
+    if (validate_address_with_error(addr, STATUS_MEMORY_ERROR, IRQ_MEMORY_ERROR)) {
+        return 0; // Return 0 on invalid address
+    }
     
+    // Address is already a 24-bit offset, use it directly
     // Read data
-    uint8_t data = mia_memory[offset];
+    uint8_t data = mia_memory[addr];
     
     // Auto-step if enabled
     if (flags & FLAG_AUTO_STEP) {
         uint8_t step = g_state.indexes[idx].step;
+        
         if (flags & FLAG_DIRECTION) {
             // Backward stepping
             addr -= step;
@@ -279,7 +309,7 @@ uint8_t indexed_memory_read(uint8_t idx) {
             }
         }
         
-        // Update address
+        // Update address (validation will occur on next access)
         g_state.indexes[idx].current_addr = addr;
     }
     
@@ -293,16 +323,19 @@ void indexed_memory_write(uint8_t idx, uint8_t data) {
     uint32_t addr = g_state.indexes[idx].current_addr;
     uint8_t flags = g_state.indexes[idx].flags;
     
-    // Wrap address to valid range using bitwise AND (fast, since size is power of 2)
-    // Works for both hardware (subtracts base) and host (same calculation)
-    uint32_t offset = (addr - MIA_MEMORY_BASE) & (MIA_MEMORY_SIZE - 1);
+    // Validate address before access
+    if (validate_address_with_error(addr, STATUS_MEMORY_ERROR, IRQ_MEMORY_ERROR)) {
+        return; // Skip write on invalid address
+    }
     
+    // Address is already a 24-bit offset, use it directly
     // Write data
-    mia_memory[offset] = data;
+    mia_memory[addr] = data;
     
     // Auto-step if enabled
     if (flags & FLAG_AUTO_STEP) {
         uint8_t step = g_state.indexes[idx].step;
+        
         if (flags & FLAG_DIRECTION) {
             // Backward stepping
             addr -= step;
@@ -325,7 +358,7 @@ void indexed_memory_write(uint8_t idx, uint8_t data) {
             }
         }
         
-        // Update address
+        // Update address (validation will occur on next access)
         g_state.indexes[idx].current_addr = addr;
     }
 }
@@ -336,11 +369,13 @@ void indexed_memory_write(uint8_t idx, uint8_t data) {
 uint8_t indexed_memory_read_no_step(uint8_t idx) {
     uint32_t addr = g_state.indexes[idx].current_addr;
     
-    // Wrap address to valid range using bitwise AND (fast, since size is power of 2)
-    // Works for both hardware (subtracts base) and host (same calculation)
-    uint32_t offset = (addr - MIA_MEMORY_BASE) & (MIA_MEMORY_SIZE - 1);
+    // Validate address before access
+    if (validate_address_with_error(addr, STATUS_MEMORY_ERROR, IRQ_MEMORY_ERROR)) {
+        return 0; // Return 0 on invalid address
+    }
     
-    return mia_memory[offset];
+    // Address is already a 24-bit offset, use it directly
+    return mia_memory[addr];
 }
 
 /**
@@ -349,11 +384,13 @@ uint8_t indexed_memory_read_no_step(uint8_t idx) {
 void indexed_memory_write_no_step(uint8_t idx, uint8_t data) {
     uint32_t addr = g_state.indexes[idx].current_addr;
     
-    // Wrap address to valid range using bitwise AND (fast, since size is power of 2)
-    // Works for both hardware (subtracts base) and host (same calculation)
-    uint32_t offset = (addr - MIA_MEMORY_BASE) & (MIA_MEMORY_SIZE - 1);
+    // Validate address before access
+    if (validate_address_with_error(addr, STATUS_MEMORY_ERROR, IRQ_MEMORY_ERROR)) {
+        return; // Skip write on invalid address
+    }
     
-    mia_memory[offset] = data;
+    // Address is already a 24-bit offset, use it directly
+    mia_memory[addr] = data;
 }
 
 /**

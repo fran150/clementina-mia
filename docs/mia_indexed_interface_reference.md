@@ -164,8 +164,8 @@ Each window has identical register layout at offsets +0 through +15:
 |-----|------|-------------|
 | 0 | BUSY | Command in progress |
 | 1 | IRQ_PENDING | Interrupt pending |
-| 2 | MEMORY_ERROR | Invalid memory access occurred |
-| 3 | INDEX_OVERFLOW | Address pointer overflow/underflow |
+| 2 | MEMORY_ERROR | Invalid memory access occurred (address ≥ 256KB) |
+| 3 | INDEX_OVERFLOW | Reserved (not currently used) |
 | 4 | USB_DATA_READY | USB keyboard data available |
 | 5 | VIDEO_FRAME_READY | Video frame ready for transmission |
 | 6 | DMA_ACTIVE | DMA/copy operation in progress |
@@ -176,8 +176,8 @@ Each window has identical register layout at offsets +0 through +15:
 | Code | Name | Description | Mask Register | Bit |
 |------|------|-------------|---------------|-----|
 | 0x0000 | NO_IRQ | No interrupt pending | N/A | N/A |
-| 0x0001 | MEMORY_ERROR | Invalid memory access | $C0F3 (Low) | 0 |
-| 0x0002 | INDEX_OVERFLOW | Address pointer overflow | $C0F3 (Low) | 1 |
+| 0x0001 | MEMORY_ERROR | Invalid memory access (address ≥ 256KB) | $C0F3 (Low) | 0 |
+| 0x0002 | INDEX_OVERFLOW | Reserved (not currently used) | $C0F3 (Low) | 1 |
 | 0x0004 | DMA_COMPLETE | DMA/copy operation completed | $C0F3 (Low) | 2 |
 | 0x0008 | DMA_ERROR | DMA/copy operation failed | $C0F3 (Low) | 3 |
 | 0x0010 | USB_KEYBOARD | Keyboard data received | $C0F3 (Low) | 4 |
@@ -190,14 +190,48 @@ Each window has identical register layout at offsets +0 through +15:
 
 **Note:** IRQ cause codes are bit masks (power of 2 values) that directly correspond to bits in the 16-bit IRQ_MASK register for efficient masking with a single AND operation.
 
+### Memory Error Behavior
+
+**MEMORY_ERROR** is triggered when attempting to access an invalid memory address:
+
+- **When it occurs:** During read or write operations (DATA_READ, DATA_WRITE, or their no-step variants)
+- **Invalid addresses:** Any address ≥ 0x040000 (beyond the 256KB MIA memory range)
+- **Behavior on error:**
+  - Read operations return 0x00
+  - Write operations are skipped (no memory modification)
+  - MEMORY_ERROR status bit is set
+  - IRQ_MEMORY_ERROR interrupt is triggered (if enabled)
+  - Index address is NOT modified
+
+**Important:** Address validation occurs at access time, not when configuring indexes. You can set an index to an invalid address without error, but attempting to read or write will trigger MEMORY_ERROR.
+
+**Example scenario:**
+```assembly
+; Configure index with invalid address (no error yet)
+LDA #128        ; Select user index
+STA $C000       ; Window A
+LDA #$08        ; Address high byte = 0x08 (beyond 256KB)
+STA $C002       ; CFG_ADDR_H
+
+; Attempt to read - triggers MEMORY_ERROR
+LDA $C010       ; DATA_READ - returns 0x00, sets error flag
+
+; Check for error
+LDA $C0F0       ; Read DEVICE_STATUS
+AND #$04        ; Check MEMORY_ERROR bit
+BNE error_handler
+```
+
+**Auto-stepping behavior:** If auto-step causes an index to advance beyond valid memory, the address is still updated. The error will be detected on the next read/write attempt.
+
 ## IRQ_MASK Registers (16-bit, $C0F3-$C0F4)
 
 ### $C0F3: IRQ_MASK_LOW (Bits 0-7)
 
 | Bit | Name | Description |
 |-----|------|-------------|
-| 0 | MEMORY_ERROR | Enable/disable memory error interrupts |
-| 1 | INDEX_OVERFLOW | Enable/disable index overflow interrupts |
+| 0 | MEMORY_ERROR | Enable/disable memory error interrupts (invalid address access) |
+| 1 | INDEX_OVERFLOW | Reserved (not currently used) |
 | 2 | DMA_COMPLETE | Enable/disable DMA completion interrupts |
 | 3 | DMA_ERROR | Enable/disable DMA error interrupts |
 | 4 | USB_KEYBOARD | Enable/disable USB keyboard interrupts |
@@ -449,7 +483,7 @@ WAIT_DMA:
 ### Interrupt Handling
 ```assembly
 ; Enable specific interrupts
-LDA #$15        ; Enable MEMORY_ERROR, INDEX_OVERFLOW, USB_KEYBOARD
+LDA #$11        ; Enable MEMORY_ERROR, USB_KEYBOARD (bits 0 and 4)
 STA $C0F3       ; IRQ_MASK_LOW
 
 LDA #$03        ; Enable VIDEO_FRAME, VIDEO_COLLISION
