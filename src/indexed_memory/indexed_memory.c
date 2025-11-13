@@ -10,53 +10,32 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-// MIA memory layout (256KB allocated from 520KB SRAM)
-#define MIA_MEMORY_BASE         0x20000000
-#define MIA_INDEX_TABLE_BASE    (MIA_MEMORY_BASE + 0x00000000)  // 2KB
-#define MIA_SYSTEM_AREA_BASE    (MIA_MEMORY_BASE + 0x00000800)  // 16KB
-#define MIA_VIDEO_AREA_BASE     (MIA_MEMORY_BASE + 0x00004800)  // 60KB
-#define MIA_USER_AREA_BASE      (MIA_MEMORY_BASE + 0x00013800)  // 162KB
-#define MIA_IO_BUFFER_BASE      (MIA_MEMORY_BASE + 0x0003C000)  // 16KB
-#define MIA_MEMORY_SIZE         0x40000  // 256KB total MIA memory
-
-// For host testing, convert hardware addresses to offsets
-#ifndef PICO_BUILD
-#define MIA_ADDR_TO_OFFSET(addr) ((addr) - MIA_MEMORY_BASE)
-#define MIA_SYSTEM_AREA_OFFSET  MIA_ADDR_TO_OFFSET(MIA_SYSTEM_AREA_BASE)
-#define MIA_VIDEO_AREA_OFFSET   MIA_ADDR_TO_OFFSET(MIA_VIDEO_AREA_BASE)
-#define MIA_USER_AREA_OFFSET    MIA_ADDR_TO_OFFSET(MIA_USER_AREA_BASE)
-#define MIA_IO_BUFFER_OFFSET    MIA_ADDR_TO_OFFSET(MIA_IO_BUFFER_BASE)
-#endif
+// MIA memory layout (256KB properly allocated)
+// All addresses are logical offsets (0x000000 - 0x03FFFF) into the mia_memory array
+#define MIA_MEMORY_BASE         0x00000000  // Logical base (offset 0)
+#define MIA_INDEX_TABLE_BASE    0x00000000  // 2KB
+#define MIA_SYSTEM_AREA_BASE    0x00000800  // 16KB
+#define MIA_VIDEO_AREA_BASE     0x00004800  // 60KB
+#define MIA_USER_AREA_BASE      0x00013800  // 162KB
+#define MIA_IO_BUFFER_BASE      0x0003C000  // 16KB
+#define MIA_MEMORY_SIZE         0x40000     // 256KB total MIA memory
 
 // Global system state
 static indexed_memory_state_t g_state;
 
-// Memory area pointers for validation
-#ifdef PICO_BUILD
-// On hardware, use actual SRAM address
-static uint8_t* const mia_memory = (uint8_t*)MIA_MEMORY_BASE;
-#else
-// On host, allocate memory dynamically
-static uint8_t* mia_memory = NULL;
-#endif
+// MIA memory array - properly allocated by linker to avoid SDK conflicts
+// All index addresses are offsets into this array
+static uint8_t mia_memory[MIA_MEMORY_SIZE] __attribute__((aligned(4)));
 
 /**
  * Initialize the indexed memory system
  */
 void indexed_memory_init(void) {
-#ifndef PICO_BUILD
-    // On host, allocate memory if not already allocated
-    if (mia_memory == NULL) {
-        mia_memory = (uint8_t*)calloc(MIA_MEMORY_SIZE, 1);
-        if (mia_memory == NULL) {
-            printf("ERROR: Failed to allocate MIA memory for testing\n");
-            return;
-        }
-    }
-#endif
-    
     // Clear all state
     memset(&g_state, 0, sizeof(g_state));
+    
+    // Clear MIA memory
+    memset(mia_memory, 0, MIA_MEMORY_SIZE);
     
     // Initialize system status
     g_state.status = STATUS_SYSTEM_READY;
