@@ -62,6 +62,7 @@ add_executable(mia
     src/system/reset_control.c
     src/rom_emulation/rom_emulator.c
     src/indexed_memory/indexed_memory.c
+    src/indexed_memory/indexed_memory_dma_hw.c
     src/bus_interface/bus_interface.c
     src/video/video_controller.c
     src/usb/usb_controller.c
@@ -92,6 +93,7 @@ target_link_libraries(mia
     hardware_pwm
     hardware_clocks
     hardware_pio
+    hardware_dma
     pico_cyw43_arch_lwip_poll
     tinyusb_device
     m  # Math library for floating point operations

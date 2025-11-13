@@ -12,6 +12,7 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/mocks
     ${CMAKE_CURRENT_SOURCE_DIR}/../src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/indexed_memory
 )
 
 # Source files for modules under test
@@ -19,6 +20,7 @@ include_directories(
 set(MODULE_SOURCES
     ../src/bus_interface/bus_interface.c
     ../src/indexed_memory/indexed_memory.c
+    mocks/indexed_memory_dma_mock.c
 )
 
 # Test source files

@@ -6,6 +6,7 @@
  */
 
 #include "indexed_memory.h"
+#include "indexed_memory_dma.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,6 +27,17 @@ static indexed_memory_state_t g_state;
 // MIA memory array - properly allocated by linker to avoid SDK conflicts
 // All index addresses are offsets into this array
 static uint8_t mia_memory[MIA_MEMORY_SIZE] __attribute__((aligned(4)));
+
+/**
+ * DMA completion callback - called when DMA transfer completes
+ */
+static void dma_completion_callback(void) {
+    // Clear DMA active status
+    g_state.status &= ~STATUS_DMA_ACTIVE;
+    
+    // Signal completion
+    indexed_memory_set_irq(IRQ_DMA_COMPLETE);
+}
 
 /**
  * Initialize the indexed memory system
@@ -166,7 +178,12 @@ void indexed_memory_init(void) {
         indexed_memory_set_index_flags(i, FLAG_AUTO_STEP);
     }
     
+    // Initialize DMA for memory copy operations
+    int dma_channel = indexed_memory_dma_init();
+    indexed_memory_dma_set_completion_callback(dma_completion_callback);
+    
     printf("Indexed memory system initialized with 256 indexes\n");
+    printf("DMA channel %d claimed for memory operations\n", dma_channel);
 }
 
 /**
@@ -224,6 +241,13 @@ void indexed_memory_set_index_flags(uint8_t idx, uint8_t flags) {
  */
 void indexed_memory_reset_index(uint8_t idx) {
     g_state.indexes[idx].current_addr = g_state.indexes[idx].default_addr;
+}
+
+/**
+ * Get current index address (for testing)
+ */
+uint32_t indexed_memory_get_index_address(uint8_t idx) {
+    return g_state.indexes[idx].current_addr;
 }
 
 /**
@@ -505,52 +529,79 @@ void indexed_memory_execute_command(uint8_t cmd) {
 
 /**
  * Copy single byte between indexes
- * Uses auto-stepping versions to respect index configurations
+ * For single byte, use direct memory access (faster than DMA setup overhead)
+ * Note: Indexes are used only as address pointers and are NOT modified
  */
 void indexed_memory_copy_byte(uint8_t src_idx, uint8_t dst_idx) {
-    // Save current flags
-    uint8_t src_flags = g_state.indexes[src_idx].flags;
-    uint8_t dst_flags = g_state.indexes[dst_idx].flags;
+    uint32_t src_addr = g_state.indexes[src_idx].current_addr;
+    uint32_t dst_addr = g_state.indexes[dst_idx].current_addr;
     
-    // Temporarily enable auto-step for both indexes
-    g_state.indexes[src_idx].flags |= FLAG_AUTO_STEP;
-    g_state.indexes[dst_idx].flags |= FLAG_AUTO_STEP;
+    // Validate addresses
+    if (validate_address_with_error(src_addr, STATUS_MEMORY_ERROR, IRQ_MEMORY_ERROR) ||
+        validate_address_with_error(dst_addr, STATUS_MEMORY_ERROR, IRQ_MEMORY_ERROR)) {
+        return;
+    }
     
-    // Perform copy with auto-stepping
-    uint8_t data = indexed_memory_read(src_idx);
-    indexed_memory_write(dst_idx, data);
-    
-    // Restore original flags
-    g_state.indexes[src_idx].flags = src_flags;
-    g_state.indexes[dst_idx].flags = dst_flags;
+    // Direct memory copy (faster than DMA for single byte)
+    // Indexes remain unchanged - they still point to the same addresses
+    mia_memory[dst_addr] = mia_memory[src_addr];
 }
 
 /**
- * Copy block of bytes between indexes
- * Uses auto-stepping versions to respect index configurations
+ * Copy block of bytes between indexes using DMA
+ * This is asynchronous - the function returns immediately and DMA runs in background
+ * IRQ_DMA_COMPLETE will be triggered when transfer completes
  */
 void indexed_memory_copy_block(uint8_t src_idx, uint8_t dst_idx, uint16_t count) {
-    g_state.status |= STATUS_DMA_ACTIVE;
-    
-    // Save current flags
-    uint8_t src_flags = g_state.indexes[src_idx].flags;
-    uint8_t dst_flags = g_state.indexes[dst_idx].flags;
-    
-    // Temporarily enable auto-step for both indexes
-    g_state.indexes[src_idx].flags |= FLAG_AUTO_STEP;
-    g_state.indexes[dst_idx].flags |= FLAG_AUTO_STEP;
-    
-    for (uint16_t i = 0; i < count; i++) {
-        uint8_t data = indexed_memory_read(src_idx);
-        indexed_memory_write(dst_idx, data);
+    if (count == 0) {
+        return;
     }
     
-    // Restore original flags
-    g_state.indexes[src_idx].flags = src_flags;
-    g_state.indexes[dst_idx].flags = dst_flags;
+    uint32_t src_addr = g_state.indexes[src_idx].current_addr;
+    uint32_t dst_addr = g_state.indexes[dst_idx].current_addr;
     
-    g_state.status &= ~STATUS_DMA_ACTIVE;
-    indexed_memory_set_irq(IRQ_DMA_COMPLETE);
+    // Validate addresses
+    if (validate_address_with_error(src_addr, STATUS_MEMORY_ERROR, IRQ_MEMORY_ERROR) ||
+        validate_address_with_error(dst_addr, STATUS_MEMORY_ERROR, IRQ_MEMORY_ERROR)) {
+        return;
+    }
+    
+    // Check if transfer would exceed memory bounds
+    if (src_addr + count > MIA_MEMORY_SIZE || dst_addr + count > MIA_MEMORY_SIZE) {
+        g_state.status |= STATUS_MEMORY_ERROR;
+        indexed_memory_set_irq(IRQ_DMA_ERROR);
+        return;
+    }
+    
+    // Check if DMA is already active
+    if (g_state.status & STATUS_DMA_ACTIVE) {
+        // Wait for previous transfer to complete
+        indexed_memory_dma_wait_for_completion();
+    }
+    
+    // Set DMA active status
+    g_state.status |= STATUS_DMA_ACTIVE;
+    
+    // Start DMA transfer (asynchronous)
+    // Note: Indexes are used only as address pointers and are NOT modified
+    // The source and destination indexes remain unchanged after the copy
+    indexed_memory_dma_start_transfer(
+        &mia_memory[dst_addr],
+        &mia_memory[src_addr],
+        count
+    );
+    
+    // Note: Function returns immediately, DMA continues in background
+    // IRQ_DMA_COMPLETE will be triggered when transfer finishes
+    // Indexes are NOT modified - they still point to the original addresses
+}
+
+/**
+ * Check if DMA transfer is currently in progress
+ * Returns true if DMA is busy, false if idle
+ */
+bool indexed_memory_is_dma_busy(void) {
+    return indexed_memory_dma_is_busy();
 }
 
 /**

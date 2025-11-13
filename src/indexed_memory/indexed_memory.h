@@ -171,8 +171,11 @@ void indexed_memory_set_config_field(uint8_t idx, uint8_t field, uint8_t value);
 void indexed_memory_execute_command(uint8_t cmd);
 
 // DMA operations
+// Note: Copy operations use indexes as address pointers only
+// Indexes are NOT modified by copy operations (auto-step is ignored)
 void indexed_memory_copy_byte(uint8_t src_idx, uint8_t dst_idx);
 void indexed_memory_copy_block(uint8_t src_idx, uint8_t dst_idx, uint16_t count);
+bool indexed_memory_is_dma_busy(void);
 
 // Status and interrupt management
 uint8_t indexed_memory_get_status(void);
