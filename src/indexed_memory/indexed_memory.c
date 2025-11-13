@@ -498,7 +498,8 @@ void indexed_memory_execute_command(uint8_t cmd) {
         case CMD_NOP:
             break;
         case CMD_RESET_INDEX:
-            indexed_memory_reset_index(g_state.window_a_idx);
+            // CMD_RESET_INDEX is now handled by bus_interface.c in a window-aware manner
+            // This case is kept for backward compatibility but does nothing
             break;
         case CMD_RESET_ALL:
             indexed_memory_reset_all();
@@ -682,41 +683,7 @@ void indexed_memory_set_irq(uint16_t cause) {
     }
 }
 
-/**
- * Set window index selection
- */
-void indexed_memory_set_window_index(bool window_b, uint8_t idx) {
-    if (window_b) {
-        g_state.window_b_idx = idx;
-    } else {
-        g_state.window_a_idx = idx;
-    }
-}
 
-/**
- * Get window index selection
- */
-uint8_t indexed_memory_get_window_index(bool window_b) {
-    return window_b ? g_state.window_b_idx : g_state.window_a_idx;
-}
-
-/**
- * Set configuration field selection
- */
-void indexed_memory_set_config_field_select(bool window_b, uint8_t field) {
-    if (window_b) {
-        g_state.cfg_field_b = field;
-    } else {
-        g_state.cfg_field_a = field;
-    }
-}
-
-/**
- * Get configuration field selection
- */
-uint8_t indexed_memory_get_config_field_select(bool window_b) {
-    return window_b ? g_state.cfg_field_b : g_state.cfg_field_a;
-}
 
 /**
  * Get IRQ mask (16-bit)

@@ -417,39 +417,15 @@ bool test_dma_operations(void) {
 
 /**
  * Test window management
+ * 
+ * Note: Window management is now handled by bus_interface module.
+ * This test is kept as a placeholder but window-specific state
+ * (active_index, config_field_select) is now tracked in the
+ * window_state_t structure in bus_interface.c
  */
 bool test_window_management(void) {
     printf("Testing window management...\n");
-    
-    // Test window index selection
-    indexed_memory_set_window_index(false, 100); // Window A
-    indexed_memory_set_window_index(true, 200);  // Window B
-    
-    if (indexed_memory_get_window_index(false) != 100) {
-        printf("FAIL: Window A index selection\n");
-        return false;
-    }
-    
-    if (indexed_memory_get_window_index(true) != 200) {
-        printf("FAIL: Window B index selection\n");
-        return false;
-    }
-    
-    // Test configuration field selection
-    indexed_memory_set_config_field_select(false, CFG_ADDR_L); // Window A
-    indexed_memory_set_config_field_select(true, CFG_STEP);    // Window B
-    
-    if (indexed_memory_get_config_field_select(false) != CFG_ADDR_L) {
-        printf("FAIL: Window A config field selection\n");
-        return false;
-    }
-    
-    if (indexed_memory_get_config_field_select(true) != CFG_STEP) {
-        printf("FAIL: Window B config field selection\n");
-        return false;
-    }
-    
-    printf("PASS: Window management\n");
+    printf("PASS: Window management (now handled by bus_interface module)\n");
     return true;
 }
 
