@@ -2469,7 +2469,7 @@ bool test_bus_interface_command_set_limit_to_addr(void) {
  * Test COMMAND register write handler - CMD_RESET_ALL
  */
 bool test_bus_interface_command_reset_all(void) {
-    printf("Testing COMMAND register - CMD_RESET_ALL...\n");
+    printf("Testing COMMAND register - CMD_RESET_ALL_IDX...\n");
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
@@ -2480,8 +2480,8 @@ bool test_bus_interface_command_reset_all(void) {
     indexed_memory_set_index_address(129, 0x00013A00);
     indexed_memory_set_index_address(130, 0x00013B00);
     
-    // Execute CMD_RESET_ALL via SHARED_COMMAND register at 0xFF
-    bus_interface_write(0xFF, CMD_RESET_ALL);
+    // Execute CMD_RESET_ALL_IDX via SHARED_COMMAND register at 0xFF
+    bus_interface_write(0xFF, CMD_RESET_ALL_IDX);
     
     // Verify all indexes were reset to their defaults
     // Check a few representative indexes
@@ -2500,7 +2500,7 @@ bool test_bus_interface_command_reset_all(void) {
         return false;
     }
     
-    printf("  PASS: CMD_RESET_ALL works correctly\n");
+    printf("  PASS: CMD_RESET_ALL_IDX works correctly\n");
     return true;
 }
 
@@ -2576,6 +2576,59 @@ bool test_bus_interface_command_system_reset(void) {
     }
     
     printf("  PASS: CMD_SYSTEM_RESET works correctly\n");
+    return true;
+}
+
+/**
+ * Test SHARED_COMMAND register write handler - CMD_FACTORY_RESET_ALL_IDX
+ */
+bool test_bus_interface_command_factory_reset_all_idx(void) {
+    printf("Testing COMMAND register - CMD_FACTORY_RESET_ALL_IDX...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Modify system state
+    indexed_memory_set_index_address(128, 0x00013900);
+    indexed_memory_set_index_address(129, 0x00013A00);
+    indexed_memory_set_irq(IRQ_MEMORY_ERROR);
+    indexed_memory_set_irq(IRQ_DMA_COMPLETE);
+    
+    // Execute CMD_FACTORY_RESET_ALL_IDX via SHARED_COMMAND register at 0xFF
+    bus_interface_write(0xFF, CMD_FACTORY_RESET_ALL_IDX);
+    
+    // Verify indexed memory subsystem was reset to factory defaults
+    // Check that indexes were reset
+    uint32_t addr_128 = (indexed_memory_get_config_field(128, CFG_ADDR_H) << 16) |
+                        (indexed_memory_get_config_field(128, CFG_ADDR_M) << 8) |
+                        indexed_memory_get_config_field(128, CFG_ADDR_L);
+    
+    uint32_t addr_129 = (indexed_memory_get_config_field(129, CFG_ADDR_H) << 16) |
+                        (indexed_memory_get_config_field(129, CFG_ADDR_M) << 8) |
+                        indexed_memory_get_config_field(129, CFG_ADDR_L);
+    
+    if (addr_128 != 0x00013800 || addr_129 != 0x00013800) {
+        printf("  FAIL: Indexes should be reset to factory defaults, got 0x%06X and 0x%06X\n", 
+               addr_128, addr_129);
+        return false;
+    }
+    
+    // Check that interrupts were cleared
+    uint16_t cause = indexed_memory_get_irq_cause();
+    if (cause != 0) {
+        printf("  FAIL: Interrupts should be cleared after subsystem reset, got 0x%04X\n", cause);
+        return false;
+    }
+    
+    // Check that system is ready
+    uint8_t status = indexed_memory_get_status();
+    if (!(status & STATUS_SYSTEM_READY)) {
+        printf("  FAIL: System should be ready after subsystem reset\n");
+        return false;
+    }
+    
+    printf("  PASS: CMD_FACTORY_RESET_ALL_IDX works correctly\n");
     return true;
 }
 
@@ -2953,6 +3006,7 @@ bool run_bus_interface_tests(void) {
     all_passed &= test_bus_interface_command_reset_all();
     all_passed &= test_bus_interface_command_clear_irq();
     all_passed &= test_bus_interface_command_system_reset();
+    all_passed &= test_bus_interface_command_factory_reset_all_idx();
     all_passed &= test_bus_interface_command_multi_window();
     
     // DMA command tests

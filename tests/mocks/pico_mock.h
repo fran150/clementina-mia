@@ -33,4 +33,18 @@ static inline void sleep_us(uint64_t us) {
     // No-op for unit tests
 }
 
+// Mock watchdog functions
+// Forward declare indexed_memory_init so we can call it
+void indexed_memory_init(void);
+
+static inline void watchdog_reboot(uint32_t pc, uint32_t sp, uint32_t delay_ms) {
+    (void)pc;
+    (void)sp;
+    (void)delay_ms;
+    printf("Mock watchdog reboot triggered - simulating system reboot\n");
+    // In tests, simulate a reboot by reinitializing the indexed memory system
+    // This mimics what would happen after a real reboot
+    indexed_memory_init();
+}
+
 #endif // PICO_MOCK_H

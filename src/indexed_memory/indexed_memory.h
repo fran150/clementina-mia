@@ -67,11 +67,12 @@
 
 // Shared/system-level command codes (executed via shared COMMAND register at 0xFF)
 // These commands affect the entire system, not a specific window
-#define CMD_SHARED_NOP          0x00    // No operation (shared)
-#define CMD_RESET_ALL           0x01    // Reset all 256 indexes
-#define CMD_CLEAR_IRQ           0x02    // Clear all pending interrupts
-#define CMD_COPY_BLOCK          0x03    // Execute DMA block copy
-#define CMD_SYSTEM_RESET        0x04    // Reset the MIA system
+#define CMD_SHARED_NOP              0x00    // No operation (shared)
+#define CMD_RESET_ALL_IDX           0x01    // Reset all 256 indexes to default addresses
+#define CMD_FACTORY_RESET_ALL_IDX   0x02    // Factory reset indexed memory subsystem
+#define CMD_CLEAR_IRQ               0x03    // Clear all pending interrupts
+#define CMD_COPY_BLOCK              0x04    // Execute DMA block copy
+#define CMD_SYSTEM_RESET            0x05    // Full hardware reset (reboots Pico and 6502)
 
 // Status bits
 #define STATUS_BUSY             0x01

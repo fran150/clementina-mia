@@ -11,6 +11,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#ifdef PICO_BUILD
+#include "hardware/watchdog.h"
+#else
+// For host testing, use mocked Pico SDK functions
+#include "mocks/pico_mock.h"
+#endif
+
 // MIA memory layout (256KB properly allocated)
 // All addresses are logical offsets (0x000000 - 0x03FFFF) into the mia_memory array
 #define MIA_MEMORY_BASE         0x00000000  // Logical base (offset 0)
@@ -540,9 +547,16 @@ void indexed_memory_execute_shared_command(uint8_t cmd) {
         case CMD_SHARED_NOP:
             // No operation
             break;
-        case CMD_RESET_ALL:
-            // Reset all 256 indexes
+        case CMD_RESET_ALL_IDX:
+            // Reset all 256 indexes to their default addresses
             indexed_memory_reset_all();
+            break;
+        case CMD_FACTORY_RESET_ALL_IDX:
+            // Factory reset: reinitialize the indexed memory subsystem
+            // This resets all indexes to factory defaults, clears IRQ state,
+            // resets DMA config, and clears all MIA memory
+            // Does NOT reset other MIA components (ROM emulator, clock, etc.)
+            indexed_memory_init();
             break;
         case CMD_CLEAR_IRQ:
             // Clear all pending interrupts
@@ -553,9 +567,21 @@ void indexed_memory_execute_shared_command(uint8_t cmd) {
             indexed_memory_copy_block(g_state.dma_config.src_idx, g_state.dma_config.dst_idx, g_state.dma_config.count);
             break;
         case CMD_SYSTEM_RESET:
-            // Reinitialize the entire indexed memory system
-            indexed_memory_init();
+            // Full system reset: reboot the Pico via watchdog
+            // This triggers a complete hardware reset equivalent to power cycling
+            // During reboot, the normal initialization sequence will:
+            // 1. Assert the 6502 reset line
+            // 2. Initialize all systems
+            // 3. Release the 6502 reset line to start boot sequence
+            watchdog_reboot(0, 0, 0);
+            
+#ifdef PICO_BUILD
+            // Execution never reaches here on real hardware - watchdog resets the system
+            while(1);
+#else
+            // In tests, watchdog_reboot is mocked and returns, so we break normally
             break;
+#endif
         default:
             // Unknown shared command - ignore
             break;

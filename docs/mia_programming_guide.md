@@ -546,10 +546,11 @@ At 1 MHz 6502 clock:
 **Shared Commands** (via shared COMMAND register at $C0FF):
 | Command | Code | Description |
 |---------|------|-------------|
-| CMD_RESET_ALL | 0x01 | Reset all 256 indexes to defaults |
-| CMD_CLEAR_IRQ | 0x02 | Clear all interrupt flags |
-| CMD_COPY_BLOCK | 0x03 | Start DMA copy operation |
-| CMD_SYSTEM_RESET | 0x04 | Reinitialize MIA system |
+| CMD_RESET_ALL_IDX | 0x01 | Reset all 256 indexes to default addresses |
+| CMD_FACTORY_RESET_ALL_IDX | 0x02 | Factory reset indexed memory subsystem |
+| CMD_CLEAR_IRQ | 0x03 | Clear all interrupt flags |
+| CMD_COPY_BLOCK | 0x04 | Start DMA copy operation |
+| CMD_SYSTEM_RESET | 0x05 | Full hardware reset (reboots both MIA and 6502) |
 
 ### Status Flags
 

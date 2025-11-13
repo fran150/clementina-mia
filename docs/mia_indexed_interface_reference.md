@@ -152,10 +152,11 @@ These commands affect the entire system and are executed via the shared command 
 | Code | Name | Action |
 |------|------|--------|
 | 0x00 | NOP | No operation |
-| 0x01 | RESET_ALL | Copy DEFAULT_ADDR → CURRENT_ADDR for all 256 indexes |
-| 0x02 | CLEAR_IRQ | Clear all interrupt pending flags |
-| 0x03 | COPY_BLOCK | Copy N bytes from source index to destination index (N=1 to 65535) |
-| 0x04 | SYSTEM_RESET | Reinitialize MIA internal state (soft reset) |
+| 0x01 | RESET_ALL_IDX | Copy DEFAULT_ADDR → CURRENT_ADDR for all 256 indexes |
+| 0x02 | FACTORY_RESET_ALL_IDX | Factory reset indexed memory subsystem to defaults |
+| 0x03 | CLEAR_IRQ | Clear all interrupt pending flags |
+| 0x04 | COPY_BLOCK | Copy N bytes from source index to destination index (N=1 to 65535) |
+| 0x05 | SYSTEM_RESET | Full hardware reset (reboots Pico and 6502 via watchdog) |
 
 **DMA Parameters:** COPY_BLOCK uses configuration fields (set via CFG_DATA):
 - `CFG_COPY_SRC_IDX` (0x0B) - Source index
@@ -164,6 +165,11 @@ These commands affect the entire system and are executed via the shared command 
 - `CFG_COPY_COUNT_H` (0x0E) - Count high byte
 
 **Example:** Configure DMA parameters, then write CMD_COPY_BLOCK to $C0FF to execute the copy operation.
+
+**Reset Command Comparison:**
+- `CMD_RESET_ALL_IDX` (0x01): Resets only the current addresses of all 256 indexes to their default addresses. Does not affect other state.
+- `CMD_FACTORY_RESET_ALL_IDX` (0x02): Factory reset of the indexed memory subsystem - resets all indexes to factory defaults, clears all MIA memory, resets IRQ state, and reinitializes DMA. Does not affect other MIA components (ROM emulator, clock control, etc.).
+- `CMD_SYSTEM_RESET` (0x05): Full hardware reset - reboots the Pico via watchdog, which reinitializes all MIA components and resets the 6502 CPU.
 
 ## DEVICE_STATUS Register Bits ($C0F0)
 
