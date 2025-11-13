@@ -58,7 +58,8 @@
 #define REG_IRQ_MASK_LOW        0xF3    // Shared: Interrupt mask low byte
 #define REG_IRQ_MASK_HIGH       0xF4    // Shared: Interrupt mask high byte
 #define REG_IRQ_ENABLE          0xF5    // Shared: Global interrupt enable
-// 0xF6-0xFF: Reserved shared registers
+// 0xF6-0xFE: Reserved shared registers
+#define REG_SHARED_COMMAND      0xFF    // Shared: System-wide command register
 
 // Register offsets within 16-byte window (0-15 for each window)
 #define REG_OFFSET_IDX_SELECT       0x00

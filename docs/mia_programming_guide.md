@@ -536,12 +536,20 @@ At 1 MHz 6502 clock:
 
 ### Common Commands
 
+**Window-Level Commands** (via window COMMAND register at +0x04):
 | Command | Code | Description |
 |---------|------|-------------|
-| CMD_RESET_INDEX | 0x01 | Reset index to default |
-| CMD_RESET_ALL | 0x02 | Reset all indexes |
-| CMD_CLEAR_IRQ | 0x05 | Clear all interrupts |
-| CMD_COPY_BLOCK | 0x06 | Start DMA copy |
+| CMD_RESET_INDEX | 0x01 | Reset active index to default address |
+| CMD_SET_DEFAULT_TO_ADDR | 0x02 | Set default address to current address |
+| CMD_SET_LIMIT_TO_ADDR | 0x03 | Set limit address to current address |
+
+**Shared Commands** (via shared COMMAND register at $C0FF):
+| Command | Code | Description |
+|---------|------|-------------|
+| CMD_RESET_ALL | 0x01 | Reset all 256 indexes to defaults |
+| CMD_CLEAR_IRQ | 0x02 | Clear all interrupt flags |
+| CMD_COPY_BLOCK | 0x03 | Start DMA copy operation |
+| CMD_SYSTEM_RESET | 0x04 | Reinitialize MIA system |
 
 ### Status Flags
 

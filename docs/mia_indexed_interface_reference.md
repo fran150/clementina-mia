@@ -44,7 +44,8 @@ Each window has identical register layout at offsets +0 through +15:
 | $C0F3 | $F3 | R/W | IRQ_MASK_LOW - Interrupt mask (bits 0-7) |
 | $C0F4 | $F4 | R/W | IRQ_MASK_HIGH - Interrupt mask (bits 8-15) |
 | $C0F5 | $F5 | R/W | IRQ_ENABLE - Global interrupt enable |
-| $C0F6-$C0FF | $F6-$FF | - | Reserved shared registers |
+| $C0F6-$C0FE | $F6-$FE | - | Reserved shared registers |
+| $C0FF | $FF | W | SHARED_COMMAND - System-wide command register |
 
 **Control Signals:**
 - **IO0_CS:** GPIO 21 (active low) - Chip select for indexed memory interface
@@ -128,35 +129,41 @@ Each window has identical register layout at offsets +0 through +15:
 
 ## COMMAND Codes
 
-### Basic Commands
+Commands are split into two categories based on their scope:
+
+### Window-Level Commands (Per-Window COMMAND Register at +0x04)
+
+These commands operate on the currently selected index for the window that issues the command.
+Execute via window COMMAND register: $C004 (Window A), $C014 (Window B), $C024 (Window C), $C034 (Window D)
+
 | Code | Name | Action |
 |------|------|--------|
 | 0x00 | NOP | No operation |
 | 0x01 | RESET_INDEX | Copy DEFAULT_ADDR → CURRENT_ADDR for active index |
-| 0x02 | RESET_ALL | Copy DEFAULT_ADDR → CURRENT_ADDR for all indexes |
-| 0x03 | LOAD_DEFAULT | Copy specified address → DEFAULT_ADDR for active index |
-| 0x04 | SET_DEFAULT_TO_ADDR | Copy CURRENT_ADDR → DEFAULT_ADDR for active index |
-| 0x05 | CLEAR_IRQ | Clear interrupt pending flags |
+| 0x02 | SET_DEFAULT_TO_ADDR | Copy CURRENT_ADDR → DEFAULT_ADDR for active index |
+| 0x03 | SET_LIMIT_TO_ADDR | Copy CURRENT_ADDR → LIMIT_ADDR for active index |
 
-### DMA/Copy Commands
+**Example:** Window A selects index 128, then writes CMD_RESET_INDEX to $C004. Only index 128 is reset.
+
+### Shared/System-Level Commands (Shared COMMAND Register at $C0FF)
+
+These commands affect the entire system and are executed via the shared command register at $C0FF.
+
 | Code | Name | Action |
 |------|------|--------|
-| 0x06 | COPY_BLOCK | Copy N bytes from source index to destination index (N=1 to 65535) |
+| 0x00 | NOP | No operation |
+| 0x01 | RESET_ALL | Copy DEFAULT_ADDR → CURRENT_ADDR for all 256 indexes |
+| 0x02 | CLEAR_IRQ | Clear all interrupt pending flags |
+| 0x03 | COPY_BLOCK | Copy N bytes from source index to destination index (N=1 to 65535) |
+| 0x04 | SYSTEM_RESET | Reinitialize MIA internal state (soft reset) |
 
-**Note:** DMA parameters (source, destination, count) are configured via CFG fields:
+**DMA Parameters:** COPY_BLOCK uses configuration fields (set via CFG_DATA):
 - `CFG_COPY_SRC_IDX` (0x0B) - Source index
 - `CFG_COPY_DST_IDX` (0x0C) - Destination index  
 - `CFG_COPY_COUNT_L` (0x0D) - Count low byte
 - `CFG_COPY_COUNT_H` (0x0E) - Count high byte
 
-### System Commands
-| Code | Name | Action |
-|------|------|--------|
-| 0x10 | PICO_REINIT | Reinitialize MIA internal state (soft reset) |
-| 0x20-0x2F | VIDEO_CMD | Video subsystem commands |
-| 0x30-0x3F | USB_CMD | USB subsystem commands |
-| 0x40-0x4F | CLOCK_CMD | Clock control commands |
-| 0xF0-0xFF | USER_CMD | User-defined commands |
+**Example:** Configure DMA parameters, then write CMD_COPY_BLOCK to $C0FF to execute the copy operation.
 
 ## DEVICE_STATUS Register Bits ($C0F0)
 

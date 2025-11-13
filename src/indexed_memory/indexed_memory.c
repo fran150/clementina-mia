@@ -491,33 +491,78 @@ void indexed_memory_set_config_field(uint8_t idx, uint8_t field, uint8_t value) 
 }
 
 /**
- * Execute command
+ * Set default address to current address for an index
  */
-void indexed_memory_execute_command(uint8_t cmd) {
+static inline void indexed_memory_set_default_to_current(uint8_t idx) {
+    g_state.indexes[idx].default_addr = g_state.indexes[idx].current_addr;
+}
+
+/**
+ * Set limit address to current address for an index
+ */
+static inline void indexed_memory_set_limit_to_current(uint8_t idx) {
+    g_state.indexes[idx].limit_addr = g_state.indexes[idx].current_addr;
+}
+
+/**
+ * Execute window-level command
+ * These commands operate on a specific index (typically the active index for a window)
+ */
+void indexed_memory_execute_window_command(uint8_t idx, uint8_t cmd) {
     switch (cmd) {
         case CMD_NOP:
+            // No operation
             break;
         case CMD_RESET_INDEX:
-            // CMD_RESET_INDEX is now handled by bus_interface.c in a window-aware manner
-            // This case is kept for backward compatibility but does nothing
+            // Reset current address to default address
+            indexed_memory_reset_index(idx);
             break;
-        case CMD_RESET_ALL:
-            indexed_memory_reset_all();
+        case CMD_SET_DEFAULT_TO_ADDR:
+            // Set default address to current address
+            indexed_memory_set_default_to_current(idx);
             break;
-        case CMD_CLEAR_IRQ:
-            indexed_memory_clear_irq();
-            break;
-        case CMD_COPY_BLOCK:
-            indexed_memory_copy_block(g_state.dma_config.src_idx, g_state.dma_config.dst_idx, g_state.dma_config.count);
-            break;
-        case CMD_PICO_REINIT:
-            indexed_memory_init();
+        case CMD_SET_LIMIT_TO_ADDR:
+            // Set limit address to current address
+            indexed_memory_set_limit_to_current(idx);
             break;
         default:
-            // Unknown command - could trigger system command handlers
+            // Unknown window command - ignore
             break;
     }
 }
+
+/**
+ * Execute shared/system-level command
+ * These commands affect the entire system, not a specific index
+ */
+void indexed_memory_execute_shared_command(uint8_t cmd) {
+    switch (cmd) {
+        case CMD_SHARED_NOP:
+            // No operation
+            break;
+        case CMD_RESET_ALL:
+            // Reset all 256 indexes
+            indexed_memory_reset_all();
+            break;
+        case CMD_CLEAR_IRQ:
+            // Clear all pending interrupts
+            indexed_memory_clear_irq();
+            break;
+        case CMD_COPY_BLOCK:
+            // Execute DMA block copy using configured parameters
+            indexed_memory_copy_block(g_state.dma_config.src_idx, g_state.dma_config.dst_idx, g_state.dma_config.count);
+            break;
+        case CMD_SYSTEM_RESET:
+            // Reinitialize the entire indexed memory system
+            indexed_memory_init();
+            break;
+        default:
+            // Unknown shared command - ignore
+            break;
+    }
+}
+
+
 
 /**
  * Copy block of bytes between indexes using DMA

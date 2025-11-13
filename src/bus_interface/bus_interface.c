@@ -275,28 +275,31 @@ static void write_irq_enable(uint8_t enable) {
 }
 
 /**
- * Write COMMAND register
- * Executes a command on the indexed memory system
+ * Write COMMAND register (window-level)
+ * Executes a window-level command on the currently selected index
  * 
  * @param window_num Window number (0-7 for Windows A-H)
  * @param command Command code to execute
  */
-static void write_command(uint8_t window_num, uint8_t command) {
-    // Handle window-specific commands
-    if (command == CMD_RESET_INDEX) {
-        // Reset the active index for the window that issued the command
-        uint8_t idx = g_window_state[window_num].active_index;
-        indexed_memory_reset_index(idx);
-        return;
-    }
+static void write_window_command(uint8_t window_num, uint8_t command) {
+    // Get the currently selected index for this window
+    uint8_t idx = g_window_state[window_num].active_index;
     
-    // Route other commands to indexed memory system for execution
-    // The indexed memory system handles all command logic including:
-    // - CMD_RESET_ALL: Reset all indexes
-    // - CMD_CLEAR_IRQ: Clear all pending interrupts
-    // - CMD_COPY_BLOCK: Execute DMA block copy
-    // - CMD_PICO_REINIT: Reinitialize system
-    indexed_memory_execute_command(command);
+    // Execute window-level command on the selected index
+    // Window commands: CMD_NOP, CMD_RESET_INDEX, CMD_SET_DEFAULT_TO_ADDR, CMD_SET_LIMIT_TO_ADDR
+    indexed_memory_execute_window_command(idx, command);
+}
+
+/**
+ * Write SHARED_COMMAND register (system-level)
+ * Executes a system-wide command that affects the entire indexed memory system
+ * 
+ * @param command Command code to execute
+ */
+static void write_shared_command(uint8_t command) {
+    // Execute shared/system-level command
+    // Shared commands: CMD_SHARED_NOP, CMD_RESET_ALL, CMD_CLEAR_IRQ, CMD_COPY_BLOCK, CMD_SYSTEM_RESET
+    indexed_memory_execute_shared_command(command);
 }
 
 // ============================================================================
@@ -352,6 +355,10 @@ uint8_t bus_interface_read(uint8_t local_addr) {
                 
             case REG_IRQ_ENABLE:
                 return read_irq_enable();
+                
+            case REG_SHARED_COMMAND:
+                // Shared command register is write-only
+                return 0x00;
                 
             default:
                 // Reserved shared register
@@ -418,6 +425,10 @@ void bus_interface_write(uint8_t local_addr, uint8_t data) {
                 write_irq_enable(data);
                 break;
                 
+            case REG_SHARED_COMMAND:
+                write_shared_command(data);
+                break;
+                
             default:
                 // Reserved shared register - ignore writes
                 break;
@@ -445,7 +456,7 @@ void bus_interface_write(uint8_t local_addr, uint8_t data) {
             break;
             
         case REG_OFFSET_COMMAND:
-            write_command(window_num, data);
+            write_window_command(window_num, data);
             break;
             
         default:

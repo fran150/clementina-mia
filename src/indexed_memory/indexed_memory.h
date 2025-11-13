@@ -58,15 +58,20 @@
 #define FLAG_DIRECTION          0x02    // 0=forward, 1=backward
 #define FLAG_WRAP_ON_LIMIT      0x04    // 0=disabled, 1=wrap to default when reaching limit
 
-// Command codes
-#define CMD_NOP                 0x00
-#define CMD_RESET_INDEX         0x01
-#define CMD_RESET_ALL           0x02
-#define CMD_LOAD_DEFAULT        0x03
-#define CMD_SET_DEFAULT_TO_ADDR 0x04
-#define CMD_CLEAR_IRQ           0x05
-#define CMD_COPY_BLOCK          0x06
-#define CMD_PICO_REINIT         0x10
+// Window-level command codes (executed via window COMMAND register at +0x04)
+// These commands operate on the currently selected index for that window
+#define CMD_NOP                 0x00    // No operation
+#define CMD_RESET_INDEX         0x01    // Reset current address to default address
+#define CMD_SET_DEFAULT_TO_ADDR 0x02    // Set default address to current address
+#define CMD_SET_LIMIT_TO_ADDR   0x03    // Set limit address to current address
+
+// Shared/system-level command codes (executed via shared COMMAND register at 0xFF)
+// These commands affect the entire system, not a specific window
+#define CMD_SHARED_NOP          0x00    // No operation (shared)
+#define CMD_RESET_ALL           0x01    // Reset all 256 indexes
+#define CMD_CLEAR_IRQ           0x02    // Clear all pending interrupts
+#define CMD_COPY_BLOCK          0x03    // Execute DMA block copy
+#define CMD_SYSTEM_RESET        0x04    // Reset the MIA system
 
 // Status bits
 #define STATUS_BUSY             0x01
@@ -160,7 +165,8 @@ uint8_t indexed_memory_get_config_field(uint8_t idx, uint8_t field);
 void indexed_memory_set_config_field(uint8_t idx, uint8_t field, uint8_t value);
 
 // Command execution
-void indexed_memory_execute_command(uint8_t cmd);
+void indexed_memory_execute_window_command(uint8_t idx, uint8_t cmd);
+void indexed_memory_execute_shared_command(uint8_t cmd);
 
 // DMA operations
 // Note: Copy operations use indexes as address pointers only
