@@ -32,6 +32,14 @@ bool indexed_memory_dma_is_busy(void);
 
 /**
  * Wait for current DMA transfer to complete (blocking)
+ * 
+ * ⚠️ WARNING: This function BLOCKS and should NOT be called during normal
+ * operation as it will violate 6502 bus timing requirements.
+ * 
+ * Only use in special cases like:
+ * - System shutdown/cleanup
+ * - Debugging/testing
+ * - Initialization sequences where blocking is acceptable
  */
 void indexed_memory_dma_wait_for_completion(void);
 

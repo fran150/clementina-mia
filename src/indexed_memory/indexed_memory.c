@@ -21,8 +21,8 @@
 #define MIA_IO_BUFFER_BASE      0x0003C000  // 16KB
 #define MIA_MEMORY_SIZE         0x40000     // 256KB total MIA memory
 
-// Global system state
-static indexed_memory_state_t g_state;
+// Global system state (non-static for testing access)
+indexed_memory_state_t g_state;
 
 // MIA memory array - properly allocated by linker to avoid SDK conflicts
 // All index addresses are offsets into this array
@@ -575,8 +575,12 @@ void indexed_memory_copy_block(uint8_t src_idx, uint8_t dst_idx, uint16_t count)
     
     // Check if DMA is already active
     if (g_state.status & STATUS_DMA_ACTIVE) {
-        // Wait for previous transfer to complete
-        indexed_memory_dma_wait_for_completion();
+        // DMA already in progress - reject new transfer to avoid blocking
+        // This prevents the MIA from missing 6502 bus timing requirements
+        // The 6502 can check STATUS_DMA_ACTIVE before initiating transfers
+        // or wait for IRQ_DMA_COMPLETE interrupt
+        indexed_memory_set_irq(IRQ_DMA_ERROR);
+        return;
     }
     
     // Set DMA active status

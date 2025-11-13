@@ -13,6 +13,9 @@
 // Helper to get current index address (for testing)
 extern uint32_t indexed_memory_get_index_address(uint8_t idx);
 
+// External access to internal state for testing DMA busy scenario
+extern indexed_memory_state_t g_state;
+
 /**
  * Test indexed memory initialization
  */
@@ -372,11 +375,39 @@ bool test_dma_operations(void) {
     }
     
     // Check DMA completion IRQ
-    uint8_t irq_cause = indexed_memory_get_irq_cause();
-    if (irq_cause != IRQ_DMA_COMPLETE) {
+    uint16_t irq_cause = indexed_memory_get_irq_cause();
+    if (!(irq_cause & IRQ_DMA_COMPLETE)) {
         printf("FAIL: DMA completion IRQ not set\n");
         return false;
     }
+    
+    // Clear IRQ for next test
+    indexed_memory_clear_irq();
+    
+    // Test DMA busy error - try to start transfer while one is active
+    // First, manually set DMA active status to simulate a transfer in progress
+    g_state.status |= STATUS_DMA_ACTIVE;
+    
+    // Try to start another transfer (should be rejected)
+    indexed_memory_copy_block(src_idx, dst_idx, 5);
+    
+    // Verify DMA error IRQ was triggered
+    irq_cause = indexed_memory_get_irq_cause();
+    if (!(irq_cause & IRQ_DMA_ERROR)) {
+        printf("FAIL: DMA error IRQ not set when DMA was busy\n");
+        return false;
+    }
+    
+    // Verify DMA is still marked as active (original transfer still running)
+    uint8_t status = indexed_memory_get_status();
+    if (!(status & STATUS_DMA_ACTIVE)) {
+        printf("FAIL: DMA active status was cleared incorrectly\n");
+        return false;
+    }
+    
+    // Clean up - clear the manually set status
+    g_state.status &= ~STATUS_DMA_ACTIVE;
+    indexed_memory_clear_irq();
     
     indexed_memory_clear_irq();
     

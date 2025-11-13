@@ -19,7 +19,23 @@ indexed_memory_dma.h (abstraction interface)
 
 ## Key Features
 
-### 1. Asynchronous Operation
+### 1. Non-Blocking Operation
+
+**Critical for bus timing:** DMA operations NEVER block the CPU, even if DMA is already busy.
+
+```c
+// If DMA is already running, new transfers are rejected immediately
+indexed_memory_copy_block(src, dst, 1000);  // Returns immediately
+// Either starts transfer OR triggers IRQ_DMA_ERROR
+// NEVER blocks waiting
+```
+
+**Why this matters:**
+- 6502 bus requires response within ~785ns at 1 MHz
+- Blocking would cause bus timing violations
+- MIA must remain responsive at all times
+
+### 2. Asynchronous Operation
 
 Block copy operations return immediately and execute in the background:
 
@@ -40,12 +56,20 @@ Once configured, DMA transfers require no CPU intervention:
 - No byte-by-byte copying
 - CPU is free for bus interface, USB, video, etc.
 
-### 3. Interrupt-Driven Completion
+### 3. Interrupt-Driven Completion and Errors
 
-DMA completion is signaled via interrupt:
+DMA operations signal completion and errors via interrupts:
+
+**On Success:**
 - Hardware triggers interrupt when transfer completes
 - Callback clears STATUS_DMA_ACTIVE flag
 - Sets IRQ_DMA_COMPLETE for 6502 to detect
+
+**On Error (DMA Busy):**
+- If DMA is already active, new transfer is rejected
+- IRQ_DMA_ERROR is triggered immediately
+- STATUS_DMA_ACTIVE remains set (original transfer still running)
+- 6502 should wait for IRQ_DMA_COMPLETE before retrying
 
 ### 4. Testable Design
 
@@ -107,6 +131,8 @@ Start an asynchronous memory transfer.
 - Hardware: Returns immediately, transfer continues in background
 - Mock: Completes synchronously, then returns
 
+**Important:** If a DMA transfer is already in progress, the new transfer will be **rejected** and `IRQ_DMA_ERROR` will be triggered. The function returns immediately without blocking.
+
 ### `indexed_memory_dma_is_busy()`
 
 Check if a transfer is currently in progress.
@@ -117,7 +143,16 @@ Check if a transfer is currently in progress.
 
 Block until current transfer completes.
 
-**Use case:** When starting a new transfer while one is active
+**⚠️ WARNING:** This function blocks and should NOT be used during normal operation as it violates 6502 bus timing requirements.
+
+**Valid use cases:**
+- System shutdown/cleanup (when bus timing no longer matters)
+- Debugging/testing (when running without 6502 attached)
+- Initialization sequences (before bus interface is active)
+
+**Do NOT use for:**
+- Starting new transfers (use error handling instead)
+- Any operation that could be called during normal 6502 bus activity
 
 ### `indexed_memory_dma_set_completion_callback(callback)`
 
@@ -157,6 +192,47 @@ Copying 1KB of video data:
 - At 133 MHz: ~0.75 microseconds setup time
 - **6502 bus available after 0.75 µs** ✅
 
+## Error Handling
+
+### DMA Busy Error
+
+When a transfer is requested while DMA is already active:
+
+**What Happens:**
+1. Function returns immediately (does NOT block)
+2. `IRQ_DMA_ERROR` interrupt is triggered
+3. `STATUS_DMA_ACTIVE` remains set (original transfer continues)
+4. New transfer is NOT started
+
+**6502 Response Pattern:**
+
+```assembly
+; Method 1: Poll before starting transfer
+.check_dma:
+    LDA STATUS_REG
+    AND #STATUS_DMA_ACTIVE
+    BNE .check_dma          ; Wait until idle
+    
+    ; Now safe to start transfer
+    LDA #CMD_COPY_BLOCK
+    STA COMMAND_REG
+
+; Method 2: Use interrupts
+.start_transfer:
+    LDA #CMD_COPY_BLOCK
+    STA COMMAND_REG
+    ; If DMA busy, IRQ_DMA_ERROR will fire
+    ; If successful, IRQ_DMA_COMPLETE will fire when done
+    
+.irq_handler:
+    LDA IRQ_CAUSE_LOW
+    AND #IRQ_DMA_ERROR
+    BNE .dma_was_busy       ; Transfer rejected
+    
+    AND #IRQ_DMA_COMPLETE
+    BNE .dma_finished       ; Transfer completed
+```
+
 ## Bus Timing Considerations
 
 From `docs/bus_timing.md`, the 6502 at 1 MHz has:
@@ -164,9 +240,10 @@ From `docs/bus_timing.md`, the 6502 at 1 MHz has:
 - 785ns available for read response
 
 With DMA:
-- Copy operations don't block bus interface
-- Core 0 remains responsive to 6502 requests
+- Copy operations don't block bus interface (even on error)
+- Core 0 remains responsive to 6502 requests at all times
 - Large transfers (video frames, etc.) can happen in background
+- Rejected transfers return immediately without blocking
 
 ## Usage Example
 
@@ -175,17 +252,24 @@ With DMA:
 indexed_memory_set_index_address(src_idx, VIDEO_BUFFER_A);
 indexed_memory_set_index_address(dst_idx, VIDEO_BUFFER_B);
 
-// Start DMA transfer (returns immediately)
-indexed_memory_copy_block(src_idx, dst_idx, 4000);  // 40x25 screen
-
-// IMPORTANT: Indexes are NOT modified by copy operations
-// After copy, src_idx still points to VIDEO_BUFFER_A
-// and dst_idx still points to VIDEO_BUFFER_B
-
-// Core continues servicing 6502 bus
-// DMA runs in parallel
-
-// 6502 can poll STATUS_DMA_ACTIVE or wait for IRQ_DMA_COMPLETE
+// Check if DMA is idle before starting transfer
+if (!(indexed_memory_get_status() & STATUS_DMA_ACTIVE)) {
+    // Start DMA transfer (returns immediately)
+    indexed_memory_copy_block(src_idx, dst_idx, 4000);  // 40x25 screen
+    
+    // IMPORTANT: Indexes are NOT modified by copy operations
+    // After copy, src_idx still points to VIDEO_BUFFER_A
+    // and dst_idx still points to VIDEO_BUFFER_B
+    
+    // Core continues servicing 6502 bus
+    // DMA runs in parallel
+    
+    // 6502 can poll STATUS_DMA_ACTIVE or wait for IRQ_DMA_COMPLETE
+} else {
+    // DMA busy - transfer rejected
+    // IRQ_DMA_ERROR will be triggered
+    // Wait for IRQ_DMA_COMPLETE before retrying
+}
 ```
 
 ## Testing
