@@ -127,33 +127,33 @@
     - Verify DMA configuration fields (COPY_SRC_IDX, COPY_DST_IDX, COPY_COUNT)
     - _Requirements: 6.4, 6.5, 6.8_
 
-- [ ] 9. Implement shared register handlers - Status and interrupts
-  - [ ] 9.1 Implement DEVICE_STATUS read handler
+- [x] 9. Implement shared register handlers - Status and interrupts
+  - [x] 9.1 Implement DEVICE_STATUS read handler
     - Create read_device_status() function for shared register at $C0F0
     - Return system status register value
     - Integrate with indexed_memory_get_status()
     - _Requirements: 7.7, 8.4_
-  - [ ] 9.2 Implement IRQ_CAUSE_LOW handlers
+  - [x] 9.2 Implement IRQ_CAUSE_LOW handlers
     - Create read_irq_cause_low() function for shared register at $C0F1
     - Create write_irq_cause_low(clear_bits) function with write-1-to-clear logic
     - Integrate with indexed_memory_get/write_irq_cause_low()
     - _Requirements: 8.2, 8.3_
-  - [ ] 9.3 Implement IRQ_CAUSE_HIGH handlers
+  - [x] 9.3 Implement IRQ_CAUSE_HIGH handlers
     - Create read_irq_cause_high() function for shared register at $C0F2
     - Create write_irq_cause_high(clear_bits) function with write-1-to-clear logic
     - Integrate with indexed_memory_get/write_irq_cause_high()
     - _Requirements: 8.2, 8.3_
-  - [ ] 9.4 Implement IRQ_MASK handlers
+  - [x] 9.4 Implement IRQ_MASK handlers
     - Create read_irq_mask_low() function for shared register at $C0F3
     - Create write_irq_mask_low(mask) function
     - Create read_irq_mask_high() function for shared register at $C0F4
     - Create write_irq_mask_high(mask) function
     - _Requirements: 8.3, 8.11_
-  - [ ] 9.5 Implement IRQ_ENABLE handler
+  - [x] 9.5 Implement IRQ_ENABLE handler
     - Create read_irq_enable() function for shared register at $C0F5
     - Create write_irq_enable(enable) function for global interrupt control
     - _Requirements: 8.4, 8.11_
-  - [ ] 9.6 Test shared register handling
+  - [x] 9.6 Test shared register handling
     - Test device status register reading
     - Test interrupt cause reading (both bytes)
     - Test interrupt mask reading and writing (both bytes)

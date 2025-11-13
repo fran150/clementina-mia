@@ -41,6 +41,7 @@ void indexed_memory_init(void) {
     g_state.status = STATUS_SYSTEM_READY;
     g_state.irq_cause = IRQ_NO_IRQ;
     g_state.irq_mask = 0xFFFF; // All interrupts enabled by default (16-bit)
+    g_state.irq_enable = 0x01; // Global interrupts enabled by default
     
     // Pre-configure system indexes
     
@@ -641,15 +642,15 @@ void indexed_memory_clear_specific_irq(uint16_t cause) {
 /**
  * Set IRQ
  * Sets the specified interrupt bit(s) in the pending register
- * Only asserts IRQ line if the interrupt source is enabled in the mask
+ * Only asserts IRQ line if the interrupt source is enabled in the mask and global enable is on
  */
 void indexed_memory_set_irq(uint16_t cause) {
     // Set the interrupt bit(s) in the pending register (OR to accumulate)
     g_state.irq_cause |= cause;
     
-    // Check if this interrupt source is enabled in the 16-bit mask
-    // Only assert IRQ line if at least one enabled interrupt is pending
-    if ((g_state.irq_cause & g_state.irq_mask) != 0) {
+    // Check if this interrupt source is enabled in the 16-bit mask and global enable is on
+    // Only assert IRQ line if at least one enabled interrupt is pending and global enable is on
+    if (g_state.irq_enable && ((g_state.irq_cause & g_state.irq_mask) != 0)) {
         g_state.status |= STATUS_IRQ_PENDING;
         // TODO: Assert GPIO 26 (IRQ line) to 6502
     }
@@ -689,5 +690,63 @@ void indexed_memory_set_config_field_select(bool window_b, uint8_t field) {
  */
 uint8_t indexed_memory_get_config_field_select(bool window_b) {
     return window_b ? g_state.cfg_field_b : g_state.cfg_field_a;
+}
+
+/**
+ * Get IRQ mask (16-bit)
+ * Returns which interrupt sources are enabled
+ */
+uint16_t indexed_memory_get_irq_mask(void) {
+    return g_state.irq_mask;
+}
+
+/**
+ * Set IRQ mask (16-bit)
+ * Controls which interrupt sources are enabled
+ * 1 = enabled, 0 = disabled
+ */
+void indexed_memory_set_irq_mask(uint16_t mask) {
+    g_state.irq_mask = mask;
+    
+    // Re-evaluate IRQ line state based on new mask
+    // If no enabled interrupts are pending, deassert IRQ line
+    if ((g_state.irq_cause & g_state.irq_mask) == 0) {
+        g_state.status &= ~STATUS_IRQ_PENDING;
+        // TODO: Deassert GPIO 26 (IRQ line) to 6502
+    } else if (g_state.irq_enable) {
+        // If there are enabled interrupts pending and global enable is on, assert IRQ
+        g_state.status |= STATUS_IRQ_PENDING;
+        // TODO: Assert GPIO 26 (IRQ line) to 6502
+    }
+}
+
+/**
+ * Get global IRQ enable state
+ * Returns whether interrupts are globally enabled
+ */
+uint8_t indexed_memory_get_irq_enable(void) {
+    return g_state.irq_enable;
+}
+
+/**
+ * Set global IRQ enable state
+ * Controls whether interrupts can be asserted to the 6502
+ * 1 = enabled, 0 = disabled
+ */
+void indexed_memory_set_irq_enable(uint8_t enable) {
+    g_state.irq_enable = enable ? 0x01 : 0x00;
+    
+    // Re-evaluate IRQ line state based on new enable state
+    if (g_state.irq_enable) {
+        // If enabling and there are masked interrupts pending, assert IRQ
+        if ((g_state.irq_cause & g_state.irq_mask) != 0) {
+            g_state.status |= STATUS_IRQ_PENDING;
+            // TODO: Assert GPIO 26 (IRQ line) to 6502
+        }
+    } else {
+        // If disabling, deassert IRQ line
+        g_state.status &= ~STATUS_IRQ_PENDING;
+        // TODO: Deassert GPIO 26 (IRQ line) to 6502
+    }
 }
 

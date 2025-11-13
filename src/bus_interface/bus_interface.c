@@ -142,6 +142,139 @@ static void write_cfg_data(uint8_t window_num, uint8_t data) {
 }
 
 // ============================================================================
+// Shared Register Handler Functions
+// ============================================================================
+
+/**
+ * Read DEVICE_STATUS register
+ * Returns the global device status register value
+ * 
+ * @return System status register value
+ */
+static uint8_t read_device_status(void) {
+    // Return system status from indexed memory
+    return indexed_memory_get_status();
+}
+
+/**
+ * Read IRQ_CAUSE_LOW register
+ * Returns the low byte of the interrupt cause register (bits 0-7)
+ * 
+ * @return Interrupt cause low byte
+ */
+static uint8_t read_irq_cause_low(void) {
+    // Return low byte of IRQ cause from indexed memory
+    return indexed_memory_get_irq_cause_low();
+}
+
+/**
+ * Write IRQ_CAUSE_LOW register
+ * Implements write-1-to-clear logic for interrupt acknowledgment
+ * Writing 1 to a bit position clears that specific interrupt
+ * 
+ * @param clear_bits Bits to clear (1 = clear interrupt, 0 = no change)
+ */
+static void write_irq_cause_low(uint8_t clear_bits) {
+    // Clear specified interrupt bits using write-1-to-clear logic
+    indexed_memory_write_irq_cause_low(clear_bits);
+}
+
+/**
+ * Read IRQ_CAUSE_HIGH register
+ * Returns the high byte of the interrupt cause register (bits 8-15)
+ * 
+ * @return Interrupt cause high byte
+ */
+static uint8_t read_irq_cause_high(void) {
+    // Return high byte of IRQ cause from indexed memory
+    return indexed_memory_get_irq_cause_high();
+}
+
+/**
+ * Write IRQ_CAUSE_HIGH register
+ * Implements write-1-to-clear logic for interrupt acknowledgment
+ * Writing 1 to a bit position clears that specific interrupt
+ * 
+ * @param clear_bits Bits to clear (1 = clear interrupt, 0 = no change)
+ */
+static void write_irq_cause_high(uint8_t clear_bits) {
+    // Clear specified interrupt bits using write-1-to-clear logic
+    indexed_memory_write_irq_cause_high(clear_bits);
+}
+
+/**
+ * Read IRQ_MASK_LOW register
+ * Returns the low byte of the interrupt mask register (bits 0-7)
+ * 
+ * @return Interrupt mask low byte
+ */
+static uint8_t read_irq_mask_low(void) {
+    // Get full 16-bit mask and return low byte
+    uint16_t mask = indexed_memory_get_irq_mask();
+    return mask & 0xFF;
+}
+
+/**
+ * Write IRQ_MASK_LOW register
+ * Sets which interrupt sources are enabled (bits 0-7)
+ * 
+ * @param mask Interrupt mask low byte (1 = enabled, 0 = disabled)
+ */
+static void write_irq_mask_low(uint8_t mask) {
+    // Get current mask, update low byte, and write back
+    uint16_t current_mask = indexed_memory_get_irq_mask();
+    uint16_t new_mask = (current_mask & 0xFF00) | mask;
+    indexed_memory_set_irq_mask(new_mask);
+}
+
+/**
+ * Read IRQ_MASK_HIGH register
+ * Returns the high byte of the interrupt mask register (bits 8-15)
+ * 
+ * @return Interrupt mask high byte
+ */
+static uint8_t read_irq_mask_high(void) {
+    // Get full 16-bit mask and return high byte
+    uint16_t mask = indexed_memory_get_irq_mask();
+    return (mask >> 8) & 0xFF;
+}
+
+/**
+ * Write IRQ_MASK_HIGH register
+ * Sets which interrupt sources are enabled (bits 8-15)
+ * 
+ * @param mask Interrupt mask high byte (1 = enabled, 0 = disabled)
+ */
+static void write_irq_mask_high(uint8_t mask) {
+    // Get current mask, update high byte, and write back
+    uint16_t current_mask = indexed_memory_get_irq_mask();
+    uint16_t new_mask = (current_mask & 0x00FF) | ((uint16_t)mask << 8);
+    indexed_memory_set_irq_mask(new_mask);
+}
+
+/**
+ * Read IRQ_ENABLE register
+ * Returns the global interrupt enable/disable state
+ * 
+ * @return Global interrupt enable (1 = enabled, 0 = disabled)
+ */
+static uint8_t read_irq_enable(void) {
+    // Return global interrupt enable state
+    return indexed_memory_get_irq_enable();
+}
+
+/**
+ * Write IRQ_ENABLE register
+ * Sets the global interrupt enable/disable state
+ * 
+ * @param enable Global interrupt enable (1 = enabled, 0 = disabled)
+ */
+static void write_irq_enable(uint8_t enable) {
+    // Set global interrupt enable state
+    indexed_memory_set_irq_enable(enable);
+}
+
+// ============================================================================
 // Module Initialization
 // ============================================================================
 
@@ -178,28 +311,22 @@ uint8_t bus_interface_read(uint8_t local_addr) {
         // Handle shared register reads
         switch (local_addr) {
             case REG_DEVICE_STATUS:
-                // TODO: Implement DEVICE_STATUS read handler
-                return 0x00;
+                return read_device_status();
                 
             case REG_IRQ_CAUSE_LOW:
-                // TODO: Implement IRQ_CAUSE_LOW read handler
-                return 0x00;
+                return read_irq_cause_low();
                 
             case REG_IRQ_CAUSE_HIGH:
-                // TODO: Implement IRQ_CAUSE_HIGH read handler
-                return 0x00;
+                return read_irq_cause_high();
                 
             case REG_IRQ_MASK_LOW:
-                // TODO: Implement IRQ_MASK_LOW read handler
-                return 0xFF;  // Default: all interrupts enabled
+                return read_irq_mask_low();
                 
             case REG_IRQ_MASK_HIGH:
-                // TODO: Implement IRQ_MASK_HIGH read handler
-                return 0xFF;  // Default: all interrupts enabled
+                return read_irq_mask_high();
                 
             case REG_IRQ_ENABLE:
-                // TODO: Implement IRQ_ENABLE read handler
-                return 0x01;  // Default: interrupts enabled
+                return read_irq_enable();
                 
             default:
                 // Reserved shared register
@@ -247,28 +374,23 @@ void bus_interface_write(uint8_t local_addr, uint8_t data) {
                 break;
                 
             case REG_IRQ_CAUSE_LOW:
-                // TODO: Implement IRQ_CAUSE_LOW write handler (write-1-to-clear)
-                (void)data;
+                write_irq_cause_low(data);
                 break;
                 
             case REG_IRQ_CAUSE_HIGH:
-                // TODO: Implement IRQ_CAUSE_HIGH write handler (write-1-to-clear)
-                (void)data;
+                write_irq_cause_high(data);
                 break;
                 
             case REG_IRQ_MASK_LOW:
-                // TODO: Implement IRQ_MASK_LOW write handler
-                (void)data;
+                write_irq_mask_low(data);
                 break;
                 
             case REG_IRQ_MASK_HIGH:
-                // TODO: Implement IRQ_MASK_HIGH write handler
-                (void)data;
+                write_irq_mask_high(data);
                 break;
                 
             case REG_IRQ_ENABLE:
-                // TODO: Implement IRQ_ENABLE write handler
-                (void)data;
+                write_irq_enable(data);
                 break;
                 
             default:

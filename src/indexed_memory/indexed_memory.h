@@ -138,6 +138,7 @@ typedef struct {
     uint8_t status;            // System status register
     uint16_t irq_cause;        // Interrupt cause register (16-bit bit mask)
     uint16_t irq_mask;         // 16-bit interrupt mask register (which IRQs are enabled)
+    uint8_t irq_enable;        // Global interrupt enable/disable (1 = enabled, 0 = disabled)
     uint8_t window_a_idx;      // Currently selected index for Window A
     uint8_t window_b_idx;      // Currently selected index for Window B
     uint8_t cfg_field_a;       // Selected configuration field for Window A
@@ -183,6 +184,10 @@ void indexed_memory_write_irq_cause_high(uint8_t clear_bits);
 void indexed_memory_clear_irq(void);
 void indexed_memory_clear_specific_irq(uint16_t cause);
 void indexed_memory_set_irq(uint16_t cause);
+uint16_t indexed_memory_get_irq_mask(void);
+void indexed_memory_set_irq_mask(uint16_t mask);
+uint8_t indexed_memory_get_irq_enable(void);
+void indexed_memory_set_irq_enable(uint8_t enable);
 
 // Window management
 void indexed_memory_set_window_index(bool window_b, uint8_t idx);

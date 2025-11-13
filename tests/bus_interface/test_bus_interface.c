@@ -1916,6 +1916,443 @@ bool test_bus_interface_cfg_multi_window(void) {
 }
 
 /**
+ * Test DEVICE_STATUS register reading
+ */
+bool test_bus_interface_device_status_read(void) {
+    printf("Testing DEVICE_STATUS register reading...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Read DEVICE_STATUS register (address 0xF0)
+    uint8_t status = bus_interface_read(REG_DEVICE_STATUS);
+    
+    // Should have SYSTEM_READY bit set after initialization
+    if ((status & STATUS_SYSTEM_READY) == 0) {
+        printf("  FAIL: DEVICE_STATUS should have SYSTEM_READY bit set, got 0x%02X\n", status);
+        return false;
+    }
+    
+    // Trigger an interrupt and verify IRQ_PENDING bit
+    indexed_memory_set_irq(IRQ_DMA_COMPLETE);
+    status = bus_interface_read(REG_DEVICE_STATUS);
+    
+    if ((status & STATUS_IRQ_PENDING) == 0) {
+        printf("  FAIL: DEVICE_STATUS should have IRQ_PENDING bit set after interrupt, got 0x%02X\n", status);
+        return false;
+    }
+    
+    // Clear interrupt and verify IRQ_PENDING bit is cleared
+    indexed_memory_clear_irq();
+    status = bus_interface_read(REG_DEVICE_STATUS);
+    
+    if ((status & STATUS_IRQ_PENDING) != 0) {
+        printf("  FAIL: DEVICE_STATUS should not have IRQ_PENDING bit after clear, got 0x%02X\n", status);
+        return false;
+    }
+    
+    printf("  PASS: DEVICE_STATUS register reading works correctly\n");
+    return true;
+}
+
+/**
+ * Test IRQ_CAUSE_LOW register reading
+ */
+bool test_bus_interface_irq_cause_low_read(void) {
+    printf("Testing IRQ_CAUSE_LOW register reading...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Initially should be 0 (no interrupts)
+    uint8_t cause_low = bus_interface_read(REG_IRQ_CAUSE_LOW);
+    if (cause_low != 0) {
+        printf("  FAIL: IRQ_CAUSE_LOW should be 0 initially, got 0x%02X\n", cause_low);
+        return false;
+    }
+    
+    // Set a low byte interrupt (DMA_COMPLETE = bit 2)
+    indexed_memory_set_irq(IRQ_DMA_COMPLETE);
+    cause_low = bus_interface_read(REG_IRQ_CAUSE_LOW);
+    
+    if ((cause_low & 0x04) == 0) {
+        printf("  FAIL: IRQ_CAUSE_LOW should have bit 2 set, got 0x%02X\n", cause_low);
+        return false;
+    }
+    
+    // Set another low byte interrupt (MEMORY_ERROR = bit 0)
+    indexed_memory_set_irq(IRQ_MEMORY_ERROR);
+    cause_low = bus_interface_read(REG_IRQ_CAUSE_LOW);
+    
+    if ((cause_low & 0x05) != 0x05) {
+        printf("  FAIL: IRQ_CAUSE_LOW should have bits 0 and 2 set, got 0x%02X\n", cause_low);
+        return false;
+    }
+    
+    printf("  PASS: IRQ_CAUSE_LOW register reading works correctly\n");
+    return true;
+}
+
+/**
+ * Test IRQ_CAUSE_HIGH register reading
+ */
+bool test_bus_interface_irq_cause_high_read(void) {
+    printf("Testing IRQ_CAUSE_HIGH register reading...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Initially should be 0 (no interrupts)
+    uint8_t cause_high = bus_interface_read(REG_IRQ_CAUSE_HIGH);
+    if (cause_high != 0) {
+        printf("  FAIL: IRQ_CAUSE_HIGH should be 0 initially, got 0x%02X\n", cause_high);
+        return false;
+    }
+    
+    // Set a high byte interrupt (VIDEO_FRAME_COMPLETE = bit 8, which is bit 0 of high byte)
+    indexed_memory_set_irq(IRQ_VIDEO_FRAME_COMPLETE);
+    cause_high = bus_interface_read(REG_IRQ_CAUSE_HIGH);
+    
+    if ((cause_high & 0x01) == 0) {
+        printf("  FAIL: IRQ_CAUSE_HIGH should have bit 0 set, got 0x%02X\n", cause_high);
+        return false;
+    }
+    
+    // Set another high byte interrupt (VIDEO_COLLISION = bit 9, which is bit 1 of high byte)
+    indexed_memory_set_irq(IRQ_VIDEO_COLLISION);
+    cause_high = bus_interface_read(REG_IRQ_CAUSE_HIGH);
+    
+    if ((cause_high & 0x03) != 0x03) {
+        printf("  FAIL: IRQ_CAUSE_HIGH should have bits 0 and 1 set, got 0x%02X\n", cause_high);
+        return false;
+    }
+    
+    printf("  PASS: IRQ_CAUSE_HIGH register reading works correctly\n");
+    return true;
+}
+
+/**
+ * Test IRQ_CAUSE write-1-to-clear functionality
+ */
+bool test_bus_interface_irq_cause_write_to_clear(void) {
+    printf("Testing IRQ_CAUSE write-1-to-clear functionality...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Set multiple interrupts in low byte
+    indexed_memory_set_irq(IRQ_MEMORY_ERROR | IRQ_INDEX_OVERFLOW | IRQ_DMA_COMPLETE);
+    
+    uint8_t cause_low = bus_interface_read(REG_IRQ_CAUSE_LOW);
+    if ((cause_low & 0x07) != 0x07) {
+        printf("  FAIL: IRQ_CAUSE_LOW should have bits 0, 1, 2 set, got 0x%02X\n", cause_low);
+        return false;
+    }
+    
+    // Clear bit 1 (INDEX_OVERFLOW) by writing 1 to that bit
+    bus_interface_write(REG_IRQ_CAUSE_LOW, 0x02);
+    
+    cause_low = bus_interface_read(REG_IRQ_CAUSE_LOW);
+    if ((cause_low & 0x07) != 0x05) {
+        printf("  FAIL: IRQ_CAUSE_LOW should have bits 0 and 2 set after clearing bit 1, got 0x%02X\n", cause_low);
+        return false;
+    }
+    
+    // Clear all remaining low byte interrupts
+    bus_interface_write(REG_IRQ_CAUSE_LOW, 0xFF);
+    
+    cause_low = bus_interface_read(REG_IRQ_CAUSE_LOW);
+    if (cause_low != 0) {
+        printf("  FAIL: IRQ_CAUSE_LOW should be 0 after clearing all, got 0x%02X\n", cause_low);
+        return false;
+    }
+    
+    // Test high byte write-1-to-clear
+    indexed_memory_set_irq(IRQ_VIDEO_FRAME_COMPLETE | IRQ_VIDEO_COLLISION);
+    
+    uint8_t cause_high = bus_interface_read(REG_IRQ_CAUSE_HIGH);
+    if ((cause_high & 0x03) != 0x03) {
+        printf("  FAIL: IRQ_CAUSE_HIGH should have bits 0 and 1 set, got 0x%02X\n", cause_high);
+        return false;
+    }
+    
+    // Clear bit 0 (VIDEO_FRAME_COMPLETE)
+    bus_interface_write(REG_IRQ_CAUSE_HIGH, 0x01);
+    
+    cause_high = bus_interface_read(REG_IRQ_CAUSE_HIGH);
+    if ((cause_high & 0x03) != 0x02) {
+        printf("  FAIL: IRQ_CAUSE_HIGH should have only bit 1 set after clearing bit 0, got 0x%02X\n", cause_high);
+        return false;
+    }
+    
+    printf("  PASS: IRQ_CAUSE write-1-to-clear functionality works correctly\n");
+    return true;
+}
+
+/**
+ * Test IRQ_MASK register reading and writing
+ */
+bool test_bus_interface_irq_mask_read_write(void) {
+    printf("Testing IRQ_MASK register reading and writing...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Initially all interrupts should be enabled (mask = 0xFFFF)
+    uint8_t mask_low = bus_interface_read(REG_IRQ_MASK_LOW);
+    uint8_t mask_high = bus_interface_read(REG_IRQ_MASK_HIGH);
+    
+    if (mask_low != 0xFF || mask_high != 0xFF) {
+        printf("  FAIL: IRQ_MASK should be 0xFFFF initially, got 0x%02X%02X\n", mask_high, mask_low);
+        return false;
+    }
+    
+    // Disable some low byte interrupts
+    bus_interface_write(REG_IRQ_MASK_LOW, 0xF0);
+    mask_low = bus_interface_read(REG_IRQ_MASK_LOW);
+    
+    if (mask_low != 0xF0) {
+        printf("  FAIL: IRQ_MASK_LOW should be 0xF0, got 0x%02X\n", mask_low);
+        return false;
+    }
+    
+    // Verify high byte wasn't affected
+    mask_high = bus_interface_read(REG_IRQ_MASK_HIGH);
+    if (mask_high != 0xFF) {
+        printf("  FAIL: IRQ_MASK_HIGH should still be 0xFF, got 0x%02X\n", mask_high);
+        return false;
+    }
+    
+    // Disable some high byte interrupts
+    bus_interface_write(REG_IRQ_MASK_HIGH, 0x0F);
+    mask_high = bus_interface_read(REG_IRQ_MASK_HIGH);
+    
+    if (mask_high != 0x0F) {
+        printf("  FAIL: IRQ_MASK_HIGH should be 0x0F, got 0x%02X\n", mask_high);
+        return false;
+    }
+    
+    // Verify low byte wasn't affected
+    mask_low = bus_interface_read(REG_IRQ_MASK_LOW);
+    if (mask_low != 0xF0) {
+        printf("  FAIL: IRQ_MASK_LOW should still be 0xF0, got 0x%02X\n", mask_low);
+        return false;
+    }
+    
+    // Re-enable all interrupts
+    bus_interface_write(REG_IRQ_MASK_LOW, 0xFF);
+    bus_interface_write(REG_IRQ_MASK_HIGH, 0xFF);
+    
+    mask_low = bus_interface_read(REG_IRQ_MASK_LOW);
+    mask_high = bus_interface_read(REG_IRQ_MASK_HIGH);
+    
+    if (mask_low != 0xFF || mask_high != 0xFF) {
+        printf("  FAIL: IRQ_MASK should be 0xFFFF after re-enabling, got 0x%02X%02X\n", mask_high, mask_low);
+        return false;
+    }
+    
+    printf("  PASS: IRQ_MASK register reading and writing works correctly\n");
+    return true;
+}
+
+/**
+ * Test IRQ_ENABLE register reading and writing
+ */
+bool test_bus_interface_irq_enable_read_write(void) {
+    printf("Testing IRQ_ENABLE register reading and writing...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Initially should be enabled (1)
+    uint8_t enable = bus_interface_read(REG_IRQ_ENABLE);
+    if (enable != 0x01) {
+        printf("  FAIL: IRQ_ENABLE should be 1 initially, got 0x%02X\n", enable);
+        return false;
+    }
+    
+    // Disable global interrupts
+    bus_interface_write(REG_IRQ_ENABLE, 0x00);
+    enable = bus_interface_read(REG_IRQ_ENABLE);
+    
+    if (enable != 0x00) {
+        printf("  FAIL: IRQ_ENABLE should be 0 after disabling, got 0x%02X\n", enable);
+        return false;
+    }
+    
+    // Re-enable global interrupts
+    bus_interface_write(REG_IRQ_ENABLE, 0x01);
+    enable = bus_interface_read(REG_IRQ_ENABLE);
+    
+    if (enable != 0x01) {
+        printf("  FAIL: IRQ_ENABLE should be 1 after re-enabling, got 0x%02X\n", enable);
+        return false;
+    }
+    
+    // Test that any non-zero value enables interrupts
+    bus_interface_write(REG_IRQ_ENABLE, 0xFF);
+    enable = bus_interface_read(REG_IRQ_ENABLE);
+    
+    if (enable != 0x01) {
+        printf("  FAIL: IRQ_ENABLE should normalize to 1, got 0x%02X\n", enable);
+        return false;
+    }
+    
+    printf("  PASS: IRQ_ENABLE register reading and writing works correctly\n");
+    return true;
+}
+
+/**
+ * Test IRQ line behavior with mask and enable
+ */
+bool test_bus_interface_irq_line_behavior(void) {
+    printf("Testing IRQ line behavior (assert/deassert based on mask and enable)...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Initially no interrupts pending
+    uint8_t status = bus_interface_read(REG_DEVICE_STATUS);
+    if ((status & STATUS_IRQ_PENDING) != 0) {
+        printf("  FAIL: IRQ should not be pending initially, got status 0x%02X\n", status);
+        return false;
+    }
+    
+    // Set an interrupt - should assert IRQ line (IRQ_PENDING bit set)
+    indexed_memory_set_irq(IRQ_DMA_COMPLETE);
+    status = bus_interface_read(REG_DEVICE_STATUS);
+    
+    if ((status & STATUS_IRQ_PENDING) == 0) {
+        printf("  FAIL: IRQ should be pending after setting interrupt, got status 0x%02X\n", status);
+        return false;
+    }
+    
+    // Clear the interrupt - should deassert IRQ line
+    bus_interface_write(REG_IRQ_CAUSE_LOW, 0x04);  // Clear DMA_COMPLETE
+    status = bus_interface_read(REG_DEVICE_STATUS);
+    
+    if ((status & STATUS_IRQ_PENDING) != 0) {
+        printf("  FAIL: IRQ should not be pending after clearing interrupt, got status 0x%02X\n", status);
+        return false;
+    }
+    
+    // Set an interrupt but disable it in the mask - should not assert IRQ
+    bus_interface_write(REG_IRQ_MASK_LOW, 0xFB);  // Disable DMA_COMPLETE (bit 2)
+    indexed_memory_set_irq(IRQ_DMA_COMPLETE);
+    status = bus_interface_read(REG_DEVICE_STATUS);
+    
+    if ((status & STATUS_IRQ_PENDING) != 0) {
+        printf("  FAIL: IRQ should not be pending when interrupt is masked, got status 0x%02X\n", status);
+        return false;
+    }
+    
+    // Re-enable the interrupt in the mask - should now assert IRQ
+    bus_interface_write(REG_IRQ_MASK_LOW, 0xFF);
+    status = bus_interface_read(REG_DEVICE_STATUS);
+    
+    if ((status & STATUS_IRQ_PENDING) == 0) {
+        printf("  FAIL: IRQ should be pending after unmasking, got status 0x%02X\n", status);
+        return false;
+    }
+    
+    // Clear the interrupt
+    bus_interface_write(REG_IRQ_CAUSE_LOW, 0xFF);
+    
+    // Set an interrupt but disable global interrupts - should not assert IRQ
+    bus_interface_write(REG_IRQ_ENABLE, 0x00);
+    indexed_memory_set_irq(IRQ_DMA_COMPLETE);
+    status = bus_interface_read(REG_DEVICE_STATUS);
+    
+    if ((status & STATUS_IRQ_PENDING) != 0) {
+        printf("  FAIL: IRQ should not be pending when globally disabled, got status 0x%02X\n", status);
+        return false;
+    }
+    
+    // Re-enable global interrupts - should now assert IRQ
+    bus_interface_write(REG_IRQ_ENABLE, 0x01);
+    status = bus_interface_read(REG_DEVICE_STATUS);
+    
+    if ((status & STATUS_IRQ_PENDING) == 0) {
+        printf("  FAIL: IRQ should be pending after globally enabling, got status 0x%02X\n", status);
+        return false;
+    }
+    
+    printf("  PASS: IRQ line behavior works correctly\n");
+    return true;
+}
+
+/**
+ * Test individual interrupt bit handling
+ */
+bool test_bus_interface_individual_interrupt_bits(void) {
+    printf("Testing individual interrupt bit handling...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Test each low byte interrupt bit individually
+    for (int bit = 0; bit < 8; bit++) {
+        uint16_t irq_bit = 1 << bit;
+        
+        // Set the interrupt
+        indexed_memory_set_irq(irq_bit);
+        
+        // Read and verify
+        uint8_t cause_low = bus_interface_read(REG_IRQ_CAUSE_LOW);
+        if ((cause_low & (1 << bit)) == 0) {
+            printf("  FAIL: Low byte bit %d should be set, got 0x%02X\n", bit, cause_low);
+            return false;
+        }
+        
+        // Clear the interrupt
+        bus_interface_write(REG_IRQ_CAUSE_LOW, 1 << bit);
+        
+        // Verify cleared
+        cause_low = bus_interface_read(REG_IRQ_CAUSE_LOW);
+        if ((cause_low & (1 << bit)) != 0) {
+            printf("  FAIL: Low byte bit %d should be cleared, got 0x%02X\n", bit, cause_low);
+            return false;
+        }
+    }
+    
+    // Test each high byte interrupt bit individually
+    for (int bit = 0; bit < 8; bit++) {
+        uint16_t irq_bit = 1 << (bit + 8);
+        
+        // Set the interrupt
+        indexed_memory_set_irq(irq_bit);
+        
+        // Read and verify
+        uint8_t cause_high = bus_interface_read(REG_IRQ_CAUSE_HIGH);
+        if ((cause_high & (1 << bit)) == 0) {
+            printf("  FAIL: High byte bit %d should be set, got 0x%02X\n", bit, cause_high);
+            return false;
+        }
+        
+        // Clear the interrupt
+        bus_interface_write(REG_IRQ_CAUSE_HIGH, 1 << bit);
+        
+        // Verify cleared
+        cause_high = bus_interface_read(REG_IRQ_CAUSE_HIGH);
+        if ((cause_high & (1 << bit)) != 0) {
+            printf("  FAIL: High byte bit %d should be cleared, got 0x%02X\n", bit, cause_high);
+            return false;
+        }
+    }
+    
+    printf("  PASS: Individual interrupt bit handling works correctly\n");
+    return true;
+}
+
+/**
  * Run all bus interface tests
  */
 bool run_bus_interface_tests(void) {
@@ -1956,6 +2393,16 @@ bool run_bus_interface_tests(void) {
     all_passed &= test_bus_interface_cfg_data_multibyte_fields();
     all_passed &= test_bus_interface_cfg_data_dma_fields();
     all_passed &= test_bus_interface_cfg_multi_window();
+    
+    // Shared register tests
+    all_passed &= test_bus_interface_device_status_read();
+    all_passed &= test_bus_interface_irq_cause_low_read();
+    all_passed &= test_bus_interface_irq_cause_high_read();
+    all_passed &= test_bus_interface_irq_cause_write_to_clear();
+    all_passed &= test_bus_interface_irq_mask_read_write();
+    all_passed &= test_bus_interface_irq_enable_read_write();
+    all_passed &= test_bus_interface_irq_line_behavior();
+    all_passed &= test_bus_interface_individual_interrupt_bits();
     
     if (all_passed) {
         printf("\n=== All Bus Interface Tests PASSED ===\n\n");
