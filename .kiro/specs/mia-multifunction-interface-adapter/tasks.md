@@ -104,23 +104,23 @@
     - Verify wrap-on-limit functionality
     - _Requirements: 6.2, 6.9, 6.10_
 
-- [ ] 8. Implement register handlers - Configuration
-  - [ ] 8.1 Implement CFG_FIELD_SELECT handlers
+- [x] 8. Implement register handlers - Configuration
+  - [x] 8.1 Implement CFG_FIELD_SELECT handlers
     - Create read_cfg_field_select(window_b) function
     - Create write_cfg_field_select(window_b, field) function
     - Integrate with indexed_memory_get/set_config_field_select()
     - _Requirements: 6.4_
-  - [ ] 8.2 Implement CFG_DATA read handler
+  - [x] 8.2 Implement CFG_DATA read handler
     - Create read_cfg_data(window_b) function
     - Read selected configuration field from active index
     - Integrate with indexed_memory_get_config_field()
     - _Requirements: 6.5_
-  - [ ] 8.3 Implement CFG_DATA write handler
+  - [x] 8.3 Implement CFG_DATA write handler
     - Create write_cfg_data(window_b, data) function
     - Write to selected configuration field of active index
     - Integrate with indexed_memory_set_config_field()
     - _Requirements: 6.5_
-  - [ ] 8.4 Test configuration access
+  - [x] 8.4 Test configuration access
     - Test reading all configuration field types (address, default, limit, step, flags)
     - Test writing all configuration field types
     - Test multi-byte field access (24-bit addresses)

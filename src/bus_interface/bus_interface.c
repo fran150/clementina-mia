@@ -81,6 +81,66 @@ static void write_data_port(uint8_t window_num, uint8_t data) {
     indexed_memory_write(idx, data);
 }
 
+/**
+ * Read CFG_FIELD_SELECT register
+ * Returns the currently selected configuration field for the specified window
+ * 
+ * @param window_num Window number (0-7 for Windows A-H)
+ * @return Currently selected configuration field
+ */
+static uint8_t read_cfg_field_select(uint8_t window_num) {
+    // Return the selected configuration field for the specified window
+    return g_window_state[window_num].config_field_select;
+}
+
+/**
+ * Write CFG_FIELD_SELECT register
+ * Updates the configuration field selection for the specified window
+ * 
+ * @param window_num Window number (0-7 for Windows A-H)
+ * @param field Configuration field to select
+ */
+static void write_cfg_field_select(uint8_t window_num, uint8_t field) {
+    // Update the configuration field selection for the specified window
+    g_window_state[window_num].config_field_select = field;
+}
+
+/**
+ * Read CFG_DATA register
+ * Reads the selected configuration field from the active index
+ * 
+ * @param window_num Window number (0-7 for Windows A-H)
+ * @return Configuration field value
+ */
+static uint8_t read_cfg_data(uint8_t window_num) {
+    // Get the currently selected index for this window
+    uint8_t idx = g_window_state[window_num].active_index;
+    
+    // Get the selected configuration field for this window
+    uint8_t field = g_window_state[window_num].config_field_select;
+    
+    // Read the configuration field from the index
+    return indexed_memory_get_config_field(idx, field);
+}
+
+/**
+ * Write CFG_DATA register
+ * Writes to the selected configuration field of the active index
+ * 
+ * @param window_num Window number (0-7 for Windows A-H)
+ * @param data Data to write to the configuration field
+ */
+static void write_cfg_data(uint8_t window_num, uint8_t data) {
+    // Get the currently selected index for this window
+    uint8_t idx = g_window_state[window_num].active_index;
+    
+    // Get the selected configuration field for this window
+    uint8_t field = g_window_state[window_num].config_field_select;
+    
+    // Write the configuration field to the index
+    indexed_memory_set_config_field(idx, field, data);
+}
+
 // ============================================================================
 // Module Initialization
 // ============================================================================
@@ -165,12 +225,10 @@ uint8_t bus_interface_read(uint8_t local_addr) {
             return read_data_port(window_num);
             
         case REG_OFFSET_CFG_FIELD_SELECT:
-            // TODO: Implement CFG_FIELD_SELECT read handler
-            return 0x00;
+            return read_cfg_field_select(window_num);
             
         case REG_OFFSET_CFG_DATA:
-            // TODO: Implement CFG_DATA read handler
-            return 0x00;
+            return read_cfg_data(window_num);
             
         case REG_OFFSET_COMMAND:
             // Command register is write-only
@@ -245,11 +303,11 @@ void bus_interface_write(uint8_t local_addr, uint8_t data) {
             break;
             
         case REG_OFFSET_CFG_FIELD_SELECT:
-            // TODO: Implement CFG_FIELD_SELECT write handler
+            write_cfg_field_select(window_num, data);
             break;
             
         case REG_OFFSET_CFG_DATA:
-            // TODO: Implement CFG_DATA write handler
+            write_cfg_data(window_num, data);
             break;
             
         case REG_OFFSET_COMMAND:

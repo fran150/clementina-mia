@@ -1462,6 +1462,463 @@ bool test_bus_interface_data_port_sequential_operations(void) {
 }
 
 /**
+ * Test CFG_FIELD_SELECT read handler for all windows
+ */
+bool test_bus_interface_cfg_field_select_read(void) {
+    printf("Testing CFG_FIELD_SELECT read handler...\n");
+    
+    // Initialize the bus interface
+    bus_interface_init();
+    
+    // Test reading CFG_FIELD_SELECT for Window A (address 0x02)
+    g_window_state[0].config_field_select = CFG_ADDR_L;
+    uint8_t value = bus_interface_read(0x02);
+    if (value != CFG_ADDR_L) {
+        printf("  FAIL: Window A CFG_FIELD_SELECT should return CFG_ADDR_L, got 0x%02X\n", value);
+        return false;
+    }
+    
+    // Test reading CFG_FIELD_SELECT for Window B (address 0x12)
+    g_window_state[1].config_field_select = CFG_STEP;
+    value = bus_interface_read(0x12);
+    if (value != CFG_STEP) {
+        printf("  FAIL: Window B CFG_FIELD_SELECT should return CFG_STEP, got 0x%02X\n", value);
+        return false;
+    }
+    
+    // Test reading CFG_FIELD_SELECT for Window C (address 0x22)
+    g_window_state[2].config_field_select = CFG_FLAGS;
+    value = bus_interface_read(0x22);
+    if (value != CFG_FLAGS) {
+        printf("  FAIL: Window C CFG_FIELD_SELECT should return CFG_FLAGS, got 0x%02X\n", value);
+        return false;
+    }
+    
+    // Test reading CFG_FIELD_SELECT for Window D (address 0x32)
+    g_window_state[3].config_field_select = CFG_DEFAULT_H;
+    value = bus_interface_read(0x32);
+    if (value != CFG_DEFAULT_H) {
+        printf("  FAIL: Window D CFG_FIELD_SELECT should return CFG_DEFAULT_H, got 0x%02X\n", value);
+        return false;
+    }
+    
+    printf("  PASS: CFG_FIELD_SELECT read handler works correctly for all windows\n");
+    return true;
+}
+
+/**
+ * Test CFG_FIELD_SELECT write handler for all windows
+ */
+bool test_bus_interface_cfg_field_select_write(void) {
+    printf("Testing CFG_FIELD_SELECT write handler...\n");
+    
+    // Initialize the bus interface
+    bus_interface_init();
+    
+    // Test writing CFG_FIELD_SELECT for Window A (address 0x02)
+    bus_interface_write(0x02, CFG_ADDR_M);
+    if (g_window_state[0].config_field_select != CFG_ADDR_M) {
+        printf("  FAIL: Window A CFG_FIELD_SELECT should be CFG_ADDR_M, got 0x%02X\n", 
+               g_window_state[0].config_field_select);
+        return false;
+    }
+    
+    // Test writing CFG_FIELD_SELECT for Window B (address 0x12)
+    bus_interface_write(0x12, CFG_LIMIT_L);
+    if (g_window_state[1].config_field_select != CFG_LIMIT_L) {
+        printf("  FAIL: Window B CFG_FIELD_SELECT should be CFG_LIMIT_L, got 0x%02X\n", 
+               g_window_state[1].config_field_select);
+        return false;
+    }
+    
+    // Test writing CFG_FIELD_SELECT for Window C (address 0x22)
+    bus_interface_write(0x22, CFG_COPY_SRC_IDX);
+    if (g_window_state[2].config_field_select != CFG_COPY_SRC_IDX) {
+        printf("  FAIL: Window C CFG_FIELD_SELECT should be CFG_COPY_SRC_IDX, got 0x%02X\n", 
+               g_window_state[2].config_field_select);
+        return false;
+    }
+    
+    // Test writing CFG_FIELD_SELECT for Window D (address 0x32)
+    bus_interface_write(0x32, CFG_COPY_COUNT_H);
+    if (g_window_state[3].config_field_select != CFG_COPY_COUNT_H) {
+        printf("  FAIL: Window D CFG_FIELD_SELECT should be CFG_COPY_COUNT_H, got 0x%02X\n", 
+               g_window_state[3].config_field_select);
+        return false;
+    }
+    
+    printf("  PASS: CFG_FIELD_SELECT write handler works correctly for all windows\n");
+    return true;
+}
+
+/**
+ * Test CFG_DATA read handler for all configuration field types
+ */
+bool test_bus_interface_cfg_data_read(void) {
+    printf("Testing CFG_DATA read handler for all configuration field types...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Select index 128 for Window A
+    bus_interface_write(0x00, 128);
+    
+    // Configure index 128 with known values
+    uint32_t test_addr = 0x123456;
+    uint32_t test_default = 0xABCDEF;
+    uint32_t test_limit = 0x789ABC;
+    uint8_t test_step = 0x42;
+    uint8_t test_flags = FLAG_AUTO_STEP | FLAG_WRAP_ON_LIMIT;
+    
+    indexed_memory_set_index_address(128, test_addr);
+    indexed_memory_set_index_default(128, test_default);
+    indexed_memory_set_index_limit(128, test_limit);
+    indexed_memory_set_index_step(128, test_step);
+    indexed_memory_set_index_flags(128, test_flags);
+    
+    // Test reading current address (24-bit, 3 bytes)
+    bus_interface_write(0x02, CFG_ADDR_L);
+    uint8_t addr_l = bus_interface_read(0x03);
+    bus_interface_write(0x02, CFG_ADDR_M);
+    uint8_t addr_m = bus_interface_read(0x03);
+    bus_interface_write(0x02, CFG_ADDR_H);
+    uint8_t addr_h = bus_interface_read(0x03);
+    
+    if (addr_l != 0x56 || addr_m != 0x34 || addr_h != 0x12) {
+        printf("  FAIL: Current address read failed: got 0x%02X%02X%02X, expected 0x123456\n", 
+               addr_h, addr_m, addr_l);
+        return false;
+    }
+    
+    // Test reading default address (24-bit, 3 bytes)
+    bus_interface_write(0x02, CFG_DEFAULT_L);
+    uint8_t def_l = bus_interface_read(0x03);
+    bus_interface_write(0x02, CFG_DEFAULT_M);
+    uint8_t def_m = bus_interface_read(0x03);
+    bus_interface_write(0x02, CFG_DEFAULT_H);
+    uint8_t def_h = bus_interface_read(0x03);
+    
+    if (def_l != 0xEF || def_m != 0xCD || def_h != 0xAB) {
+        printf("  FAIL: Default address read failed: got 0x%02X%02X%02X, expected 0xABCDEF\n", 
+               def_h, def_m, def_l);
+        return false;
+    }
+    
+    // Test reading limit address (24-bit, 3 bytes)
+    bus_interface_write(0x02, CFG_LIMIT_L);
+    uint8_t lim_l = bus_interface_read(0x03);
+    bus_interface_write(0x02, CFG_LIMIT_M);
+    uint8_t lim_m = bus_interface_read(0x03);
+    bus_interface_write(0x02, CFG_LIMIT_H);
+    uint8_t lim_h = bus_interface_read(0x03);
+    
+    if (lim_l != 0xBC || lim_m != 0x9A || lim_h != 0x78) {
+        printf("  FAIL: Limit address read failed: got 0x%02X%02X%02X, expected 0x789ABC\n", 
+               lim_h, lim_m, lim_l);
+        return false;
+    }
+    
+    // Test reading step size
+    bus_interface_write(0x02, CFG_STEP);
+    uint8_t step = bus_interface_read(0x03);
+    if (step != test_step) {
+        printf("  FAIL: Step size read failed: got 0x%02X, expected 0x%02X\n", step, test_step);
+        return false;
+    }
+    
+    // Test reading flags
+    bus_interface_write(0x02, CFG_FLAGS);
+    uint8_t flags = bus_interface_read(0x03);
+    if (flags != test_flags) {
+        printf("  FAIL: Flags read failed: got 0x%02X, expected 0x%02X\n", flags, test_flags);
+        return false;
+    }
+    
+    printf("  PASS: CFG_DATA read handler works correctly for all configuration field types\n");
+    return true;
+}
+
+/**
+ * Test CFG_DATA write handler for all configuration field types
+ */
+bool test_bus_interface_cfg_data_write(void) {
+    printf("Testing CFG_DATA write handler for all configuration field types...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Select index 128 for Window A
+    bus_interface_write(0x00, 128);
+    
+    // Write current address (24-bit, 3 bytes)
+    bus_interface_write(0x02, CFG_ADDR_L);
+    bus_interface_write(0x03, 0x78);
+    bus_interface_write(0x02, CFG_ADDR_M);
+    bus_interface_write(0x03, 0x56);
+    bus_interface_write(0x02, CFG_ADDR_H);
+    bus_interface_write(0x03, 0x34);
+    
+    // Verify current address was written
+    uint32_t addr = indexed_memory_get_config_field(128, CFG_ADDR_L) |
+                    (indexed_memory_get_config_field(128, CFG_ADDR_M) << 8) |
+                    (indexed_memory_get_config_field(128, CFG_ADDR_H) << 16);
+    if (addr != 0x345678) {
+        printf("  FAIL: Current address write failed: got 0x%06X, expected 0x345678\n", addr);
+        return false;
+    }
+    
+    // Write default address (24-bit, 3 bytes)
+    bus_interface_write(0x02, CFG_DEFAULT_L);
+    bus_interface_write(0x03, 0x11);
+    bus_interface_write(0x02, CFG_DEFAULT_M);
+    bus_interface_write(0x03, 0x22);
+    bus_interface_write(0x02, CFG_DEFAULT_H);
+    bus_interface_write(0x03, 0x33);
+    
+    // Verify default address was written
+    uint32_t def_addr = indexed_memory_get_config_field(128, CFG_DEFAULT_L) |
+                        (indexed_memory_get_config_field(128, CFG_DEFAULT_M) << 8) |
+                        (indexed_memory_get_config_field(128, CFG_DEFAULT_H) << 16);
+    if (def_addr != 0x332211) {
+        printf("  FAIL: Default address write failed: got 0x%06X, expected 0x332211\n", def_addr);
+        return false;
+    }
+    
+    // Write limit address (24-bit, 3 bytes)
+    bus_interface_write(0x02, CFG_LIMIT_L);
+    bus_interface_write(0x03, 0xAA);
+    bus_interface_write(0x02, CFG_LIMIT_M);
+    bus_interface_write(0x03, 0xBB);
+    bus_interface_write(0x02, CFG_LIMIT_H);
+    bus_interface_write(0x03, 0xCC);
+    
+    // Verify limit address was written
+    uint32_t lim_addr = indexed_memory_get_config_field(128, CFG_LIMIT_L) |
+                        (indexed_memory_get_config_field(128, CFG_LIMIT_M) << 8) |
+                        (indexed_memory_get_config_field(128, CFG_LIMIT_H) << 16);
+    if (lim_addr != 0xCCBBAA) {
+        printf("  FAIL: Limit address write failed: got 0x%06X, expected 0xCCBBAA\n", lim_addr);
+        return false;
+    }
+    
+    // Write step size
+    bus_interface_write(0x02, CFG_STEP);
+    bus_interface_write(0x03, 0x55);
+    
+    uint8_t step = indexed_memory_get_config_field(128, CFG_STEP);
+    if (step != 0x55) {
+        printf("  FAIL: Step size write failed: got 0x%02X, expected 0x55\n", step);
+        return false;
+    }
+    
+    // Write flags
+    bus_interface_write(0x02, CFG_FLAGS);
+    bus_interface_write(0x03, FLAG_AUTO_STEP | FLAG_DIRECTION);
+    
+    uint8_t flags = indexed_memory_get_config_field(128, CFG_FLAGS);
+    if (flags != (FLAG_AUTO_STEP | FLAG_DIRECTION)) {
+        printf("  FAIL: Flags write failed: got 0x%02X, expected 0x%02X\n", 
+               flags, FLAG_AUTO_STEP | FLAG_DIRECTION);
+        return false;
+    }
+    
+    printf("  PASS: CFG_DATA write handler works correctly for all configuration field types\n");
+    return true;
+}
+
+/**
+ * Test CFG_DATA read/write integration with multi-byte fields
+ */
+bool test_bus_interface_cfg_data_multibyte_fields(void) {
+    printf("Testing CFG_DATA with multi-byte field access (24-bit addresses)...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Select index 129 for Window B
+    bus_interface_write(0x10, 129);
+    
+    // Write a 24-bit address byte by byte
+    bus_interface_write(0x12, CFG_ADDR_L);
+    bus_interface_write(0x13, 0xDE);
+    bus_interface_write(0x12, CFG_ADDR_M);
+    bus_interface_write(0x13, 0xBC);
+    bus_interface_write(0x12, CFG_ADDR_H);
+    bus_interface_write(0x13, 0x9A);
+    
+    // Read back the 24-bit address byte by byte
+    bus_interface_write(0x12, CFG_ADDR_L);
+    uint8_t read_l = bus_interface_read(0x13);
+    bus_interface_write(0x12, CFG_ADDR_M);
+    uint8_t read_m = bus_interface_read(0x13);
+    bus_interface_write(0x12, CFG_ADDR_H);
+    uint8_t read_h = bus_interface_read(0x13);
+    
+    if (read_l != 0xDE || read_m != 0xBC || read_h != 0x9A) {
+        printf("  FAIL: Multi-byte address read/write failed: got 0x%02X%02X%02X, expected 0x9ABCDE\n", 
+               read_h, read_m, read_l);
+        return false;
+    }
+    
+    // Test with default address
+    bus_interface_write(0x12, CFG_DEFAULT_L);
+    bus_interface_write(0x13, 0x11);
+    bus_interface_write(0x12, CFG_DEFAULT_M);
+    bus_interface_write(0x13, 0x22);
+    bus_interface_write(0x12, CFG_DEFAULT_H);
+    bus_interface_write(0x13, 0x33);
+    
+    bus_interface_write(0x12, CFG_DEFAULT_L);
+    read_l = bus_interface_read(0x13);
+    bus_interface_write(0x12, CFG_DEFAULT_M);
+    read_m = bus_interface_read(0x13);
+    bus_interface_write(0x12, CFG_DEFAULT_H);
+    read_h = bus_interface_read(0x13);
+    
+    if (read_l != 0x11 || read_m != 0x22 || read_h != 0x33) {
+        printf("  FAIL: Multi-byte default address read/write failed\n");
+        return false;
+    }
+    
+    printf("  PASS: CFG_DATA multi-byte field access works correctly\n");
+    return true;
+}
+
+/**
+ * Test CFG_DATA with DMA configuration fields
+ */
+bool test_bus_interface_cfg_data_dma_fields(void) {
+    printf("Testing CFG_DATA with DMA configuration fields...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Select index 128 for Window A
+    bus_interface_write(0x00, 128);
+    
+    // Write DMA source index
+    bus_interface_write(0x02, CFG_COPY_SRC_IDX);
+    bus_interface_write(0x03, 64);
+    
+    // Verify DMA source index
+    bus_interface_write(0x02, CFG_COPY_SRC_IDX);
+    uint8_t src_idx = bus_interface_read(0x03);
+    if (src_idx != 64) {
+        printf("  FAIL: DMA source index write/read failed: got %d, expected 64\n", src_idx);
+        return false;
+    }
+    
+    // Write DMA destination index
+    bus_interface_write(0x02, CFG_COPY_DST_IDX);
+    bus_interface_write(0x03, 128);
+    
+    // Verify DMA destination index
+    bus_interface_write(0x02, CFG_COPY_DST_IDX);
+    uint8_t dst_idx = bus_interface_read(0x03);
+    if (dst_idx != 128) {
+        printf("  FAIL: DMA destination index write/read failed: got %d, expected 128\n", dst_idx);
+        return false;
+    }
+    
+    // Write DMA copy count (16-bit, 2 bytes)
+    bus_interface_write(0x02, CFG_COPY_COUNT_L);
+    bus_interface_write(0x03, 0x34);
+    bus_interface_write(0x02, CFG_COPY_COUNT_H);
+    bus_interface_write(0x03, 0x12);
+    
+    // Verify DMA copy count
+    bus_interface_write(0x02, CFG_COPY_COUNT_L);
+    uint8_t count_l = bus_interface_read(0x03);
+    bus_interface_write(0x02, CFG_COPY_COUNT_H);
+    uint8_t count_h = bus_interface_read(0x03);
+    
+    if (count_l != 0x34 || count_h != 0x12) {
+        printf("  FAIL: DMA copy count write/read failed: got 0x%02X%02X, expected 0x1234\n", 
+               count_h, count_l);
+        return false;
+    }
+    
+    // Verify all DMA fields are accessible from indexed_memory
+    uint8_t verify_src = indexed_memory_get_config_field(128, CFG_COPY_SRC_IDX);
+    uint8_t verify_dst = indexed_memory_get_config_field(128, CFG_COPY_DST_IDX);
+    uint16_t verify_count = indexed_memory_get_config_field(128, CFG_COPY_COUNT_L) |
+                            (indexed_memory_get_config_field(128, CFG_COPY_COUNT_H) << 8);
+    
+    if (verify_src != 64 || verify_dst != 128 || verify_count != 0x1234) {
+        printf("  FAIL: DMA configuration verification failed\n");
+        return false;
+    }
+    
+    printf("  PASS: CFG_DATA with DMA configuration fields works correctly\n");
+    return true;
+}
+
+/**
+ * Test configuration access with multiple windows
+ */
+bool test_bus_interface_cfg_multi_window(void) {
+    printf("Testing configuration access with multiple windows...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Configure different indexes for each window
+    bus_interface_write(0x00, 128);  // Window A -> index 128
+    bus_interface_write(0x10, 129);  // Window B -> index 129
+    bus_interface_write(0x20, 130);  // Window C -> index 130
+    bus_interface_write(0x30, 131);  // Window D -> index 131
+    
+    // Write different step sizes to each index via different windows
+    bus_interface_write(0x02, CFG_STEP);  // Window A: select STEP field
+    bus_interface_write(0x03, 1);         // Window A: write step=1
+    
+    bus_interface_write(0x12, CFG_STEP);  // Window B: select STEP field
+    bus_interface_write(0x13, 2);         // Window B: write step=2
+    
+    bus_interface_write(0x22, CFG_STEP);  // Window C: select STEP field
+    bus_interface_write(0x23, 4);         // Window C: write step=4
+    
+    bus_interface_write(0x32, CFG_STEP);  // Window D: select STEP field
+    bus_interface_write(0x33, 8);         // Window D: write step=8
+    
+    // Read back and verify each window's configuration is independent
+    bus_interface_write(0x02, CFG_STEP);
+    uint8_t step_a = bus_interface_read(0x03);
+    
+    bus_interface_write(0x12, CFG_STEP);
+    uint8_t step_b = bus_interface_read(0x13);
+    
+    bus_interface_write(0x22, CFG_STEP);
+    uint8_t step_c = bus_interface_read(0x23);
+    
+    bus_interface_write(0x32, CFG_STEP);
+    uint8_t step_d = bus_interface_read(0x33);
+    
+    if (step_a != 1 || step_b != 2 || step_c != 4 || step_d != 8) {
+        printf("  FAIL: Multi-window configuration failed: got %d, %d, %d, %d, expected 1, 2, 4, 8\n", 
+               step_a, step_b, step_c, step_d);
+        return false;
+    }
+    
+    // Verify the underlying indexes have the correct values
+    if (indexed_memory_get_config_field(128, CFG_STEP) != 1 ||
+        indexed_memory_get_config_field(129, CFG_STEP) != 2 ||
+        indexed_memory_get_config_field(130, CFG_STEP) != 4 ||
+        indexed_memory_get_config_field(131, CFG_STEP) != 8) {
+        printf("  FAIL: Underlying index configuration verification failed\n");
+        return false;
+    }
+    
+    printf("  PASS: Configuration access with multiple windows works correctly\n");
+    return true;
+}
+
+/**
  * Run all bus interface tests
  */
 bool run_bus_interface_tests(void) {
@@ -1495,6 +1952,13 @@ bool run_bus_interface_tests(void) {
     all_passed &= test_bus_interface_data_port_directions();
     all_passed &= test_bus_interface_data_port_wrap_on_limit();
     all_passed &= test_bus_interface_data_port_sequential_operations();
+    all_passed &= test_bus_interface_cfg_field_select_read();
+    all_passed &= test_bus_interface_cfg_field_select_write();
+    all_passed &= test_bus_interface_cfg_data_read();
+    all_passed &= test_bus_interface_cfg_data_write();
+    all_passed &= test_bus_interface_cfg_data_multibyte_fields();
+    all_passed &= test_bus_interface_cfg_data_dma_fields();
+    all_passed &= test_bus_interface_cfg_multi_window();
     
     if (all_passed) {
         printf("\n=== All Bus Interface Tests PASSED ===\n\n");

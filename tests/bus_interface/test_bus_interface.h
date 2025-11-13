@@ -23,6 +23,13 @@ bool test_bus_interface_data_port_step_sizes(void);
 bool test_bus_interface_data_port_directions(void);
 bool test_bus_interface_data_port_wrap_on_limit(void);
 bool test_bus_interface_data_port_sequential_operations(void);
+bool test_bus_interface_cfg_field_select_read(void);
+bool test_bus_interface_cfg_field_select_write(void);
+bool test_bus_interface_cfg_data_read(void);
+bool test_bus_interface_cfg_data_write(void);
+bool test_bus_interface_cfg_data_multibyte_fields(void);
+bool test_bus_interface_cfg_data_dma_fields(void);
+bool test_bus_interface_cfg_multi_window(void);
 
 // Main test runner
 bool run_bus_interface_tests(void);
