@@ -34,18 +34,18 @@ indexed_memory_copy_block(src_idx, dst_idx, 1);
 ```
 0x06 - CMD_COPY_BYTE
 0x07 - CMD_COPY_BLOCK
-0x08 - CMD_SET_COPY_SRC
-0x09 - CMD_SET_COPY_DST
-0x0A - CMD_SET_COPY_COUNT
+0x08 - CMD_SET_COPY_SRC (redundant)
+0x09 - CMD_SET_COPY_DST (redundant)
+0x0A - CMD_SET_COPY_COUNT (redundant, not implemented)
 ```
 
 **After:**
 ```
 0x06 - CMD_COPY_BLOCK (supports 1-65535 bytes)
-0x07 - CMD_SET_COPY_SRC
-0x08 - CMD_SET_COPY_DST
-0x09 - CMD_SET_COPY_COUNT
+0x10 - CMD_PICO_REINIT
 ```
+
+**Note:** DMA parameters are configured via CFG fields, not commands.
 
 ## Usage Changes
 
@@ -146,11 +146,21 @@ For any existing 6502 code using `CMD_COPY_BYTE`:
 
 **Before:**
 ```assembly
-; Set up source and destination
+; Select CFG_COPY_SRC_IDX field
+LDA #CFG_COPY_SRC_IDX
+STA CFG_FIELD_SELECT
+
+; Set source index
 LDA #src_idx
-STA CFG_COPY_SRC
+STA CFG_DATA
+
+; Select CFG_COPY_DST_IDX field
+LDA #CFG_COPY_DST_IDX
+STA CFG_FIELD_SELECT
+
+; Set destination index
 LDA #dst_idx
-STA CFG_COPY_DST
+STA CFG_DATA
 
 ; Copy single byte
 LDA #CMD_COPY_BYTE
@@ -159,17 +169,36 @@ STA COMMAND_REG
 
 **After:**
 ```assembly
-; Set up source and destination
+; Select CFG_COPY_SRC_IDX field
+LDA #CFG_COPY_SRC_IDX
+STA CFG_FIELD_SELECT
+
+; Set source index
 LDA #src_idx
-STA CFG_COPY_SRC
+STA CFG_DATA
+
+; Select CFG_COPY_DST_IDX field
+LDA #CFG_COPY_DST_IDX
+STA CFG_FIELD_SELECT
+
+; Set destination index
 LDA #dst_idx
-STA CFG_COPY_DST
+STA CFG_DATA
+
+; Select CFG_COPY_COUNT_L field
+LDA #CFG_COPY_COUNT_L
+STA CFG_FIELD_SELECT
 
 ; Set count to 1
 LDA #1
-STA CFG_COPY_COUNT_L
+STA CFG_DATA
+
+; Select CFG_COPY_COUNT_H field
+LDA #CFG_COPY_COUNT_H
+STA CFG_FIELD_SELECT
+
 LDA #0
-STA CFG_COPY_COUNT_H
+STA CFG_DATA
 
 ; Copy using COPY_BLOCK
 LDA #CMD_COPY_BLOCK
@@ -180,24 +209,41 @@ STA COMMAND_REG
 
 ```assembly
 ; Set count to 1 (do this once)
+LDA #CFG_COPY_COUNT_L
+STA CFG_FIELD_SELECT
 LDA #1
-STA CFG_COPY_COUNT_L
+STA CFG_DATA
+
+LDA #CFG_COPY_COUNT_H
+STA CFG_FIELD_SELECT
 LDA #0
-STA CFG_COPY_COUNT_H
+STA CFG_DATA
 
 ; Copy multiple single bytes
+LDA #CFG_COPY_SRC_IDX
+STA CFG_FIELD_SELECT
 LDA #src_idx1
-STA CFG_COPY_SRC
+STA CFG_DATA
+
+LDA #CFG_COPY_DST_IDX
+STA CFG_FIELD_SELECT
 LDA #dst_idx1
-STA CFG_COPY_DST
+STA CFG_DATA
+
 LDA #CMD_COPY_BLOCK
 STA COMMAND_REG
 
 ; Count is still 1, just change indexes
+LDA #CFG_COPY_SRC_IDX
+STA CFG_FIELD_SELECT
 LDA #src_idx2
-STA CFG_COPY_SRC
+STA CFG_DATA
+
+LDA #CFG_COPY_DST_IDX
+STA CFG_FIELD_SELECT
 LDA #dst_idx2
-STA CFG_COPY_DST
+STA CFG_DATA
+
 LDA #CMD_COPY_BLOCK
 STA COMMAND_REG
 ```

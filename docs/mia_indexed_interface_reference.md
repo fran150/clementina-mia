@@ -142,9 +142,12 @@ Each window has identical register layout at offsets +0 through +15:
 | Code | Name | Action |
 |------|------|--------|
 | 0x06 | COPY_BLOCK | Copy N bytes from source index to destination index (N=1 to 65535) |
-| 0x07 | SET_COPY_SRC | Set source index for copy operations |
-| 0x08 | SET_COPY_DST | Set destination index for copy operations |
-| 0x09 | SET_COPY_COUNT | Set byte count for COPY_BLOCK operation |
+
+**Note:** DMA parameters (source, destination, count) are configured via CFG fields:
+- `CFG_COPY_SRC_IDX` (0x0B) - Source index
+- `CFG_COPY_DST_IDX` (0x0C) - Destination index  
+- `CFG_COPY_COUNT_L` (0x0D) - Count low byte
+- `CFG_COPY_COUNT_H` (0x0E) - Count high byte
 
 ### System Commands
 | Code | Name | Action |

@@ -66,9 +66,6 @@
 #define CMD_SET_DEFAULT_TO_ADDR 0x04
 #define CMD_CLEAR_IRQ           0x05
 #define CMD_COPY_BLOCK          0x06
-#define CMD_SET_COPY_SRC        0x07
-#define CMD_SET_COPY_DST        0x09
-#define CMD_SET_COPY_COUNT      0x0A
 #define CMD_PICO_REINIT         0x10
 
 // Status bits

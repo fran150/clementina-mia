@@ -509,12 +509,6 @@ void indexed_memory_execute_command(uint8_t cmd) {
         case CMD_COPY_BLOCK:
             indexed_memory_copy_block(g_state.dma_config.src_idx, g_state.dma_config.dst_idx, g_state.dma_config.count);
             break;
-        case CMD_SET_COPY_SRC:
-            g_state.dma_config.src_idx = g_state.window_a_idx;
-            break;
-        case CMD_SET_COPY_DST:
-            g_state.dma_config.dst_idx = g_state.window_a_idx;
-            break;
         case CMD_PICO_REINIT:
             indexed_memory_init();
             break;

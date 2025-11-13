@@ -90,14 +90,30 @@ indexed_memory_copy_block(src_idx, dst_idx, 1000);
     BNE .wait_dma_idle      ; Loop until idle
     
     ; Now safe to start transfer
+    ; Set source index
+    LDA #CFG_COPY_SRC_IDX
+    STA CFG_FIELD_SELECT
     LDA #src_idx
-    STA CFG_COPY_SRC
+    STA CFG_DATA
+    
+    ; Set destination index
+    LDA #CFG_COPY_DST_IDX
+    STA CFG_FIELD_SELECT
     LDA #dst_idx
-    STA CFG_COPY_DST
+    STA CFG_DATA
+    
+    ; Set count
+    LDA #CFG_COPY_COUNT_L
+    STA CFG_FIELD_SELECT
     LDA #<count
-    STA CFG_COPY_COUNT_L
+    STA CFG_DATA
+    
+    LDA #CFG_COPY_COUNT_H
+    STA CFG_FIELD_SELECT
     LDA #>count
-    STA CFG_COPY_COUNT_H
+    STA CFG_DATA
+    
+    ; Execute copy
     LDA #CMD_COPY_BLOCK
     STA COMMAND_REG
 ```
@@ -182,10 +198,15 @@ queue_transfer:
     BEQ .no_queue           ; No queued transfer
     
     ; Start queued transfer
+    LDA #CFG_COPY_SRC_IDX
+    STA CFG_FIELD_SELECT
     LDA transfer_queue+0
-    STA CFG_COPY_SRC
+    STA CFG_DATA
+    
+    LDA #CFG_COPY_DST_IDX
+    STA CFG_FIELD_SELECT
     LDA transfer_queue+1
-    STA CFG_COPY_DST
+    STA CFG_DATA
     ; ... etc ...
     
     ; Clear queue
