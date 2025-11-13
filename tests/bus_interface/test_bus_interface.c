@@ -2353,6 +2353,462 @@ bool test_bus_interface_individual_interrupt_bits(void) {
 }
 
 /**
+ * Test COMMAND register write handler - CMD_RESET_INDEX
+ */
+bool test_bus_interface_command_reset_index(void) {
+    printf("Testing COMMAND register - CMD_RESET_INDEX...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Select index 128 for Window A
+    bus_interface_write(0x00, 128);
+    
+    // Set up index with non-default address
+    // User indexes default to MIA_USER_AREA_BASE (0x00013800)
+    indexed_memory_set_index_address(128, 0x00013900);  // Different from default
+    
+    // Verify address is not at default
+    uint8_t addr_h = indexed_memory_get_config_field(128, CFG_ADDR_H);
+    uint8_t addr_m = indexed_memory_get_config_field(128, CFG_ADDR_M);
+    uint8_t addr_l = indexed_memory_get_config_field(128, CFG_ADDR_L);
+    
+    if (addr_h == 0x01 && addr_m == 0x38 && addr_l == 0x00) {
+        printf("  FAIL: Address should not be at default before reset\n");
+        return false;
+    }
+    
+    // Execute CMD_RESET_INDEX via COMMAND register (Window A at 0x04)
+    bus_interface_write(0x04, CMD_RESET_INDEX);
+    
+    // Verify address was reset to default (0x00013800)
+    addr_h = indexed_memory_get_config_field(128, CFG_ADDR_H);
+    addr_m = indexed_memory_get_config_field(128, CFG_ADDR_M);
+    addr_l = indexed_memory_get_config_field(128, CFG_ADDR_L);
+    
+    if (addr_h != 0x01 || addr_m != 0x38 || addr_l != 0x00) {
+        printf("  FAIL: Address should be reset to default 0x00013800, got 0x%02X%02X%02X\n", 
+               addr_h, addr_m, addr_l);
+        return false;
+    }
+    
+    printf("  PASS: CMD_RESET_INDEX works correctly\n");
+    return true;
+}
+
+/**
+ * Test COMMAND register write handler - CMD_RESET_ALL
+ */
+bool test_bus_interface_command_reset_all(void) {
+    printf("Testing COMMAND register - CMD_RESET_ALL...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Modify several indexes
+    indexed_memory_set_index_address(128, 0x00013900);
+    indexed_memory_set_index_address(129, 0x00013A00);
+    indexed_memory_set_index_address(130, 0x00013B00);
+    
+    // Execute CMD_RESET_ALL via COMMAND register (Window A at 0x04)
+    bus_interface_write(0x04, CMD_RESET_ALL);
+    
+    // Verify all indexes were reset to their defaults
+    // Check a few representative indexes
+    uint32_t addr_128 = (indexed_memory_get_config_field(128, CFG_ADDR_H) << 16) |
+                        (indexed_memory_get_config_field(128, CFG_ADDR_M) << 8) |
+                        indexed_memory_get_config_field(128, CFG_ADDR_L);
+    
+    uint32_t addr_129 = (indexed_memory_get_config_field(129, CFG_ADDR_H) << 16) |
+                        (indexed_memory_get_config_field(129, CFG_ADDR_M) << 8) |
+                        indexed_memory_get_config_field(129, CFG_ADDR_L);
+    
+    // User indexes should be reset to their default addresses (MIA_USER_AREA_BASE = 0x00013800)
+    if (addr_128 != 0x00013800 || addr_129 != 0x00013800) {
+        printf("  FAIL: Indexes should be reset to defaults, got 0x%06X and 0x%06X\n", 
+               addr_128, addr_129);
+        return false;
+    }
+    
+    printf("  PASS: CMD_RESET_ALL works correctly\n");
+    return true;
+}
+
+/**
+ * Test COMMAND register write handler - CMD_CLEAR_IRQ
+ */
+bool test_bus_interface_command_clear_irq(void) {
+    printf("Testing COMMAND register - CMD_CLEAR_IRQ...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Set some interrupts
+    indexed_memory_set_irq(IRQ_MEMORY_ERROR);
+    indexed_memory_set_irq(IRQ_DMA_COMPLETE);
+    indexed_memory_set_irq(IRQ_VIDEO_FRAME_COMPLETE);
+    
+    // Verify interrupts are set
+    uint16_t cause = indexed_memory_get_irq_cause();
+    if (cause == 0) {
+        printf("  FAIL: Interrupts should be set before clear\n");
+        return false;
+    }
+    
+    // Execute CMD_CLEAR_IRQ via COMMAND register (Window A at 0x04)
+    bus_interface_write(0x04, CMD_CLEAR_IRQ);
+    
+    // Verify all interrupts were cleared
+    cause = indexed_memory_get_irq_cause();
+    if (cause != 0) {
+        printf("  FAIL: All interrupts should be cleared, got 0x%04X\n", cause);
+        return false;
+    }
+    
+    printf("  PASS: CMD_CLEAR_IRQ works correctly\n");
+    return true;
+}
+
+/**
+ * Test COMMAND register write handler - CMD_PICO_REINIT
+ */
+bool test_bus_interface_command_pico_reinit(void) {
+    printf("Testing COMMAND register - CMD_PICO_REINIT...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Modify system state
+    indexed_memory_set_index_address(128, 0x00013900);
+    indexed_memory_set_irq(IRQ_MEMORY_ERROR);
+    
+    // Execute CMD_PICO_REINIT via COMMAND register (Window A at 0x04)
+    bus_interface_write(0x04, CMD_PICO_REINIT);
+    
+    // Verify system was reinitialized
+    // Check that index was reset
+    uint32_t addr = (indexed_memory_get_config_field(128, CFG_ADDR_H) << 16) |
+                    (indexed_memory_get_config_field(128, CFG_ADDR_M) << 8) |
+                    indexed_memory_get_config_field(128, CFG_ADDR_L);
+    
+    if (addr != 0x00013800) {
+        printf("  FAIL: Index should be reset after reinit, got 0x%06X\n", addr);
+        return false;
+    }
+    
+    // Check that interrupts were cleared
+    uint16_t cause = indexed_memory_get_irq_cause();
+    if (cause != 0) {
+        printf("  FAIL: Interrupts should be cleared after reinit, got 0x%04X\n", cause);
+        return false;
+    }
+    
+    printf("  PASS: CMD_PICO_REINIT works correctly\n");
+    return true;
+}
+
+/**
+ * Test COMMAND register from multiple windows
+ */
+bool test_bus_interface_command_multi_window(void) {
+    printf("Testing COMMAND register from multiple windows...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Test command execution from Window A (0x04)
+    indexed_memory_set_irq(IRQ_MEMORY_ERROR);
+    bus_interface_write(0x04, CMD_CLEAR_IRQ);
+    if (indexed_memory_get_irq_cause() != 0) {
+        printf("  FAIL: Command from Window A failed\n");
+        return false;
+    }
+    
+    // Test command execution from Window B (0x14)
+    indexed_memory_set_irq(IRQ_DMA_COMPLETE);
+    bus_interface_write(0x14, CMD_CLEAR_IRQ);
+    if (indexed_memory_get_irq_cause() != 0) {
+        printf("  FAIL: Command from Window B failed\n");
+        return false;
+    }
+    
+    // Test command execution from Window C (0x24)
+    indexed_memory_set_irq(IRQ_USB_KEYBOARD);
+    bus_interface_write(0x24, CMD_CLEAR_IRQ);
+    if (indexed_memory_get_irq_cause() != 0) {
+        printf("  FAIL: Command from Window C failed\n");
+        return false;
+    }
+    
+    // Test command execution from Window D (0x34)
+    indexed_memory_set_irq(IRQ_VIDEO_COLLISION);
+    bus_interface_write(0x34, CMD_CLEAR_IRQ);
+    if (indexed_memory_get_irq_cause() != 0) {
+        printf("  FAIL: Command from Window D failed\n");
+        return false;
+    }
+    
+    printf("  PASS: COMMAND register works from all windows\n");
+    return true;
+}
+
+/**
+ * Test COMMAND register - CMD_COPY_BLOCK with count=1 (single byte)
+ */
+bool test_bus_interface_command_copy_single_byte(void) {
+    printf("Testing COMMAND register - CMD_COPY_BLOCK (single byte)...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Set up source index (128) with test data
+    indexed_memory_set_index_address(128, 0x00013A00);
+    indexed_memory_set_index_default(128, 0x00013A00);
+    indexed_memory_write(128, 0xAB);  // Write test byte
+    indexed_memory_reset_index(128);  // Reset to start
+    
+    // Set up destination index (129)
+    indexed_memory_set_index_address(129, 0x00013B00);
+    indexed_memory_set_index_default(129, 0x00013B00);
+    indexed_memory_write(129, 0x00);  // Clear destination
+    indexed_memory_reset_index(129);  // Reset to start
+    
+    // Configure DMA via CFG_DATA register
+    // Select index 128 for Window A
+    bus_interface_write(0x00, 128);
+    
+    // Set COPY_SRC_IDX field
+    bus_interface_write(0x02, CFG_COPY_SRC_IDX);  // CFG_FIELD_SELECT
+    bus_interface_write(0x03, 128);                // CFG_DATA = source index
+    
+    // Set COPY_DST_IDX field
+    bus_interface_write(0x02, CFG_COPY_DST_IDX);  // CFG_FIELD_SELECT
+    bus_interface_write(0x03, 129);                // CFG_DATA = destination index
+    
+    // Set COPY_COUNT_L field (low byte)
+    bus_interface_write(0x02, CFG_COPY_COUNT_L);  // CFG_FIELD_SELECT
+    bus_interface_write(0x03, 1);                  // CFG_DATA = count low byte
+    
+    // Set COPY_COUNT_H field (high byte)
+    bus_interface_write(0x02, CFG_COPY_COUNT_H);  // CFG_FIELD_SELECT
+    bus_interface_write(0x03, 0);                  // CFG_DATA = count high byte
+    
+    // Execute CMD_COPY_BLOCK via COMMAND register
+    bus_interface_write(0x04, CMD_COPY_BLOCK);
+    
+    // Wait for DMA to complete (in real hardware this would be async)
+    // In test environment, DMA completes immediately
+    
+    // Verify data was copied
+    indexed_memory_reset_index(129);  // Reset destination to read
+    uint8_t copied_value = indexed_memory_read(129);
+    
+    if (copied_value != 0xAB) {
+        printf("  FAIL: Single byte copy failed, expected 0xAB, got 0x%02X\n", copied_value);
+        return false;
+    }
+    
+    printf("  PASS: CMD_COPY_BLOCK (single byte) works correctly\n");
+    return true;
+}
+
+/**
+ * Test COMMAND register - CMD_COPY_BLOCK with count>1 (multi-byte)
+ */
+bool test_bus_interface_command_copy_multi_byte(void) {
+    printf("Testing COMMAND register - CMD_COPY_BLOCK (multi-byte)...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Set up source index (128) with test data
+    indexed_memory_set_index_address(128, 0x00013A00);
+    indexed_memory_set_index_default(128, 0x00013A00);
+    
+    // Write test pattern
+    for (uint8_t i = 0; i < 10; i++) {
+        indexed_memory_write(128, 0x10 + i);
+    }
+    indexed_memory_reset_index(128);  // Reset to start
+    
+    // Set up destination index (129)
+    indexed_memory_set_index_address(129, 0x00013B00);
+    indexed_memory_set_index_default(129, 0x00013B00);
+    
+    // Clear destination
+    for (uint8_t i = 0; i < 10; i++) {
+        indexed_memory_write(129, 0x00);
+    }
+    indexed_memory_reset_index(129);  // Reset to start
+    
+    // Configure DMA via CFG_DATA register
+    // Select index 128 for Window A
+    bus_interface_write(0x00, 128);
+    
+    // Set COPY_SRC_IDX field
+    bus_interface_write(0x02, CFG_COPY_SRC_IDX);
+    bus_interface_write(0x03, 128);
+    
+    // Set COPY_DST_IDX field
+    bus_interface_write(0x02, CFG_COPY_DST_IDX);
+    bus_interface_write(0x03, 129);
+    
+    // Set COPY_COUNT_L field (copy 10 bytes)
+    bus_interface_write(0x02, CFG_COPY_COUNT_L);
+    bus_interface_write(0x03, 10);
+    
+    // Set COPY_COUNT_H field
+    bus_interface_write(0x02, CFG_COPY_COUNT_H);
+    bus_interface_write(0x03, 0);
+    
+    // Execute CMD_COPY_BLOCK via COMMAND register
+    bus_interface_write(0x04, CMD_COPY_BLOCK);
+    
+    // Verify data was copied
+    indexed_memory_reset_index(129);  // Reset destination to read
+    
+    for (uint8_t i = 0; i < 10; i++) {
+        uint8_t copied_value = indexed_memory_read(129);
+        uint8_t expected_value = 0x10 + i;
+        
+        if (copied_value != expected_value) {
+            printf("  FAIL: Multi-byte copy failed at position %d, expected 0x%02X, got 0x%02X\n", 
+                   i, expected_value, copied_value);
+            return false;
+        }
+    }
+    
+    printf("  PASS: CMD_COPY_BLOCK (multi-byte) works correctly\n");
+    return true;
+}
+
+/**
+ * Test DMA configuration via CFG_DATA registers
+ */
+bool test_bus_interface_dma_configuration(void) {
+    printf("Testing DMA configuration via CFG_DATA...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Select index 128 for Window A
+    bus_interface_write(0x00, 128);
+    
+    // Configure DMA source index
+    bus_interface_write(0x02, CFG_COPY_SRC_IDX);
+    bus_interface_write(0x03, 64);  // Source = index 64
+    
+    // Read back and verify
+    bus_interface_write(0x02, CFG_COPY_SRC_IDX);
+    uint8_t src_idx = bus_interface_read(0x03);
+    if (src_idx != 64) {
+        printf("  FAIL: COPY_SRC_IDX should be 64, got %d\n", src_idx);
+        return false;
+    }
+    
+    // Configure DMA destination index
+    bus_interface_write(0x02, CFG_COPY_DST_IDX);
+    bus_interface_write(0x03, 128);  // Destination = index 128
+    
+    // Read back and verify
+    bus_interface_write(0x02, CFG_COPY_DST_IDX);
+    uint8_t dst_idx = bus_interface_read(0x03);
+    if (dst_idx != 128) {
+        printf("  FAIL: COPY_DST_IDX should be 128, got %d\n", dst_idx);
+        return false;
+    }
+    
+    // Configure DMA count (256 bytes = 0x0100)
+    bus_interface_write(0x02, CFG_COPY_COUNT_L);
+    bus_interface_write(0x03, 0x00);  // Low byte
+    
+    bus_interface_write(0x02, CFG_COPY_COUNT_H);
+    bus_interface_write(0x03, 0x01);  // High byte
+    
+    // Read back and verify
+    bus_interface_write(0x02, CFG_COPY_COUNT_L);
+    uint8_t count_l = bus_interface_read(0x03);
+    
+    bus_interface_write(0x02, CFG_COPY_COUNT_H);
+    uint8_t count_h = bus_interface_read(0x03);
+    
+    if (count_l != 0x00 || count_h != 0x01) {
+        printf("  FAIL: COPY_COUNT should be 0x0100, got 0x%02X%02X\n", count_h, count_l);
+        return false;
+    }
+    
+    printf("  PASS: DMA configuration via CFG_DATA works correctly\n");
+    return true;
+}
+
+/**
+ * Test DMA completion interrupt generation
+ */
+bool test_bus_interface_dma_completion_interrupt(void) {
+    printf("Testing DMA completion interrupt generation...\n");
+    
+    // Initialize the bus interface and indexed memory
+    bus_interface_init();
+    indexed_memory_init();
+    
+    // Clear any pending interrupts
+    indexed_memory_clear_irq();
+    
+    // Set up source and destination indexes
+    indexed_memory_set_index_address(128, 0x00013A00);
+    indexed_memory_set_index_default(128, 0x00013A00);
+    indexed_memory_write(128, 0xCD);
+    indexed_memory_reset_index(128);
+    
+    indexed_memory_set_index_address(129, 0x00013B00);
+    indexed_memory_set_index_default(129, 0x00013B00);
+    indexed_memory_reset_index(129);
+    
+    // Configure DMA
+    bus_interface_write(0x00, 128);
+    bus_interface_write(0x02, CFG_COPY_SRC_IDX);
+    bus_interface_write(0x03, 128);
+    bus_interface_write(0x02, CFG_COPY_DST_IDX);
+    bus_interface_write(0x03, 129);
+    bus_interface_write(0x02, CFG_COPY_COUNT_L);
+    bus_interface_write(0x03, 1);
+    bus_interface_write(0x02, CFG_COPY_COUNT_H);
+    bus_interface_write(0x03, 0);
+    
+    // Execute DMA operation
+    bus_interface_write(0x04, CMD_COPY_BLOCK);
+    
+    // Check for DMA completion interrupt
+    uint16_t irq_cause = indexed_memory_get_irq_cause();
+    
+    if ((irq_cause & IRQ_DMA_COMPLETE) == 0) {
+        printf("  FAIL: DMA completion interrupt should be set, got 0x%04X\n", irq_cause);
+        return false;
+    }
+    
+    // Clear the interrupt
+    bus_interface_write(REG_IRQ_CAUSE_LOW, IRQ_DMA_COMPLETE & 0xFF);
+    
+    // Verify it was cleared
+    irq_cause = indexed_memory_get_irq_cause();
+    if ((irq_cause & IRQ_DMA_COMPLETE) != 0) {
+        printf("  FAIL: DMA completion interrupt should be cleared\n");
+        return false;
+    }
+    
+    printf("  PASS: DMA completion interrupt generation works correctly\n");
+    return true;
+}
+
+/**
  * Run all bus interface tests
  */
 bool run_bus_interface_tests(void) {
@@ -2403,6 +2859,19 @@ bool run_bus_interface_tests(void) {
     all_passed &= test_bus_interface_irq_enable_read_write();
     all_passed &= test_bus_interface_irq_line_behavior();
     all_passed &= test_bus_interface_individual_interrupt_bits();
+    
+    // Command register tests
+    all_passed &= test_bus_interface_command_reset_index();
+    all_passed &= test_bus_interface_command_reset_all();
+    all_passed &= test_bus_interface_command_clear_irq();
+    all_passed &= test_bus_interface_command_pico_reinit();
+    all_passed &= test_bus_interface_command_multi_window();
+    
+    // DMA command tests
+    all_passed &= test_bus_interface_command_copy_single_byte();
+    all_passed &= test_bus_interface_command_copy_multi_byte();
+    all_passed &= test_bus_interface_dma_configuration();
+    all_passed &= test_bus_interface_dma_completion_interrupt();
     
     if (all_passed) {
         printf("\n=== All Bus Interface Tests PASSED ===\n\n");

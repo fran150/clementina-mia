@@ -162,19 +162,19 @@
     - Verify IRQ line behavior (assert/deassert based on mask and enable)
     - _Requirements: 7.7, 8.2, 8.3, 8.4, 8.8, 8.11, 8.12_
 
-- [ ] 10. Implement register handlers - Commands
-  - [ ] 10.1 Implement COMMAND write handler
+- [x] 10. Implement register handlers - Commands
+  - [x] 10.1 Implement COMMAND write handler
     - Create write_command(window_b, command) function
     - Route command to indexed_memory_execute_command()
     - Handle command execution and status updates
     - _Requirements: 7.1, 7.2_
-  - [ ] 10.2 Test basic commands
+  - [x] 10.2 Test basic commands
     - Test CMD_RESET_INDEX (reset active index to default address)
     - Test CMD_RESET_ALL (reset all indexes)
     - Test CMD_CLEAR_IRQ (clear all pending interrupts)
     - Test CMD_PICO_REINIT (reinitialize system)
     - _Requirements: 7.2, 7.3, 7.6_
-  - [ ] 10.3 Test DMA commands
+  - [x] 10.3 Test DMA commands
     - Test CMD_COPY_BLOCK with count=1 (single byte copy)
     - Test CMD_COPY_BLOCK with count>1 (multi-byte block copy)
     - Verify DMA configuration via CFG_DATA (source, destination, count)

@@ -274,6 +274,31 @@ static void write_irq_enable(uint8_t enable) {
     indexed_memory_set_irq_enable(enable);
 }
 
+/**
+ * Write COMMAND register
+ * Executes a command on the indexed memory system
+ * 
+ * @param window_num Window number (0-7 for Windows A-H)
+ * @param command Command code to execute
+ */
+static void write_command(uint8_t window_num, uint8_t command) {
+    // Handle window-specific commands
+    if (command == CMD_RESET_INDEX) {
+        // Reset the active index for the window that issued the command
+        uint8_t idx = g_window_state[window_num].active_index;
+        indexed_memory_reset_index(idx);
+        return;
+    }
+    
+    // Route other commands to indexed memory system for execution
+    // The indexed memory system handles all command logic including:
+    // - CMD_RESET_ALL: Reset all indexes
+    // - CMD_CLEAR_IRQ: Clear all pending interrupts
+    // - CMD_COPY_BLOCK: Execute DMA block copy
+    // - CMD_PICO_REINIT: Reinitialize system
+    indexed_memory_execute_command(command);
+}
+
 // ============================================================================
 // Module Initialization
 // ============================================================================
@@ -420,7 +445,7 @@ void bus_interface_write(uint8_t local_addr, uint8_t data) {
             break;
             
         case REG_OFFSET_COMMAND:
-            // TODO: Implement COMMAND write handler
+            write_command(window_num, data);
             break;
             
         default:
