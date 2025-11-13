@@ -173,7 +173,7 @@ From 6502's perspective (16-bit addresses, with mirroring):
 - $C0F3 (MIA $F3): IRQ_MASK_LOW - Interrupt mask low byte (enable/disable interrupts 0-7)
 - $C0F4 (MIA $F4): IRQ_MASK_HIGH - Interrupt mask high byte (enable/disable interrupts 8-15)
 - $C0F5 (MIA $F5): IRQ_ENABLE - Global interrupt enable/disable
-- $C0F6-$C0FF (MIA $F6-$FF): Reserved shared registers (8 registers)
+- $C0F6-$C0FF (MIA $F6-$FF): Reserved shared registers (10 registers)
 - $C080-$C0EF (MIA $80-$EF): Reserved shared space (112 bytes for future expansion)
 
 **Index Memory Organization:**

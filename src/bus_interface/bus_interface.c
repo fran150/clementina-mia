@@ -201,14 +201,6 @@ uint8_t bus_interface_read(uint8_t local_addr) {
                 // TODO: Implement IRQ_ENABLE read handler
                 return 0x01;  // Default: interrupts enabled
                 
-            case REG_DEVICE_ID_LOW:
-                // TODO: Implement DEVICE_ID_LOW read handler
-                return 0x4D;  // 'M' for MIA
-                
-            case REG_DEVICE_ID_HIGH:
-                // TODO: Implement DEVICE_ID_HIGH read handler
-                return 0x49;  // 'I' for MIA
-                
             default:
                 // Reserved shared register
                 return 0x00;
@@ -277,11 +269,6 @@ void bus_interface_write(uint8_t local_addr, uint8_t data) {
             case REG_IRQ_ENABLE:
                 // TODO: Implement IRQ_ENABLE write handler
                 (void)data;
-                break;
-                
-            case REG_DEVICE_ID_LOW:
-            case REG_DEVICE_ID_HIGH:
-                // Device ID is read-only
                 break;
                 
             default:

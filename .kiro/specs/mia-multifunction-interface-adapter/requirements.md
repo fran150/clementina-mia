@@ -183,7 +183,6 @@ The MIA (Multifunction Interface Adapter) is a Raspberry Pi Pico 2 W-based syste
 12. THE MIA SHALL organize interrupt sources with system and I/O interrupts in the low byte (bits 0-7) and video interrupts in the high byte (bits 8-15)
 13. THE MIA SHALL deassert the IRQ line when no enabled interrupts remain pending after acknowledgment
 14. THE MIA SHALL maintain error information in Memory_Index 0 accessible through the standard indexed interface
-15. THE MIA SHALL provide device identification in shared space with low byte at $C0F6 and high byte at $C0F7
 
 ### Requirement 9
 

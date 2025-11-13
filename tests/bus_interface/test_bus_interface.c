@@ -349,10 +349,7 @@ bool test_bus_interface_shared_registers(void) {
         return false;
     }
     
-    if ((REG_DEVICE_ID_HIGH & 0x80) == 0) {
-        printf("  FAIL: DEVICE_ID_HIGH (0xF7) should be in shared space\n");
-        return false;
-    }
+    // DEVICE_ID registers removed - no longer testing
     
     // Test that window registers are not in shared space
     if ((0x00 & 0x80) != 0) {

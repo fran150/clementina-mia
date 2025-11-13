@@ -27,9 +27,7 @@
  * - 0xF3: IRQ_MASK_LOW - Interrupt mask low byte
  * - 0xF4: IRQ_MASK_HIGH - Interrupt mask high byte
  * - 0xF5: IRQ_ENABLE - Global interrupt enable
- * - 0xF6: DEVICE_ID_LOW - Device identification low byte
- * - 0xF7: DEVICE_ID_HIGH - Device identification high byte
- * - 0xF8-0xFF: Reserved shared registers
+ * - 0xF6-0xFF: Reserved shared registers
  */
 
 #ifndef BUS_INTERFACE_H
@@ -60,8 +58,7 @@
 #define REG_IRQ_MASK_LOW        0xF3    // Shared: Interrupt mask low byte
 #define REG_IRQ_MASK_HIGH       0xF4    // Shared: Interrupt mask high byte
 #define REG_IRQ_ENABLE          0xF5    // Shared: Global interrupt enable
-#define REG_DEVICE_ID_LOW       0xF6    // Shared: Device ID low byte
-#define REG_DEVICE_ID_HIGH      0xF7    // Shared: Device ID high byte
+// 0xF6-0xFF: Reserved shared registers
 
 // Register offsets within 16-byte window (0-15 for each window)
 #define REG_OFFSET_IDX_SELECT       0x00

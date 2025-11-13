@@ -44,9 +44,7 @@ Each window has identical register layout at offsets +0 through +15:
 | $C0F3 | $F3 | R/W | IRQ_MASK_LOW - Interrupt mask (bits 0-7) |
 | $C0F4 | $F4 | R/W | IRQ_MASK_HIGH - Interrupt mask (bits 8-15) |
 | $C0F5 | $F5 | R/W | IRQ_ENABLE - Global interrupt enable |
-| $C0F6 | $F6 | R | DEVICE_ID_LOW - Device ID low byte ('M' = 0x4D) |
-| $C0F7 | $F7 | R | DEVICE_ID_HIGH - Device ID high byte ('I' = 0x49) |
-| $C0F8-$C0FF | $F8-$FF | - | Reserved shared registers |
+| $C0F6-$C0FF | $F6-$FF | - | Reserved shared registers |
 
 **Control Signals:**
 - **IO0_CS:** GPIO 21 (active low) - Chip select for indexed memory interface
@@ -259,15 +257,6 @@ BNE error_handler
 | 1-7 | RESERVED | Reserved for future use |
 
 **Default Value:** 0x01 (interrupts enabled)
-
-## DEVICE_ID Registers ($C0F6-$C0F7)
-
-| Register | Value | Description |
-|----------|-------|-------------|
-| $C0F6 | 0x4D | ASCII 'M' - MIA identifier (low byte) |
-| $C0F7 | 0x49 | ASCII 'I' - MIA identifier (high byte) |
-
-**Usage:** Read-only registers for device identification. Software can verify it's communicating with MIA by reading these registers.
 
 ## Interrupt Acknowledgment
 

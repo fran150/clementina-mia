@@ -153,19 +153,14 @@
     - Create read_irq_enable() function for shared register at $C0F5
     - Create write_irq_enable(enable) function for global interrupt control
     - _Requirements: 8.4, 8.11_
-  - [ ] 9.6 Implement DEVICE_ID handlers
-    - Create read_device_id_low() function for shared register at $C0F6 (returns 'M' = 0x4D)
-    - Create read_device_id_high() function for shared register at $C0F7 (returns 'I' = 0x49)
-    - _Requirements: 8.15_
-  - [ ] 9.7 Test shared register handling
+  - [ ] 9.6 Test shared register handling
     - Test device status register reading
     - Test interrupt cause reading (both bytes)
     - Test interrupt mask reading and writing (both bytes)
     - Test global interrupt enable/disable
-    - Test device identification reading
     - Test write-1-to-clear functionality for individual interrupt bits
     - Verify IRQ line behavior (assert/deassert based on mask and enable)
-    - _Requirements: 7.7, 8.2, 8.3, 8.4, 8.8, 8.11, 8.12, 8.15_
+    - _Requirements: 7.7, 8.2, 8.3, 8.4, 8.8, 8.11, 8.12_
 
 - [ ] 10. Implement register handlers - Commands
   - [ ] 10.1 Implement COMMAND write handler
@@ -238,7 +233,7 @@
     - Test all shared registers ($C0F0-$C0FF)
     - Verify proper address decoding across full $C000-$C0FF range
     - Test edge cases and boundary conditions between windows and shared space
-    - _Requirements: 5.1, 5.2, 5.3, 5.7, 8.15_
+    - _Requirements: 5.1, 5.2, 5.3, 5.7_
   - [ ] 12.3 Performance and timing validation
     - Measure response times for window register operations
     - Measure response times for shared register operations
