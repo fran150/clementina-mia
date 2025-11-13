@@ -65,9 +65,8 @@
 #define CMD_LOAD_DEFAULT        0x03
 #define CMD_SET_DEFAULT_TO_ADDR 0x04
 #define CMD_CLEAR_IRQ           0x05
-#define CMD_COPY_BYTE           0x06
-#define CMD_COPY_BLOCK          0x07
-#define CMD_SET_COPY_SRC        0x08
+#define CMD_COPY_BLOCK          0x06
+#define CMD_SET_COPY_SRC        0x07
 #define CMD_SET_COPY_DST        0x09
 #define CMD_SET_COPY_COUNT      0x0A
 #define CMD_PICO_REINIT         0x10
@@ -173,7 +172,6 @@ void indexed_memory_execute_command(uint8_t cmd);
 // DMA operations
 // Note: Copy operations use indexes as address pointers only
 // Indexes are NOT modified by copy operations (auto-step is ignored)
-void indexed_memory_copy_byte(uint8_t src_idx, uint8_t dst_idx);
 void indexed_memory_copy_block(uint8_t src_idx, uint8_t dst_idx, uint16_t count);
 bool indexed_memory_is_dma_busy(void);
 

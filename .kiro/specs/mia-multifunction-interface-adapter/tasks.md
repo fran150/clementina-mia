@@ -175,8 +175,8 @@
     - Test CMD_PICO_REINIT (reinitialize system)
     - _Requirements: 7.2, 7.3, 7.6_
   - [ ] 10.3 Test DMA commands
-    - Test CMD_COPY_BYTE (single byte copy between indexes)
-    - Test CMD_COPY_BLOCK (multi-byte block copy)
+    - Test CMD_COPY_BLOCK with count=1 (single byte copy)
+    - Test CMD_COPY_BLOCK with count>1 (multi-byte block copy)
     - Verify DMA configuration via CFG_DATA (source, destination, count)
     - Test DMA completion interrupt generation
     - _Requirements: 7.4, 7.5, 7.8_

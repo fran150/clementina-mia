@@ -82,7 +82,7 @@ Mock implementation allows full unit testing:
 
 ### Index Behavior During Copy Operations
 
-**Important:** Copy operations (both `indexed_memory_copy_byte` and `indexed_memory_copy_block`) do NOT modify the source or destination indexes.
+**Important:** Copy operations (`indexed_memory_copy_block`) do NOT modify the source or destination indexes.
 
 **Rationale:**
 - Indexes serve as **address pointers** for the copy operation
@@ -161,13 +161,6 @@ Set function to call when transfer completes.
 **Callback context:** Interrupt handler (keep it fast!)
 
 ## Performance Characteristics
-
-### Single Byte Copy
-
-Uses direct memory access (not DMA):
-- DMA setup overhead > actual copy time
-- ~10-20 CPU cycles
-- Synchronous operation
 
 ### Block Copy (DMA)
 

@@ -157,9 +157,8 @@ The MIA (Multifunction Interface Adapter) is a Raspberry Pi Pico 2 W-based syste
 1. THE MIA SHALL provide a COMMAND register at offset +4 in each window ($C004, $C014, $C024, $C034) for issuing control commands
 2. THE MIA SHALL support RESET_INDEX command to copy default address to current address for the active index
 3. THE MIA SHALL support RESET_ALL command to reset all 256 indexes to their default addresses
-4. THE MIA SHALL support COPY_BYTE command to copy one byte between any two specified indexes
-5. THE MIA SHALL support COPY_BLOCK command to copy up to 65535 bytes between any two specified indexes
-6. THE MIA SHALL support PICO_REINIT command to reinitialize MIA internal state without asserting the 6502 Reset_Line
+4. THE MIA SHALL support COPY_BLOCK command to copy 1 to 65535 bytes between any two specified indexes
+5. THE MIA SHALL support PICO_REINIT command to reinitialize MIA internal state without asserting the 6502 Reset_Line
 7. THE MIA SHALL provide DEVICE_STATUS register at $C0F0 in shared space indicating command completion, errors, and system state
 8. THE MIA SHALL complete all commands deterministically with immediate effect or set DEVICE_STATUS.BUSY until completion
 

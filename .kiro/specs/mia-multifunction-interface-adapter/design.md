@@ -333,7 +333,7 @@ typedef struct {
 
 **Command System:**
 - **Basic Commands:** RESET_INDEX, RESET_ALL, CLEAR_IRQ
-- **DMA Commands:** COPY_BYTE, COPY_BLOCK with hardware acceleration
+- **DMA Commands:** COPY_BLOCK with hardware DMA acceleration (supports 1-65535 bytes)
 - **System Commands:** PICO_REINIT, subsystem-specific operations
 - **User Commands:** Reserved range for application-specific functions
 

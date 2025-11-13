@@ -2,7 +2,7 @@
 
 ## Summary
 
-Copy operations (`indexed_memory_copy_byte` and `indexed_memory_copy_block`) use indexes as **address pointers only** and do NOT modify them.
+Copy operations (`indexed_memory_copy_block`) use indexes as **address pointers only** and do NOT modify them.
 
 ## Behavior
 
@@ -155,8 +155,7 @@ assert(indexed_memory_get_index_address(dst_idx) == dst_before);
 |-----------|------------------|-------------------|----------|
 | `indexed_memory_read()` | ✅ Yes | ✅ Yes | Sequential reading |
 | `indexed_memory_write()` | ✅ Yes | ✅ Yes | Sequential writing |
-| `indexed_memory_copy_byte()` | ❌ No | ❌ No | Single byte bulk copy |
-| `indexed_memory_copy_block()` | ❌ No | ❌ No | Multi-byte bulk copy |
+| `indexed_memory_copy_block()` | ❌ No | ❌ No | Bulk copy (1+ bytes) |
 
 ## Future Considerations
 

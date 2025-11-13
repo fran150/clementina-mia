@@ -141,11 +141,10 @@ Each window has identical register layout at offsets +0 through +15:
 ### DMA/Copy Commands
 | Code | Name | Action |
 |------|------|--------|
-| 0x06 | COPY_BYTE | Copy one byte from source index to destination index |
-| 0x07 | COPY_BLOCK | Copy N bytes from source index to destination index |
-| 0x08 | SET_COPY_SRC | Set source index for copy operations |
-| 0x09 | SET_COPY_DST | Set destination index for copy operations |
-| 0x0A | SET_COPY_COUNT | Set byte count for COPY_BLOCK operation |
+| 0x06 | COPY_BLOCK | Copy N bytes from source index to destination index (N=1 to 65535) |
+| 0x07 | SET_COPY_SRC | Set source index for copy operations |
+| 0x08 | SET_COPY_DST | Set destination index for copy operations |
+| 0x09 | SET_COPY_COUNT | Set byte count for COPY_BLOCK operation |
 
 ### System Commands
 | Code | Name | Action |

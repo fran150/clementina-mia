@@ -506,9 +506,6 @@ void indexed_memory_execute_command(uint8_t cmd) {
         case CMD_CLEAR_IRQ:
             indexed_memory_clear_irq();
             break;
-        case CMD_COPY_BYTE:
-            indexed_memory_copy_byte(g_state.dma_config.src_idx, g_state.dma_config.dst_idx);
-            break;
         case CMD_COPY_BLOCK:
             indexed_memory_copy_block(g_state.dma_config.src_idx, g_state.dma_config.dst_idx, g_state.dma_config.count);
             break;
@@ -525,26 +522,6 @@ void indexed_memory_execute_command(uint8_t cmd) {
             // Unknown command - could trigger system command handlers
             break;
     }
-}
-
-/**
- * Copy single byte between indexes
- * For single byte, use direct memory access (faster than DMA setup overhead)
- * Note: Indexes are used only as address pointers and are NOT modified
- */
-void indexed_memory_copy_byte(uint8_t src_idx, uint8_t dst_idx) {
-    uint32_t src_addr = g_state.indexes[src_idx].current_addr;
-    uint32_t dst_addr = g_state.indexes[dst_idx].current_addr;
-    
-    // Validate addresses
-    if (validate_address_with_error(src_addr, STATUS_MEMORY_ERROR, IRQ_MEMORY_ERROR) ||
-        validate_address_with_error(dst_addr, STATUS_MEMORY_ERROR, IRQ_MEMORY_ERROR)) {
-        return;
-    }
-    
-    // Direct memory copy (faster than DMA for single byte)
-    // Indexes remain unchanged - they still point to the same addresses
-    mia_memory[dst_addr] = mia_memory[src_addr];
 }
 
 /**
