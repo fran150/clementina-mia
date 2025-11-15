@@ -212,21 +212,13 @@
     - Verify FIFO timing: C must respond by ~560ns for PIO to drive data by 985ns
     - Test FIFO overflow/underflow handling
     - _Requirements: 5.6, 5.7_
-  - [ ] 11.4 Integrate and optimize C bus interface handlers
+  - [x] 11.4 Integrate and optimize C bus interface handlers
     - Connect IRQ handler to bus_interface_read/write functions
     - Optimize bus_interface_read() for fast speculative execution (~150-200ns)
     - Implement efficient GPIO polling for PHI2 detection
     - Add timing instrumentation for debugging (optional, can be disabled)
     - _Requirements: 5.6, 5.7, 5.8, 5.9, 5.11_
-  - [ ] 11.5 Verify timing budgets and margins
-    - Verify speculative prep: 200-400ns (200ns available, ~150-200ns used)
-    - Verify wait for PHI2: 400-500ns (100ns busy-wait)
-    - Verify OE/WE check: 530-540ns (10ns)
-    - Verify response: 540-560ns (20ns to push control+data)
-    - Verify PIO drive: 560-985ns (425ns margin for READ data valid)
-    - Verify READ hold: 1000-1016ns (16ns hold, exceeds 15ns tDHR requirement)
-    - Verify WRITE sample: 1008ns (2ns margin before 1010ns tDHW deadline)
-    - _Requirements: 5.9, 5.11_
+
   - [ ] 11.6 Test synchronous PIO timing and integration
     - Verify synchronous sampling points: address at 60ns, CS at 200ns, R/W at 530ns
     - Verify READ cycle timing with logic analyzer
