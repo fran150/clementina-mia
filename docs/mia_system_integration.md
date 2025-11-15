@@ -150,21 +150,24 @@ BOOT_START:
 - Ensures reliable boot across all hardware
 - Allows C-based ROM emulation to meet timing
 - Provides stable environment for kernel loading
+- MIA synchronous sampling has ample time at slower clock
 
 **Timing at 100 kHz:**
 - Cycle time: 10,000ns (10µs)
 - Plenty of time for MIA to respond
 - Very forgiving for initial setup
+- Same synchronous sampling points (60ns, 200ns, 530ns) with much larger margins
 
 ### Normal Clock: 1 MHz
 
 **Why 1 MHz?**
 - Good balance of speed and reliability
-- MIA can meet all timing requirements
+- MIA can meet all timing requirements with synchronous operation
 - Standard 6502 operating frequency
 
 **Timing at 1 MHz:**
 - Cycle time: 1,000ns (1µs)
+- MIA synchronous sampling: address at 60ns, CS at 200ns, R/W at 530ns
 - MIA response time: <785ns (comfortable margin)
 - See `bus_timing.md` for detailed specifications
 
@@ -383,15 +386,26 @@ If `kernel.bin` is not present:
 
 From `bus_timing.md`:
 
+**MIA Synchronous Operation:**
+- MIA generates PHI2 clock and uses it for precise timing
+- Samples address at 60ns (after 40ns settling + 50% margin)
+- Samples CS at 200ns (after address mapping logic)
+- Samples R/W and OE at 530ns (30ns after PHI2 rises)
+- Avoids reacting to transient signals during settling periods
+
 **Read Cycle:**
 - Address valid: 40ns after PHI2 falls
-- CS valid: 200ns after PHI2 falls
+- MIA samples address: 60ns
+- MIA samples CS: 200ns
+- MIA samples R/W: 530ns after PHI2 rises
 - Data must be valid: 985ns (15ns before PHI2 falls)
 - MIA has 785ns to respond (comfortable margin)
 
 **Write Cycle:**
 - Address valid: 40ns after PHI2 falls
-- CS valid: 200ns after PHI2 falls
+- MIA samples address: 60ns
+- MIA samples CS: 200ns
+- MIA samples R/W: 530ns after PHI2 rises
 - Data valid: 540ns after PHI2 rises
 - Data hold: 10ns after PHI2 falls
 

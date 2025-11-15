@@ -181,25 +181,31 @@
     - Test DMA completion interrupt generation
     - _Requirements: 7.4, 7.5, 7.8_
 
-- [ ] 11. Implement PIO integration for bus timing
-  - [ ] 11.1 Design PIO state machine for bus protocol
-    - Create PIO program to monitor CS signals (HIRAM_CS on GPIO 20, IO0_CS on GPIO 21)
-    - Implement address capture from GPIO 0-7 when CS is active
-    - Add R/W signal detection (GPIO 18) to distinguish READ vs WRITE
-    - Implement OE signal monitoring (GPIO 19) for bus direction control
-    - _Requirements: 5.6, 5.7, 5.8_
-  - [ ] 11.2 Implement READ cycle timing in PIO
-    - Wait for R/W HIGH to confirm READ operation
-    - Configure data bus (GPIO 8-15) as output when OE goes LOW
+- [ ] 11. Implement PIO integration for synchronous bus timing
+  - [x] 11.1 Design PIO state machine for synchronous bus protocol
+    - Create PIO program to detect PHI2 clock edges (falling at 0ns, rising at 500ns)
+    - Implement synchronous address sampling at 60ns after PHI2 falls (40ns + 50% margin)
+    - Implement synchronous CS sampling at 200ns after PHI2 falls (after address mapping)
+    - Implement synchronous R/W and OE sampling at 530ns (30ns after PHI2 rises)
+    - Add logic to return to wait state if CS is not active
+    - _Requirements: 5.6, 5.7, 5.8, 5.9_
+  - [ ] 11.2 Implement synchronous READ cycle timing in PIO
+    - Wait for PHI2 low (0ns) to start cycle
+    - Sample address at 60ns, CS at 200ns
+    - Wait for PHI2 high (500ns), then sample R/W at 530ns to confirm READ
+    - Configure data bus (GPIO 8-15) as output when R/W confirms READ
     - Drive data onto bus with proper timing (valid by 985ns)
     - Hold data for 15ns after PHI2 falls (1000-1015ns) even after OE goes HIGH
-    - Tri-state bus after hold period
+    - Tri-state bus after hold period and return to wait for PHI2 low
     - _Requirements: 5.7, 5.8, 5.9_
-  - [ ] 11.3 Implement WRITE cycle timing in PIO
-    - Wait for R/W LOW to confirm WRITE operation
+  - [ ] 11.3 Implement synchronous WRITE cycle timing in PIO
+    - Wait for PHI2 low (0ns) to start cycle
+    - Sample address at 60ns, CS at 200ns
+    - Wait for PHI2 high (500ns), then sample R/W at 530ns to confirm WRITE
     - Keep data bus (GPIO 8-15) as input during WRITE
     - Latch data on PHI2 falling edge (1000ns)
     - Pass captured data to C code for processing
+    - Return to wait for PHI2 low
     - _Requirements: 5.9_
   - [ ] 11.4 Implement PIO-C communication
     - Set up FIFO communication between PIO and C code
@@ -211,14 +217,15 @@
     - Connect PIO interrupt handler to bus_interface_read/write functions
     - Implement speculative preparation during 200-530ns window
     - Add fast path for simple operations (IDX_SELECT, STATUS)
-    - Verify timing budgets: 785ns for READ, 470ns for WRITE
+    - Verify timing budgets: 785ns for READ (200-985ns), 470ns for WRITE (540-1010ns)
     - _Requirements: 5.6, 5.7, 5.8, 5.9, 5.11_
-  - [ ] 11.6 Test PIO timing and integration
+  - [ ] 11.6 Test synchronous PIO timing and integration
+    - Verify synchronous sampling points: address at 60ns, CS at 200ns, R/W at 530ns
     - Verify READ cycle timing with logic analyzer
     - Verify WRITE cycle timing with logic analyzer
     - Test back-to-back operations
     - Verify bus contention avoidance (OE signal compliance)
-    - Test window priority (Window A takes precedence)
+    - Verify MIA avoids reacting to transient signals during settling periods
     - _Requirements: 5.6, 5.7, 5.8, 5.9, 5.11_
 
 - [ ] 12. Complete indexed interface end-to-end testing

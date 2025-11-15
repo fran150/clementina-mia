@@ -124,12 +124,13 @@ The MIA (Multifunction Interface Adapter) is a Raspberry Pi Pico 2 W-based syste
 7. THE MIA SHALL reserve addresses $C040-$C07F (and mirrored) for future window expansion (Windows E-H)
 8. THE MIA SHALL provide Shared_Registers at addresses $C080-$C0FF (and mirrored) with 128 bytes total, active registers at $C0F0-$C0FF (16 registers, 8 active, 8 reserved)
 9. THE MIA SHALL maintain exactly 256 shared Memory_Index entries (0-255) accessible from all windows, each containing current address, default address, step size, and behavior flags
-9. THE MIA SHALL respond to Clementina READ operations by providing valid data within 785 nanoseconds from chip select assertion at 1 MHz operation
-10. THE MIA SHALL respond to Clementina READ operations by providing valid data within 455 nanoseconds from R/W signal confirmation at 1 MHz operation
-11. THE MIA SHALL hold READ data stable for 15 nanoseconds after PHI2 falling edge to meet W65C02S6TPG-14 data hold time requirements
-12. THE MIA SHALL latch WRITE data on PHI2 falling edge within the 470 nanosecond data valid window at 1 MHz operation
-13. THE MIA SHALL maintain data integrity during concurrent operations through atomic memory operations
-14. THE MIA SHALL NOT drive the data bus when OE signal is HIGH except during the 15 nanosecond data hold period after PHI2 falling edge for READ operations
+9. THE MIA SHALL operate synchronously with the clock signal it generates, sampling address at 60 nanoseconds, CS at 200 nanoseconds, and R/W at 530 nanoseconds after PHI2 falling edge to avoid reacting to transient signals during settling periods
+10. THE MIA SHALL respond to Clementina READ operations by providing valid data within 785 nanoseconds from CS sampling (200ns) to data deadline (985ns) at 1 MHz operation
+11. THE MIA SHALL respond to Clementina READ operations by providing valid data within 455 nanoseconds from R/W signal sampling (530ns) to data deadline (985ns) at 1 MHz operation
+12. THE MIA SHALL hold READ data stable for 15 nanoseconds after PHI2 falling edge to meet W65C02S6TPG-14 data hold time requirements
+13. THE MIA SHALL latch WRITE data on PHI2 falling edge within the 470 nanosecond data valid window at 1 MHz operation
+14. THE MIA SHALL maintain data integrity during concurrent operations through atomic memory operations
+15. THE MIA SHALL NOT drive the data bus when OE signal is HIGH except during the 15 nanosecond data hold period after PHI2 falling edge for READ operations
 
 ### Requirement 6
 

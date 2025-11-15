@@ -196,14 +196,22 @@ The MIA must comply with the specific timing requirements of the W65C02S6TPG-14 
 - **CS Decode Delay:** ~200ns (40ns tADS + 80ns decode + 80ns margin)
 - **R/W Decode Delay:** ~30ns propagation through external logic
 
+**MIA Synchronous Operation Strategy:**
+The MIA operates synchronously with the clock signal it generates, sampling signals at precise times to avoid reacting to transient signals during settling periods:
+- **0ns:** MIA detects PHI2 falling edge (clock low)
+- **60ns:** MIA samples address bus (40ns tADS + 50% safety margin)
+- **200ns:** MIA samples CS signal (after address mapping logic settles)
+- **500ns:** MIA detects PHI2 rising edge (clock high)
+- **530ns:** MIA samples R/W and OE signals (30ns after PHI2 high)
+
 **MIA Response Requirements at 1 MHz:**
 - **READ Operations:**
-  - 785ns available from CS valid (200ns) to data deadline (985ns)
-  - 455ns available from R/W confirmation (530ns) to data deadline (985ns)
+  - 785ns available from CS sampling (200ns) to data deadline (985ns)
+  - 455ns available from R/W sampling (530ns) to data deadline (985ns)
   - Data must remain stable until 1015ns (15ns after PHI2 falls for tDHR)
   - MIA can speculatively prepare data during 200-530ns window before R/W confirms
 - **WRITE Operations:**
-  - 340ns available from CS valid (200ns) to data arrival (540ns)
+  - 340ns available from CS sampling (200ns) to data arrival (540ns)
   - 470ns data sampling window from data valid (540ns) to hold end (1010ns)
   - MIA should latch data on PHI2 falling edge (1000ns) for most reliable capture
 - **Bus Contention Avoidance:**
@@ -245,30 +253,32 @@ The MIA must comply with the specific timing requirements of the W65C02S6TPG-14 
 **W65C02S Bus Protocol Compliance (1 MHz Primary Target):**
 ```
 Read Cycle Timing (1000ns cycle, 785ns preparation budget):
-1. PHI2 falls (0ns) → Cycle start, address bus begins changing
+1. PHI2 falls (0ns) → MIA detects clock low, cycle start, address bus begins changing
 2. Address valid (40ns) → Address stable on A0-A15 (tADS)
-3. CS valid (200ns) → PIO detects CS assertion, begins speculative preparation
-4. Speculative window (200-530ns) → Decode address, fetch data, stage in buffer (330ns)
-5. PHI2 rises (500ns) → R/W signal becoming valid
-6. R/W valid (530ns) → Confirms READ operation, OE goes LOW
-7. Data drive (530-985ns) → Enable outputs and drive prepared data (455ns window)
-8. Data deadline (985ns) → Data must be valid (15ns before PHI2 falls)
-9. PHI2 falls (1000ns) → CPU samples data, OE goes HIGH
-10. Data hold (1000-1015ns) → Continue driving for tDHR (15ns after PHI2 falls)
-11. Tri-state (1015ns) → Release data bus
+3. MIA samples address (60ns) → MIA reads address bus (40ns + 50% margin)
+4. MIA samples CS (200ns) → MIA reads CS signal after address mapping logic settles
+5. Speculative window (200-530ns) → Decode address, fetch data, stage in buffer (330ns)
+6. PHI2 rises (500ns) → MIA detects clock high, R/W signal becoming valid
+7. MIA samples R/W (530ns) → MIA reads R/W and OE (30ns after PHI2 high), confirms READ
+8. Data drive (530-985ns) → Enable outputs and drive prepared data (455ns window)
+9. Data deadline (985ns) → Data must be valid (15ns before PHI2 falls)
+10. PHI2 falls (1000ns) → CPU samples data, OE goes HIGH
+11. Data hold (1000-1015ns) → Continue driving for tDHR (15ns after PHI2 falls)
+12. Tri-state (1015ns) → Release data bus, return to wait for clock low
 
 Write Cycle Timing (1000ns cycle, 470ns sampling budget):
-1. PHI2 falls (0ns) → Cycle start, address bus begins changing
+1. PHI2 falls (0ns) → MIA detects clock low, cycle start, address bus begins changing
 2. Address valid (40ns) → Address stable on A0-A15 (tADS)
-3. CS valid (200ns) → PIO detects CS assertion, prepares for write
-4. Preparation window (200-530ns) → Decode address, configure for write (330ns)
-5. PHI2 rises (500ns) → R/W signal becoming valid, CPU begins driving data
-6. R/W valid (530ns) → Confirms WRITE operation, OE stays HIGH
-7. Data valid (540ns) → CPU data stable on bus (tMDS = 40ns after PHI2 rises)
-8. Sampling window (540-1010ns) → MIA can sample data anytime (470ns window)
-9. PHI2 falls (1000ns) → Optimal sampling point (latch data on falling edge)
-10. Data hold (1000-1010ns) → CPU maintains data for tDHW (10ns after PHI2 falls)
-11. Process write (1010ns+) → Update internal registers/memory
+3. MIA samples address (60ns) → MIA reads address bus (40ns + 50% margin)
+4. MIA samples CS (200ns) → MIA reads CS signal after address mapping logic settles
+5. Preparation window (200-530ns) → Decode address, configure for write (330ns)
+6. PHI2 rises (500ns) → MIA detects clock high, R/W signal becoming valid, CPU begins driving data
+7. MIA samples R/W (530ns) → MIA reads R/W and OE (30ns after PHI2 high), confirms WRITE
+8. Data valid (540ns) → CPU data stable on bus (tMDS = 40ns after PHI2 rises)
+9. Sampling window (540-1010ns) → MIA can sample data anytime (470ns window)
+10. PHI2 falls (1000ns) → Optimal sampling point (MIA latches data on falling edge)
+11. Data hold (1000-1010ns) → CPU maintains data for tDHW (10ns after PHI2 falls)
+12. Process write (1010ns+) → Update internal registers/memory, return to wait for clock low
 ```
 
 **Timing Optimization:**

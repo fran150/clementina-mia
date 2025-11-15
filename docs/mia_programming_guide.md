@@ -139,7 +139,7 @@ DMA allows copying large blocks of memory without CPU intervention. The copy hap
 - `STATUS_DMA_ACTIVE` remains set
 - You must wait for `IRQ_DMA_COMPLETE` before retrying
 
-This is critical for maintaining 6502 bus timing (785ns response requirement at 1 MHz).
+This is critical for maintaining 6502 bus timing. The MIA operates synchronously with the clock it generates, sampling signals at precise times (address at 60ns, CS at 200ns, R/W at 530ns) to avoid reacting to transient signals during settling periods.
 
 ### Configuring DMA
 
@@ -504,6 +504,7 @@ STA CFG_DATA
 
 At 1 MHz 6502 clock:
 - **Cycle time**: 1000ns
+- **MIA synchronous operation**: Samples address at 60ns, CS at 200ns, R/W at 530ns
 - **MIA response time**: <785ns (always met)
 - **DMA never blocks**: Even on error, returns in ~150ns
 
