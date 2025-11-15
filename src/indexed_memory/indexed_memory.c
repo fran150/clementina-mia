@@ -250,12 +250,7 @@ void indexed_memory_reset_index(uint8_t idx) {
     g_state.indexes[idx].current_addr = g_state.indexes[idx].default_addr;
 }
 
-/**
- * Get current index address (for testing)
- */
-uint32_t indexed_memory_get_index_address(uint8_t idx) {
-    return g_state.indexes[idx].current_addr;
-}
+
 
 /**
  * Validate memory address and set appropriate error flags
@@ -267,7 +262,7 @@ uint32_t indexed_memory_get_index_address(uint8_t idx) {
  * @param irq_cause IRQ cause to trigger on error (e.g., IRQ_MEMORY_ERROR)
  * @return true if address is invalid, false if valid
  */
-static bool validate_address_with_error(uint32_t addr, uint8_t status_flag, uint16_t irq_cause) {
+static inline bool validate_address_with_error(uint32_t addr, uint8_t status_flag, uint16_t irq_cause) {
     // Addresses are 24-bit, check if within MIA memory size
     if (addr >= MIA_MEMORY_SIZE) {
         // Invalid address - set error flags

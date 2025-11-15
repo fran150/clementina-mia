@@ -124,7 +124,7 @@ static inline void write_cfg_field_select(uint8_t window_num, uint8_t field) {
  * @param window_num Window number (0-7 for Windows A-H)
  * @return Configuration field value
  */
-static uint8_t read_cfg_data(uint8_t window_num) {
+static inline uint8_t read_cfg_data(uint8_t window_num) {
     // Get the currently selected index for this window
     uint8_t idx = g_window_state[window_num].active_index;
     
@@ -142,7 +142,7 @@ static uint8_t read_cfg_data(uint8_t window_num) {
  * @param window_num Window number (0-7 for Windows A-H)
  * @param data Data to write to the configuration field
  */
-static void write_cfg_data(uint8_t window_num, uint8_t data) {
+static inline void write_cfg_data(uint8_t window_num, uint8_t data) {
     // Get the currently selected index for this window
     uint8_t idx = g_window_state[window_num].active_index;
     
@@ -163,7 +163,7 @@ static void write_cfg_data(uint8_t window_num, uint8_t data) {
  * 
  * @return System status register value
  */
-static uint8_t read_device_status(void) {
+static inline uint8_t read_device_status(void) {
     // Return system status from indexed memory
     return indexed_memory_get_status();
 }
@@ -174,7 +174,7 @@ static uint8_t read_device_status(void) {
  * 
  * @return Interrupt cause low byte
  */
-static uint8_t read_irq_cause_low(void) {
+static inline uint8_t read_irq_cause_low(void) {
     // Return low byte of IRQ cause from indexed memory
     return indexed_memory_get_irq_cause_low();
 }
@@ -186,7 +186,7 @@ static uint8_t read_irq_cause_low(void) {
  * 
  * @param clear_bits Bits to clear (1 = clear interrupt, 0 = no change)
  */
-static void write_irq_cause_low(uint8_t clear_bits) {
+static inline void write_irq_cause_low(uint8_t clear_bits) {
     // Clear specified interrupt bits using write-1-to-clear logic
     indexed_memory_write_irq_cause_low(clear_bits);
 }
@@ -197,7 +197,7 @@ static void write_irq_cause_low(uint8_t clear_bits) {
  * 
  * @return Interrupt cause high byte
  */
-static uint8_t read_irq_cause_high(void) {
+static inline uint8_t read_irq_cause_high(void) {
     // Return high byte of IRQ cause from indexed memory
     return indexed_memory_get_irq_cause_high();
 }
@@ -209,7 +209,7 @@ static uint8_t read_irq_cause_high(void) {
  * 
  * @param clear_bits Bits to clear (1 = clear interrupt, 0 = no change)
  */
-static void write_irq_cause_high(uint8_t clear_bits) {
+static inline void write_irq_cause_high(uint8_t clear_bits) {
     // Clear specified interrupt bits using write-1-to-clear logic
     indexed_memory_write_irq_cause_high(clear_bits);
 }
@@ -220,7 +220,7 @@ static void write_irq_cause_high(uint8_t clear_bits) {
  * 
  * @return Interrupt mask low byte
  */
-static uint8_t read_irq_mask_low(void) {
+static inline uint8_t read_irq_mask_low(void) {
     // Get full 16-bit mask and return low byte
     uint16_t mask = indexed_memory_get_irq_mask();
     return mask & 0xFF;
@@ -232,7 +232,7 @@ static uint8_t read_irq_mask_low(void) {
  * 
  * @param mask Interrupt mask low byte (1 = enabled, 0 = disabled)
  */
-static void write_irq_mask_low(uint8_t mask) {
+static inline void write_irq_mask_low(uint8_t mask) {
     // Get current mask, update low byte, and write back
     uint16_t current_mask = indexed_memory_get_irq_mask();
     uint16_t new_mask = (current_mask & 0xFF00) | mask;
@@ -245,7 +245,7 @@ static void write_irq_mask_low(uint8_t mask) {
  * 
  * @return Interrupt mask high byte
  */
-static uint8_t read_irq_mask_high(void) {
+static inline uint8_t read_irq_mask_high(void) {
     // Get full 16-bit mask and return high byte
     uint16_t mask = indexed_memory_get_irq_mask();
     return (mask >> 8) & 0xFF;
@@ -257,7 +257,7 @@ static uint8_t read_irq_mask_high(void) {
  * 
  * @param mask Interrupt mask high byte (1 = enabled, 0 = disabled)
  */
-static void write_irq_mask_high(uint8_t mask) {
+static inline void write_irq_mask_high(uint8_t mask) {
     // Get current mask, update high byte, and write back
     uint16_t current_mask = indexed_memory_get_irq_mask();
     uint16_t new_mask = (current_mask & 0x00FF) | ((uint16_t)mask << 8);
@@ -270,7 +270,7 @@ static void write_irq_mask_high(uint8_t mask) {
  * 
  * @return Global interrupt enable (1 = enabled, 0 = disabled)
  */
-static uint8_t read_irq_enable(void) {
+static inline uint8_t read_irq_enable(void) {
     // Return global interrupt enable state
     return indexed_memory_get_irq_enable();
 }
@@ -281,7 +281,7 @@ static uint8_t read_irq_enable(void) {
  * 
  * @param enable Global interrupt enable (1 = enabled, 0 = disabled)
  */
-static void write_irq_enable(uint8_t enable) {
+static inline void write_irq_enable(uint8_t enable) {
     // Set global interrupt enable state
     indexed_memory_set_irq_enable(enable);
 }
@@ -293,7 +293,7 @@ static void write_irq_enable(uint8_t enable) {
  * @param window_num Window number (0-7 for Windows A-H)
  * @param command Command code to execute
  */
-static void write_window_command(uint8_t window_num, uint8_t command) {
+static inline void write_window_command(uint8_t window_num, uint8_t command) {
     // Get the currently selected index for this window
     uint8_t idx = g_window_state[window_num].active_index;
     
@@ -308,7 +308,7 @@ static void write_window_command(uint8_t window_num, uint8_t command) {
  * 
  * @param command Command code to execute
  */
-static void write_shared_command(uint8_t command) {
+static inline void write_shared_command(uint8_t command) {
     // Execute shared/system-level command
     // Shared commands: CMD_SHARED_NOP, CMD_RESET_ALL, CMD_CLEAR_IRQ, CMD_COPY_BLOCK, CMD_SYSTEM_RESET
     indexed_memory_execute_shared_command(command);

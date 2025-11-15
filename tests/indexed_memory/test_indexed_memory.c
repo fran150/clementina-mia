@@ -10,8 +10,13 @@
 #include <stdio.h>
 #include <string.h>
 
-// Helper to get current index address (for testing)
-extern uint32_t indexed_memory_get_index_address(uint8_t idx);
+// Helper to get current index address using public API
+static inline uint32_t get_index_address(uint8_t idx) {
+    uint8_t addr_l = indexed_memory_get_config_field(idx, CFG_ADDR_L);
+    uint8_t addr_m = indexed_memory_get_config_field(idx, CFG_ADDR_M);
+    uint8_t addr_h = indexed_memory_get_config_field(idx, CFG_ADDR_H);
+    return addr_l | (addr_m << 8) | (addr_h << 16);
+}
 
 // External access to internal state for testing DMA busy scenario
 extern indexed_memory_state_t g_state;
@@ -313,14 +318,14 @@ bool test_dma_operations(void) {
     indexed_memory_reset_index(src_idx);
     indexed_memory_reset_index(dst_idx);
     
-    uint32_t src_addr_before = indexed_memory_get_index_address(src_idx);
-    uint32_t dst_addr_before = indexed_memory_get_index_address(dst_idx);
+    uint32_t src_addr_before = get_index_address(src_idx);
+    uint32_t dst_addr_before = get_index_address(dst_idx);
     
     indexed_memory_copy_block(src_idx, dst_idx, 1);
     
     // Verify indexes are NOT modified
-    uint32_t src_addr_after = indexed_memory_get_index_address(src_idx);
-    uint32_t dst_addr_after = indexed_memory_get_index_address(dst_idx);
+    uint32_t src_addr_after = get_index_address(src_idx);
+    uint32_t dst_addr_after = get_index_address(dst_idx);
     if (src_addr_after != src_addr_before) {
         printf("FAIL: Source index was modified by copy_block(1) (expected 0x%06X, got 0x%06X)\n", 
                src_addr_before, src_addr_after);
@@ -344,14 +349,14 @@ bool test_dma_operations(void) {
     indexed_memory_reset_index(src_idx);
     indexed_memory_reset_index(dst_idx);
     
-    src_addr_before = indexed_memory_get_index_address(src_idx);
-    dst_addr_before = indexed_memory_get_index_address(dst_idx);
+    src_addr_before = get_index_address(src_idx);
+    dst_addr_before = get_index_address(dst_idx);
     
     indexed_memory_copy_block(src_idx, dst_idx, 5);
     
     // Verify indexes are NOT modified by copy operation
-    src_addr_after = indexed_memory_get_index_address(src_idx);
-    dst_addr_after = indexed_memory_get_index_address(dst_idx);
+    src_addr_after = get_index_address(src_idx);
+    dst_addr_after = get_index_address(dst_idx);
     if (src_addr_after != src_addr_before) {
         printf("FAIL: Source index was modified by copy_block (expected 0x%06X, got 0x%06X)\n", 
                src_addr_before, src_addr_after);
