@@ -155,6 +155,16 @@ void bus_sync_pio_init(void);
 void bus_sync_pio_irq_handler(void);
 
 /**
+ * Process WRITE data from RX FIFO
+ * 
+ * After a WRITE operation, the PIO pushes the latched data byte to RX FIFO.
+ * This function should be called periodically to process pending WRITE data.
+ * 
+ * @return true if data was processed, false if FIFO was empty
+ */
+bool bus_sync_pio_process_write_data(void);
+
+/**
  * Check if PIO is ready for next cycle
  * Useful for debugging and diagnostics
  * 
@@ -170,5 +180,27 @@ bool bus_sync_pio_is_ready(void);
  * @param stalled Pointer to store stall status
  */
 void bus_sync_pio_get_stats(uint8_t *rx_level, uint8_t *tx_level, bool *stalled);
+
+/**
+ * Check for FIFO overflow/underflow conditions
+ * 
+ * This function checks for error conditions that indicate timing problems:
+ * - RX overflow: PIO is pushing data faster than C can consume it
+ * - TX underflow: PIO is pulling data faster than C can provide it
+ * 
+ * When FIFO errors occur, the IRQ handler automatically:
+ * - Sets STATUS_MEMORY_ERROR in the device status register
+ * - Triggers IRQ_MEMORY_ERROR interrupt (if enabled)
+ * - Tri-states the data bus to prevent bus contention
+ * - Aborts the current bus cycle
+ * 
+ * The 6502 can detect these errors by:
+ * - Polling DEVICE_STATUS register (0xF0) for STATUS_MEMORY_ERROR bit
+ * - Handling IRQ_MEMORY_ERROR interrupt (bit 0 of IRQ_CAUSE)
+ * 
+ * @param rx_overflow Pointer to store RX FIFO overflow status (true = overflow)
+ * @param tx_underflow Pointer to store TX FIFO underflow status (true = underflow)
+ */
+void bus_sync_pio_check_fifo_errors(bool *rx_overflow, bool *tx_underflow);
 
 #endif // BUS_SYNC_PIO_H

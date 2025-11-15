@@ -177,6 +177,8 @@ bool indexed_memory_is_dma_busy(void);
 
 // Status and interrupt management
 uint8_t indexed_memory_get_status(void);
+void indexed_memory_set_status(uint8_t status_bits);      // Set status bits (OR operation)
+void indexed_memory_clear_status(uint8_t status_bits);    // Clear status bits (AND NOT operation)
 uint16_t indexed_memory_get_irq_cause(void);
 uint8_t indexed_memory_get_irq_cause_low(void);
 uint8_t indexed_memory_get_irq_cause_high(void);
@@ -185,6 +187,7 @@ void indexed_memory_write_irq_cause_high(uint8_t clear_bits);
 void indexed_memory_clear_irq(void);
 void indexed_memory_clear_specific_irq(uint16_t cause);
 void indexed_memory_set_irq(uint16_t cause);
+void indexed_memory_trigger_irq(uint16_t cause);          // Set IRQ cause and assert IRQ line
 uint16_t indexed_memory_get_irq_mask(void);
 void indexed_memory_set_irq_mask(uint16_t mask);
 uint8_t indexed_memory_get_irq_enable(void);

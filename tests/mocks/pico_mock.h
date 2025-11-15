@@ -14,6 +14,17 @@
 #include <string.h>
 #include <stdlib.h>
 
+// Define uint type (used by Pico SDK)
+typedef unsigned int uint;
+
+// Mock PIO types and structures
+typedef struct pio_hw pio_hw_t;
+typedef pio_hw_t *PIO;
+
+// Mock PIO instances
+#define pio0 ((PIO)0)
+#define pio1 ((PIO)1)
+
 // Mock printf (already works natively, but define for consistency)
 #define printf printf
 

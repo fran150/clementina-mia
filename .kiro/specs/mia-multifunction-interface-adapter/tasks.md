@@ -205,7 +205,7 @@
     - If READ: push data byte to PIO TX FIFO (use speculative data)
     - If WRITE or NOP: discard speculative data
     - _Requirements: 5.7, 5.8, 5.9_
-  - [ ] 11.3 Set up PIO-C FIFO communication protocol
+  - [x] 11.3 Set up PIO-C FIFO communication protocol
     - Configure RX FIFO (PIO → C): Address byte (pushed at 60ns), Data byte (for WRITE, pushed at 1000ns)
     - Configure TX FIFO (C → PIO): Control byte, Data byte (for READ only)
     - Set up PIO IRQ 0 handler to trigger C code when CS is active

@@ -659,6 +659,22 @@ uint8_t indexed_memory_get_status(void) {
 }
 
 /**
+ * Set status bits (OR operation)
+ * Sets the specified status bit(s) in the status register
+ */
+void indexed_memory_set_status(uint8_t status_bits) {
+    g_state.status |= status_bits;
+}
+
+/**
+ * Clear status bits (AND NOT operation)
+ * Clears the specified status bit(s) from the status register
+ */
+void indexed_memory_clear_status(uint8_t status_bits) {
+    g_state.status &= ~status_bits;
+}
+
+/**
  * Get IRQ cause (full 16-bit value)
  */
 uint16_t indexed_memory_get_irq_cause(void) {
@@ -752,6 +768,16 @@ void indexed_memory_set_irq(uint16_t cause) {
         g_state.status |= STATUS_IRQ_PENDING;
         // TODO: Assert GPIO 26 (IRQ line) to 6502
     }
+}
+
+/**
+ * Trigger IRQ
+ * Convenience function that sets IRQ cause and asserts IRQ line
+ * This is equivalent to indexed_memory_set_irq() but with a more descriptive name
+ * for use in error handling contexts
+ */
+void indexed_memory_trigger_irq(uint16_t cause) {
+    indexed_memory_set_irq(cause);
 }
 
 

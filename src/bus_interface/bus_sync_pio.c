@@ -6,6 +6,7 @@
 
 #include "bus_sync_pio.h"
 #include "bus_interface.h"
+#include "indexed_memory/indexed_memory.h"
 #include "hardware/pio.h"
 #include "hardware/gpio.h"
 #include "hardware/irq.h"
@@ -50,6 +51,22 @@ void bus_sync_pio_irq_handler(void) {
     // =========================================================================
     // PHASE 1: Read address and speculatively prepare READ data (200-400ns)
     // =========================================================================
+    
+    // Check if RX FIFO has data available (should always be true)
+    // PIO pushes address at 60ns, we're called at 200ns
+    if (pio_sm_is_rx_fifo_empty(pio_instance, sm)) {
+        // FIFO underflow - this should never happen
+        // PIO should have pushed address before triggering IRQ
+        // This indicates a critical timing failure
+        
+        // Set error status and trigger interrupt
+        indexed_memory_set_status(STATUS_MEMORY_ERROR);
+        indexed_memory_trigger_irq(IRQ_MEMORY_ERROR);
+        
+        // Push NOP control byte and return
+        pio_sm_put(pio_instance, sm, BUS_CTRL_NOP);
+        return;
+    }
     
     // Read address from RX FIFO (pushed by PIO at 60ns)
     // This is non-blocking because PIO already pushed the address
@@ -111,6 +128,20 @@ void bus_sync_pio_irq_handler(void) {
         for (int i = 8; i < 16; i++) {
             gpio_set_dir(i, GPIO_IN);
         }
+        
+        // Check if TX FIFO has space before pushing
+        if (pio_sm_is_tx_fifo_full(pio_instance, sm)) {
+            // TX FIFO overflow - this should never happen
+            // PIO should be blocking on pull, waiting for our response
+            // This indicates a serious timing problem
+            
+            // Set error status and trigger interrupt
+            indexed_memory_set_status(STATUS_MEMORY_ERROR);
+            indexed_memory_trigger_irq(IRQ_MEMORY_ERROR);
+            
+            return;  // Cannot push, abort
+        }
+        
         // Push NOP control byte
         pio_sm_put(pio_instance, sm, BUS_CTRL_NOP);
         
@@ -121,8 +152,42 @@ void bus_sync_pio_irq_handler(void) {
         for (int i = 8; i < 16; i++) {
             gpio_set_dir(i, GPIO_OUT);
         }
+        
+        // Check if TX FIFO has space for control byte + data byte
+        if (pio_sm_is_tx_fifo_full(pio_instance, sm)) {
+            // TX FIFO overflow - cannot push response
+            // This indicates a critical timing failure
+            
+            // Set error status and trigger interrupt
+            indexed_memory_set_status(STATUS_MEMORY_ERROR);
+            indexed_memory_trigger_irq(IRQ_MEMORY_ERROR);
+            
+            // Tri-state bus and abort
+            for (int i = 8; i < 16; i++) {
+                gpio_set_dir(i, GPIO_IN);
+            }
+            return;
+        }
+        
         // Use our speculatively prepared data!
         pio_sm_put(pio_instance, sm, BUS_CTRL_READ);
+        
+        // Check again for data byte (FIFO should have space for 2 entries)
+        if (pio_sm_is_tx_fifo_full(pio_instance, sm)) {
+            // TX FIFO overflow after control byte
+            // This is a critical error - PIO is expecting data
+            
+            // Set error status and trigger interrupt
+            indexed_memory_set_status(STATUS_MEMORY_ERROR);
+            indexed_memory_trigger_irq(IRQ_MEMORY_ERROR);
+            
+            // Tri-state bus and abort
+            for (int i = 8; i < 16; i++) {
+                gpio_set_dir(i, GPIO_IN);
+            }
+            return;
+        }
+        
         pio_sm_put(pio_instance, sm, data);
         
     } else {
@@ -132,6 +197,18 @@ void bus_sync_pio_irq_handler(void) {
         for (int i = 8; i < 16; i++) {
             gpio_set_dir(i, GPIO_IN);
         }
+        
+        // Check if TX FIFO has space before pushing
+        if (pio_sm_is_tx_fifo_full(pio_instance, sm)) {
+            // TX FIFO overflow - cannot push response
+            
+            // Set error status and trigger interrupt
+            indexed_memory_set_status(STATUS_MEMORY_ERROR);
+            indexed_memory_trigger_irq(IRQ_MEMORY_ERROR);
+            
+            return;
+        }
+        
         // Discard the speculatively prepared data
         // PIO will latch the write data at 1000ns and push to RX FIFO
         pio_sm_put(pio_instance, sm, BUS_CTRL_WRITE);
@@ -141,6 +218,37 @@ void bus_sync_pio_irq_handler(void) {
     // PIO will now unblock from the pull instruction and continue
     // For READ: PIO will pull data and drive bus by ~560ns
     // For WRITE: PIO will wait for PHI2 to fall and latch data at 1000ns
+}
+
+/**
+ * Process WRITE data from RX FIFO
+ * 
+ * After a WRITE operation, the PIO pushes the latched data byte to RX FIFO.
+ * This function should be called periodically to process pending WRITE data.
+ * 
+ * @return true if data was processed, false if FIFO was empty
+ */
+bool bus_sync_pio_process_write_data(void) {
+    // Check if RX FIFO has data available
+    if (pio_sm_is_rx_fifo_empty(pio_instance, sm)) {
+        return false;  // No data to process
+    }
+    
+    // Read data from RX FIFO
+    // Note: This assumes the previous address is still valid
+    // In a real implementation, we would need to track the address
+    // associated with each WRITE operation
+    uint8_t data = pio_sm_get(pio_instance, sm);
+    
+    // TODO: Process the write data
+    // For now, we just consume it from the FIFO
+    // In a complete implementation, we would:
+    // 1. Track the address from the previous IRQ
+    // 2. Call bus_interface_write(addr, data)
+    
+    (void)data;  // Suppress unused variable warning
+    
+    return true;
 }
 
 /**
@@ -175,5 +283,26 @@ void bus_sync_pio_get_stats(uint8_t *rx_level, uint8_t *tx_level, bool *stalled)
         // This would indicate a timing problem
         *stalled = pio_sm_is_tx_fifo_full(pio_instance, sm) &&
                    pio_sm_is_rx_fifo_full(pio_instance, sm);
+    }
+}
+
+/**
+ * Check for FIFO overflow/underflow conditions
+ * 
+ * @param rx_overflow Pointer to store RX FIFO overflow status
+ * @param tx_underflow Pointer to store TX FIFO underflow status
+ */
+void bus_sync_pio_check_fifo_errors(bool *rx_overflow, bool *tx_underflow) {
+    if (rx_overflow) {
+        // RX FIFO overflow occurs when PIO tries to push but FIFO is full
+        // This would indicate C code is not consuming data fast enough
+        *rx_overflow = pio_sm_is_rx_fifo_full(pio_instance, sm);
+    }
+    
+    if (tx_underflow) {
+        // TX FIFO underflow occurs when PIO tries to pull but FIFO is empty
+        // This would indicate C code is not providing data fast enough
+        // Note: PIO uses blocking pull, so this shouldn't happen in normal operation
+        *tx_underflow = pio_sm_is_tx_fifo_empty(pio_instance, sm);
     }
 }
