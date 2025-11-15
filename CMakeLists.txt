@@ -64,12 +64,16 @@ add_executable(mia
     src/indexed_memory/indexed_memory.c
     src/indexed_memory/indexed_memory_dma_hw.c
     src/bus_interface/bus_interface.c
+    src/bus_interface/bus_sync_pio.c
     src/video/video_controller.c
     src/usb/usb_controller.c
     src/usb/usb_descriptors.c
     src/network/wifi_controller.c
     ${KERNEL_DATA_FILE}  # Add generated kernel data
 )
+
+# Generate PIO header from bus_sync.pio
+pico_generate_pio_header(mia ${CMAKE_SOURCE_DIR}/src/bus_interface/bus_sync.pio)
 
 # Add include directories
 target_include_directories(mia PRIVATE

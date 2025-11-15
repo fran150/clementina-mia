@@ -203,15 +203,12 @@ handle_read:
     ; READ operation: drive data from TX FIFO onto data bus
     ; Data must be valid by 985ns (15ns before PHI2 falls at 1000ns)
     ; We have from 530ns to 985ns = 455ns to drive data
+    ; Note: C code will configure GPIO pins as outputs before pushing data
     
     ; Pull data from TX FIFO (prepared by CPU during 200-530ns window)
     pull block                          ; Pull data from TX FIFO (blocking)
     
-    ; Configure data bus (GPIO 8-15) as outputs
-    ; Use SET instruction to configure pin directions
-    set pindirs, 0xFF                   ; Set D0-D7 as outputs (bits 0-7 = 0xFF)
-    
-    ; Drive data onto data bus
+    ; Drive data onto data bus (C code already set pins as outputs)
     out pins, 8                         ; Output 8 bits to GPIO 8-15 (data bus)
     
     ; Data is now being driven
@@ -222,8 +219,7 @@ handle_read:
     ; At 125 MHz PIO clock: 2 instructions × 8ns = 16ns ≈ 15ns
     nop [DELAY_TDHR - 1]                ; Delay for tDHR (data hold time)
     
-    ; Tri-state data bus (configure as inputs)
-    set pindirs, 0x00                   ; Set D0-D7 as inputs (tri-state)
+    ; Note: C code will tri-state the bus after this cycle completes
     
     ; Return to wait for next cycle
     jmp wait_cycle_start                ; Return to cycle start
@@ -235,9 +231,7 @@ handle_write:
     ; WRITE operation: latch data from data bus
     ; Data is valid from 540ns to 1010ns (tMDS to tDHW)
     ; Best practice: sample on PHI2 falling edge at 1000ns
-    
-    ; Ensure data bus is configured as inputs (should already be)
-    set pindirs, 0x00                   ; Set D0-D7 as inputs
+    ; Note: Data bus should already be configured as inputs by C code
     
     ; Wait for PHI2 falling edge at 1000ns (optimal sampling point)
     wait 0 gpio PHI2_PIN                ; Wait for PHI2 = LOW (falling edge)
@@ -270,8 +264,9 @@ static inline void bus_sync_program_init(PIO pio, uint sm, uint offset) {
     // Configure OUT pins (data bus: GPIO 8-15)
     sm_config_set_out_pins(&c, 8, 8);  // 8 pins starting at GPIO 8
     
-    // Configure SET pins (data bus direction: GPIO 8-15)
-    sm_config_set_set_pins(&c, 8, 8);  // 8 pins starting at GPIO 8
+    // Configure SET pins (for pindirs control: GPIO 8-15)
+    // Note: SET can only control 5 pins at a time, so we use OUT pindirs for full control
+    sm_config_set_set_pins(&c, 8, 5);  // 5 pins starting at GPIO 8
     
     // Configure JMP pin (chip select: GPIO 21)
     sm_config_set_jmp_pin(&c, 21);  // IO0_CS on GPIO 21
@@ -332,3 +327,5 @@ static inline void bus_sync_program_init(PIO pio, uint sm, uint offset) {
     
     // Start state machine
     pio_sm_set_enabled(pio, sm, true);
+}
+%}

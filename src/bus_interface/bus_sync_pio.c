@@ -107,12 +107,20 @@ void bus_sync_pio_irq_handler(void) {
         // This could happen if:
         // - CS was active but OE is not (unusual but possible)
         // - Timing glitch or invalid bus cycle
+        // Ensure data bus is tri-stated
+        for (int i = 8; i < 16; i++) {
+            gpio_set_dir(i, GPIO_IN);
+        }
         // Push NOP control byte
         pio_sm_put(pio_instance, sm, BUS_CTRL_NOP);
         
     } else if (!we_active) {
         // OE is active (LOW) and WE is inactive (HIGH)
         // This is a READ operation: R/W = HIGH (read)
+        // Configure data bus as outputs before PIO drives it
+        for (int i = 8; i < 16; i++) {
+            gpio_set_dir(i, GPIO_OUT);
+        }
         // Use our speculatively prepared data!
         pio_sm_put(pio_instance, sm, BUS_CTRL_READ);
         pio_sm_put(pio_instance, sm, data);
@@ -120,6 +128,10 @@ void bus_sync_pio_irq_handler(void) {
     } else {
         // OE is active (LOW) and WE is active (LOW)
         // This is a WRITE operation: R/W = LOW (write)
+        // Ensure data bus is configured as inputs
+        for (int i = 8; i < 16; i++) {
+            gpio_set_dir(i, GPIO_IN);
+        }
         // Discard the speculatively prepared data
         // PIO will latch the write data at 1000ns and push to RX FIFO
         pio_sm_put(pio_instance, sm, BUS_CTRL_WRITE);
@@ -135,11 +147,6 @@ void bus_sync_pio_irq_handler(void) {
  * Check if PIO is ready for next cycle
  */
 bool bus_sync_pio_is_ready(void) {
-    // Check if state machine is running
-    if (!pio_sm_is_enabled(pio_instance, sm)) {
-        return false;
-    }
-    
     // Check if FIFOs are not stalled
     // A stalled FIFO indicates a problem
     if (pio_sm_is_tx_fifo_full(pio_instance, sm) ||
