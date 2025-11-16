@@ -8,8 +8,6 @@
 #include "hardware/gpio_mapping.h"
 #include "system/clock_control.h"
 #include "system/reset_control.h"
-#include "bus_interface/bus_interface.h"
-#include "bus_interface/bus_sync_pio.h"
 #include "pico/time.h"
 #include "hardware/gpio.h"
 #include <stdio.h>
@@ -154,11 +152,7 @@ void rom_emulator_process(void) {
         // Transition to normal operation
         clock_control_set_phase(CLOCK_PHASE_NORMAL);
         gpio_put(GPIO_PICOHIRAM, 1);  // Bank out of high memory
-        
-        // Activate bus interface for normal MIA operations
-        bus_interface_init();
-        bus_sync_pio_init();
-        
+                
         current_state = ROM_STATE_INACTIVE;
         
         printf("MIA banked out, clock increased to 1 MHz, bus interface activated\n");

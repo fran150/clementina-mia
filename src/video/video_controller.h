@@ -45,8 +45,7 @@
 #define PPU_OAM_DMA         0x0304  // $D304
 
 // Function prototypes
-void video_controller_init_core0(void);
-void video_controller_init_core1(void);
+void video_controller_init(void);
 void video_controller_process(void);
 bool video_controller_handle_read(uint16_t address, uint8_t *data);
 bool video_controller_handle_write(uint16_t address, uint8_t data);

@@ -11,11 +11,6 @@
 static bool reset_asserted = false;
 static absolute_time_t reset_start_time;
 
-void reset_control_init(void) {
-    // GPIO initialization is handled in gpio_mapping_init()
-    reset_asserted = false;
-}
-
 void reset_control_assert_reset(void) {
     gpio_put(GPIO_RESET_OUT, 0);  // Assert reset (active low)
     reset_asserted = true;
@@ -38,10 +33,4 @@ void reset_control_process(void) {
             reset_control_release_reset();
         }
     }
-}
-
-void reset_control_software_reset(void) {
-    // Perform software-controlled reset sequence
-    reset_control_assert_reset();
-    // reset_control_process() will handle the timing and release
 }

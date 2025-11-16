@@ -25,7 +25,7 @@ static uint8_t ppu_control = 0;
 static uint8_t ppu_status = 0;
 static uint16_t ppu_oam_addr = 0;
 
-void video_controller_init_core0(void) {
+void video_controller_init(void) {
     // Initialize video memory to default values using fast memset
     memset(character_tables, 0, sizeof(character_tables));
     memset(palette_banks, 0, sizeof(palette_banks));
@@ -38,11 +38,6 @@ void video_controller_init_core0(void) {
     ppu_status = 0;
     ppu_oam_addr = 0;
     frame_ready = false;
-}
-
-void video_controller_init_core1(void) {
-    // Core 1 initialization for video processing
-    // This will be expanded in later tasks
 }
 
 void video_controller_process(void) {
