@@ -40,6 +40,9 @@
 #define GPIO_VIDEO_CS   21  // Video Chip Select input (Device 4) (active low)
 #define GPIO_GEN_CS     22  // General Interface Chip Select input (Device 0) (active low)
 
+// Interrupt Line
+#define GPIO_IRQ_OUT    26  // IRQ line output to 6502 CPU (active low)
+
 // System Control
 #define GPIO_CLK_OUT    28  // Clock output (PWM6A) to Clementina
 

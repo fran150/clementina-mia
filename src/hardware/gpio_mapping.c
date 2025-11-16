@@ -49,6 +49,7 @@ static const gpio_config_t gpio_configs[] = {
     // Control outputs
     {GPIO_PICOHIRAM, GPIO_OUT, GPIO_PULL_NONE},
     {GPIO_RESET_OUT, GPIO_OUT, GPIO_PULL_NONE},
+    {GPIO_IRQ_OUT, GPIO_OUT, GPIO_PULL_NONE},
     {GPIO_CLK_OUT, GPIO_OUT, GPIO_PULL_NONE},
 };
 
@@ -70,6 +71,7 @@ void gpio_mapping_init(void) {
     // Set initial output states
     gpio_put(GPIO_PICOHIRAM, 1);    // Start with PICOHIRAM deasserted
     gpio_put(GPIO_RESET_OUT, 0);    // Start with reset asserted
+    gpio_put(GPIO_IRQ_OUT, 1);      // Start with IRQ deasserted (active low)
 }
 
 uint16_t gpio_read_address_bus(void) {

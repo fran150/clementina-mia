@@ -7,16 +7,16 @@
 
 #include "indexed_memory.h"
 #include "indexed_memory_dma.h"
+#include "hardware/gpio_mapping.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 
-#ifdef PICO_BUILD
+
+
+// Always include GPIO for IRQ line control (mocked in tests)
+#include "hardware/gpio.h"
 #include "hardware/watchdog.h"
-#else
-// For host testing, use mocked Pico SDK functions
-#include "mocks/pico_mock.h"
-#endif
 
 // MIA memory layout (256KB properly allocated)
 // All addresses are logical offsets (0x000000 - 0x03FFFF) into the mia_memory array
@@ -44,6 +44,20 @@ static void dma_completion_callback(void) {
     
     // Signal completion
     indexed_memory_set_irq(IRQ_DMA_COMPLETE);
+}
+
+/**
+ * Assert IRQ line to 6502 (active low)
+ */
+static inline void assert_irq_line(void) {
+    gpio_put(GPIO_IRQ_OUT, 0);  // Assert IRQ (active low)
+}
+
+/**
+ * Deassert IRQ line to 6502 (active low)
+ */
+static inline void deassert_irq_line(void) {
+    gpio_put(GPIO_IRQ_OUT, 1);  // Deassert IRQ (active low)
 }
 
 /**
@@ -507,13 +521,9 @@ void indexed_memory_execute_shared_command(uint8_t cmd) {
             // 3. Release the 6502 reset line to start boot sequence
             watchdog_reboot(0, 0, 0);
             
-#ifdef PICO_BUILD
-            // Execution never reaches here on real hardware - watchdog resets the system
-            while(1);
-#else
-            // In tests, watchdog_reboot is mocked and returns, so we break normally
+            // On real hardware: execution never reaches here (system reboots)
+            // In tests: mock function returns and we continue normally
             break;
-#endif
         default:
             // Unknown shared command - ignore
             break;
@@ -639,7 +649,7 @@ void indexed_memory_write_irq_cause_low(uint8_t clear_bits) {
     // If no enabled interrupts are pending, deassert IRQ line
     if ((g_state.irq_cause & g_state.irq_mask) == 0) {
         g_state.status &= ~STATUS_IRQ_PENDING;
-        // TODO: Deassert GPIO 26 (IRQ line) to 6502
+        deassert_irq_line();
     }
 }
 
@@ -655,7 +665,7 @@ void indexed_memory_write_irq_cause_high(uint8_t clear_bits) {
     // If no enabled interrupts are pending, deassert IRQ line
     if ((g_state.irq_cause & g_state.irq_mask) == 0) {
         g_state.status &= ~STATUS_IRQ_PENDING;
-        // TODO: Deassert GPIO 26 (IRQ line) to 6502
+        deassert_irq_line();
     }
 }
 
@@ -667,7 +677,7 @@ void indexed_memory_clear_irq(void) {
     // Clear all pending interrupts
     g_state.irq_cause = IRQ_NO_IRQ;
     g_state.status &= ~STATUS_IRQ_PENDING;
-    // TODO: Deassert GPIO 26 (IRQ line) to 6502
+    deassert_irq_line();
 }
 
 /**
@@ -682,7 +692,7 @@ void indexed_memory_clear_specific_irq(uint16_t cause) {
     // If no enabled interrupts are pending, clear the IRQ line
     if ((g_state.irq_cause & g_state.irq_mask) == 0) {
         g_state.status &= ~STATUS_IRQ_PENDING;
-        // TODO: Deassert GPIO 26 (IRQ line) to 6502
+        deassert_irq_line();
     }
 }
 
@@ -699,7 +709,7 @@ void indexed_memory_set_irq(uint16_t cause) {
     // Only assert IRQ line if at least one enabled interrupt is pending and global enable is on
     if (g_state.irq_enable && ((g_state.irq_cause & g_state.irq_mask) != 0)) {
         g_state.status |= STATUS_IRQ_PENDING;
-        // TODO: Assert GPIO 26 (IRQ line) to 6502
+        assert_irq_line();
     }
 }
 
@@ -735,11 +745,11 @@ void indexed_memory_set_irq_mask(uint16_t mask) {
     // If no enabled interrupts are pending, deassert IRQ line
     if ((g_state.irq_cause & g_state.irq_mask) == 0) {
         g_state.status &= ~STATUS_IRQ_PENDING;
-        // TODO: Deassert GPIO 26 (IRQ line) to 6502
+        deassert_irq_line();
     } else if (g_state.irq_enable) {
         // If there are enabled interrupts pending and global enable is on, assert IRQ
         g_state.status |= STATUS_IRQ_PENDING;
-        // TODO: Assert GPIO 26 (IRQ line) to 6502
+        assert_irq_line();
     }
 }
 
@@ -764,12 +774,12 @@ void indexed_memory_set_irq_enable(uint8_t enable) {
         // If enabling and there are masked interrupts pending, assert IRQ
         if ((g_state.irq_cause & g_state.irq_mask) != 0) {
             g_state.status |= STATUS_IRQ_PENDING;
-            // TODO: Assert GPIO 26 (IRQ line) to 6502
+            assert_irq_line();
         }
     } else {
         // If disabling, deassert IRQ line
         g_state.status &= ~STATUS_IRQ_PENDING;
-        // TODO: Deassert GPIO 26 (IRQ line) to 6502
+        deassert_irq_line();
     }
 }
 
