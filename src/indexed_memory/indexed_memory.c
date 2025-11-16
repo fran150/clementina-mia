@@ -203,41 +203,43 @@ void indexed_memory_reset_all(void) {
 }
 
 /**
- * Set index current address
- * Stores the address as a 24-bit value (upper byte is masked off)
- * Validation occurs during actual memory access operations
+ * Generic address setter - replaces three separate functions
+ */
+void indexed_memory_set_address(uint8_t idx, addr_field_t field, uint32_t address) {
+    address &= 0xFFFFFF;  // Ensure 24-bit
+    switch (field) {
+        case ADDR_CURRENT: g_state.indexes[idx].current_addr = address; break;
+        case ADDR_DEFAULT: g_state.indexes[idx].default_addr = address; break;
+        case ADDR_LIMIT:   g_state.indexes[idx].limit_addr = address; break;
+    }
+}
+
+/**
+ * Legacy compatibility functions - now just call generic setter
  */
 void indexed_memory_set_index_address(uint8_t idx, uint32_t address) {
-    g_state.indexes[idx].current_addr = address & 0xFFFFFF;
+    indexed_memory_set_address(idx, ADDR_CURRENT, address);
 }
 
-/**
- * Set index default address
- * Stores the address as a 24-bit value (upper byte is masked off)
- * Validation occurs during actual memory access operations
- */
 void indexed_memory_set_index_default(uint8_t idx, uint32_t address) {
-    g_state.indexes[idx].default_addr = address & 0xFFFFFF;
+    indexed_memory_set_address(idx, ADDR_DEFAULT, address);
 }
 
-/**
- * Set index limit address (for wrap-on-limit feature)
- * Stores the address as a 24-bit value (upper byte is masked off)
- * Validation occurs during actual memory access operations
- */
 void indexed_memory_set_index_limit(uint8_t idx, uint32_t address) {
-    g_state.indexes[idx].limit_addr = address & 0xFFFFFF;
+    indexed_memory_set_address(idx, ADDR_LIMIT, address);
 }
 
 /**
  * Set index step size
+ * NOTE: For new code, prefer direct access: g_state.indexes[idx].step = step
  */
 void indexed_memory_set_index_step(uint8_t idx, uint8_t step) {
     g_state.indexes[idx].step = step;
 }
 
 /**
- * Set index flags
+ * Set index flags  
+ * NOTE: For new code, prefer direct access: g_state.indexes[idx].flags = flags
  */
 void indexed_memory_set_index_flags(uint8_t idx, uint8_t flags) {
     g_state.indexes[idx].flags = flags;
@@ -245,78 +247,45 @@ void indexed_memory_set_index_flags(uint8_t idx, uint8_t flags) {
 
 /**
  * Reset index to default address
+ * NOTE: For new code, prefer direct access: g_state.indexes[idx].current_addr = g_state.indexes[idx].default_addr
  */
 void indexed_memory_reset_index(uint8_t idx) {
     g_state.indexes[idx].current_addr = g_state.indexes[idx].default_addr;
 }
 
-
-
 /**
- * Validate memory address and set appropriate error flags
- * Returns true if address is invalid (error occurred), false if valid
- * Note: Addresses are stored as 24-bit values (0x000000-0xFFFFFF)
- * 
- * @param addr Address to validate
- * @param status_flag Status flag to set on error (e.g., STATUS_MEMORY_ERROR)
- * @param irq_cause IRQ cause to trigger on error (e.g., IRQ_MEMORY_ERROR)
- * @return true if address is invalid, false if valid
- */
-static inline bool validate_address_with_error(uint32_t addr, uint8_t status_flag, uint16_t irq_cause) {
-    // Addresses are 24-bit, check if within MIA memory size
-    if (addr >= MIA_MEMORY_SIZE) {
-        // Invalid address - set error flags
-        g_state.status |= status_flag;
-        indexed_memory_set_irq(irq_cause);
-        return true;  // Invalid
-    }
-    return false;  // Valid
-}
-
-/**
- * Read byte from index with auto-stepping
+ * Read byte from index with auto-stepping - optimized critical path
  */
 uint8_t indexed_memory_read(uint8_t idx) {
-    uint32_t addr = g_state.indexes[idx].current_addr;
-    uint8_t flags = g_state.indexes[idx].flags;
+    index_t *index = &g_state.indexes[idx];
+    uint32_t addr = index->current_addr;
     
-    // Validate address before access
-    if (validate_address_with_error(addr, STATUS_MEMORY_ERROR, IRQ_MEMORY_ERROR)) {
-        return 0; // Return 0 on invalid address
-    }
+    // Fast address validation
+    CHECK_ADDR_OR_RETURN(addr, 0);
     
-    // Address is already a 24-bit offset, use it directly
     // Read data
     uint8_t data = mia_memory[addr];
     
-    // Auto-step if enabled
-    if (flags & FLAG_AUTO_STEP) {
-        uint8_t step = g_state.indexes[idx].step;
+    // Auto-step if enabled - optimized path
+    if (index->flags & FLAG_AUTO_STEP) {
+        uint8_t step = index->step;
         
-        if (flags & FLAG_DIRECTION) {
+        if (index->flags & FLAG_DIRECTION) {
             // Backward stepping
             addr -= step;
-            
-            // Check wrap-on-limit if enabled (for backward, wrap when going below limit)
-            if (flags & FLAG_WRAP_ON_LIMIT) {
-                if (addr < g_state.indexes[idx].limit_addr) {
-                    addr = g_state.indexes[idx].default_addr;
-                }
+            if ((index->flags & FLAG_WRAP_ON_LIMIT) && addr < index->limit_addr) {
+                addr = index->default_addr;
             }
         } else {
             // Forward stepping
             addr += step;
-            
-            // Check wrap-on-limit if enabled (for forward, wrap when reaching or exceeding limit)
-            if (flags & FLAG_WRAP_ON_LIMIT) {
-                if (addr >= g_state.indexes[idx].limit_addr) {
-                    addr = g_state.indexes[idx].default_addr;
-                }
+            if ((index->flags & FLAG_WRAP_ON_LIMIT) && addr >= index->limit_addr) {
+                addr = index->default_addr;
             }
         }
         
-        // Update address (validation will occur on next access)
-        g_state.indexes[idx].current_addr = addr;
+        // Update address
+        index->current_addr = addr;
     }
     
     return data;
@@ -326,46 +295,32 @@ uint8_t indexed_memory_read(uint8_t idx) {
  * Write byte to index with auto-stepping
  */
 void indexed_memory_write(uint8_t idx, uint8_t data) {
-    uint32_t addr = g_state.indexes[idx].current_addr;
-    uint8_t flags = g_state.indexes[idx].flags;
+    index_t *index = &g_state.indexes[idx];
+    uint32_t addr = index->current_addr;
     
-    // Validate address before access
-    if (validate_address_with_error(addr, STATUS_MEMORY_ERROR, IRQ_MEMORY_ERROR)) {
-        return; // Skip write on invalid address
-    }
+    // Fast address validation
+    CHECK_ADDR_OR_RETURN_VOID(addr);
     
-    // Address is already a 24-bit offset, use it directly
     // Write data
     mia_memory[addr] = data;
     
-    // Auto-step if enabled
-    if (flags & FLAG_AUTO_STEP) {
-        uint8_t step = g_state.indexes[idx].step;
+    // Auto-step if enabled - same logic as read
+    if (index->flags & FLAG_AUTO_STEP) {
+        uint8_t step = index->step;
         
-        if (flags & FLAG_DIRECTION) {
-            // Backward stepping
+        if (index->flags & FLAG_DIRECTION) {
             addr -= step;
-            
-            // Check wrap-on-limit if enabled (for backward, wrap when going below limit)
-            if (flags & FLAG_WRAP_ON_LIMIT) {
-                if (addr < g_state.indexes[idx].limit_addr) {
-                    addr = g_state.indexes[idx].default_addr;
-                }
+            if ((index->flags & FLAG_WRAP_ON_LIMIT) && addr < index->limit_addr) {
+                addr = index->default_addr;
             }
         } else {
-            // Forward stepping
             addr += step;
-            
-            // Check wrap-on-limit if enabled (for forward, wrap when reaching or exceeding limit)
-            if (flags & FLAG_WRAP_ON_LIMIT) {
-                if (addr >= g_state.indexes[idx].limit_addr) {
-                    addr = g_state.indexes[idx].default_addr;
-                }
+            if ((index->flags & FLAG_WRAP_ON_LIMIT) && addr >= index->limit_addr) {
+                addr = index->default_addr;
             }
         }
         
-        // Update address (validation will occur on next access)
-        g_state.indexes[idx].current_addr = addr;
+        index->current_addr = addr;
     }
 }
 
@@ -375,12 +330,10 @@ void indexed_memory_write(uint8_t idx, uint8_t data) {
 uint8_t indexed_memory_read_no_step(uint8_t idx) {
     uint32_t addr = g_state.indexes[idx].current_addr;
     
-    // Validate address before access
-    if (validate_address_with_error(addr, STATUS_MEMORY_ERROR, IRQ_MEMORY_ERROR)) {
-        return 0; // Return 0 on invalid address
-    }
+    // Fast address validation
+    CHECK_ADDR_OR_RETURN(addr, 0);
     
-    // Address is already a 24-bit offset, use it directly
+    // Read data without stepping
     return mia_memory[addr];
 }
 
@@ -390,12 +343,10 @@ uint8_t indexed_memory_read_no_step(uint8_t idx) {
 void indexed_memory_write_no_step(uint8_t idx, uint8_t data) {
     uint32_t addr = g_state.indexes[idx].current_addr;
     
-    // Validate address before access
-    if (validate_address_with_error(addr, STATUS_MEMORY_ERROR, IRQ_MEMORY_ERROR)) {
-        return; // Skip write on invalid address
-    }
+    // Fast address validation
+    CHECK_ADDR_OR_RETURN_VOID(addr);
     
-    // Address is already a 24-bit offset, use it directly
+    // Write data without stepping
     mia_memory[addr] = data;
 }
 
@@ -493,20 +444,6 @@ void indexed_memory_set_config_field(uint8_t idx, uint8_t field, uint8_t value) 
 }
 
 /**
- * Set default address to current address for an index
- */
-static inline void indexed_memory_set_default_to_current(uint8_t idx) {
-    g_state.indexes[idx].default_addr = g_state.indexes[idx].current_addr;
-}
-
-/**
- * Set limit address to current address for an index
- */
-static inline void indexed_memory_set_limit_to_current(uint8_t idx) {
-    g_state.indexes[idx].limit_addr = g_state.indexes[idx].current_addr;
-}
-
-/**
  * Execute window-level command
  * These commands operate on a specific index (typically the active index for a window)
  */
@@ -517,15 +454,15 @@ void indexed_memory_execute_window_command(uint8_t idx, uint8_t cmd) {
             break;
         case CMD_RESET_INDEX:
             // Reset current address to default address
-            indexed_memory_reset_index(idx);
+            g_state.indexes[idx].current_addr = g_state.indexes[idx].default_addr;
             break;
         case CMD_SET_DEFAULT_TO_ADDR:
             // Set default address to current address
-            indexed_memory_set_default_to_current(idx);
+            g_state.indexes[idx].default_addr = g_state.indexes[idx].current_addr;
             break;
         case CMD_SET_LIMIT_TO_ADDR:
             // Set limit address to current address
-            indexed_memory_set_limit_to_current(idx);
+            g_state.indexes[idx].limit_addr = g_state.indexes[idx].current_addr;
             break;
         default:
             // Unknown window command - ignore
@@ -599,8 +536,9 @@ void indexed_memory_copy_block(uint8_t src_idx, uint8_t dst_idx, uint16_t count)
     uint32_t dst_addr = g_state.indexes[dst_idx].current_addr;
     
     // Validate addresses
-    if (validate_address_with_error(src_addr, STATUS_MEMORY_ERROR, IRQ_MEMORY_ERROR) ||
-        validate_address_with_error(dst_addr, STATUS_MEMORY_ERROR, IRQ_MEMORY_ERROR)) {
+    if (src_addr >= MIA_MEMORY_SIZE || dst_addr >= MIA_MEMORY_SIZE) {
+        g_state.status |= STATUS_MEMORY_ERROR;
+        indexed_memory_set_irq(IRQ_MEMORY_ERROR);
         return;
     }
     

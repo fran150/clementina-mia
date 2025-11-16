@@ -6,55 +6,70 @@
 #include "gpio_mapping.h"
 #include "hardware/gpio.h"
 
+// GPIO configuration table for batch initialization
+typedef struct {
+    uint8_t pin;
+    uint8_t dir;
+    uint8_t pull;
+} gpio_config_t;
+
+// Pull resistor constants
+#define GPIO_PULL_NONE 0
+#define GPIO_PULL_UP   1
+#define GPIO_PULL_DOWN 2
+
+static const gpio_config_t gpio_configs[] = {
+    // Address bus pins (A0-A7) - inputs with pull-down
+    {GPIO_ADDR_A0, GPIO_IN, GPIO_PULL_DOWN},
+    {GPIO_ADDR_A1, GPIO_IN, GPIO_PULL_DOWN},
+    {GPIO_ADDR_A2, GPIO_IN, GPIO_PULL_DOWN},
+    {GPIO_ADDR_A3, GPIO_IN, GPIO_PULL_DOWN},
+    {GPIO_ADDR_A4, GPIO_IN, GPIO_PULL_DOWN},
+    {GPIO_ADDR_A5, GPIO_IN, GPIO_PULL_DOWN},
+    {GPIO_ADDR_A6, GPIO_IN, GPIO_PULL_DOWN},
+    {GPIO_ADDR_A7, GPIO_IN, GPIO_PULL_DOWN},
+    
+    // Data bus pins (D0-D7) - inputs initially with pull-down
+    {GPIO_DATA_D0, GPIO_IN, GPIO_PULL_DOWN},
+    {GPIO_DATA_D1, GPIO_IN, GPIO_PULL_DOWN},
+    {GPIO_DATA_D2, GPIO_IN, GPIO_PULL_DOWN},
+    {GPIO_DATA_D3, GPIO_IN, GPIO_PULL_DOWN},
+    {GPIO_DATA_D4, GPIO_IN, GPIO_PULL_DOWN},
+    {GPIO_DATA_D5, GPIO_IN, GPIO_PULL_DOWN},
+    {GPIO_DATA_D6, GPIO_IN, GPIO_PULL_DOWN},
+    {GPIO_DATA_D7, GPIO_IN, GPIO_PULL_DOWN},
+    
+    // Control signals - inputs with pull-up (active low)
+    {GPIO_WE, GPIO_IN, GPIO_PULL_UP},
+    {GPIO_OE, GPIO_IN, GPIO_PULL_UP},
+    {GPIO_ROM_CS, GPIO_IN, GPIO_PULL_UP},
+    {GPIO_VIDEO_CS, GPIO_IN, GPIO_PULL_UP},
+    {GPIO_GEN_CS, GPIO_IN, GPIO_PULL_UP},
+    
+    // Control outputs
+    {GPIO_PICOHIRAM, GPIO_OUT, GPIO_PULL_NONE},
+    {GPIO_RESET_OUT, GPIO_OUT, GPIO_PULL_NONE},
+    {GPIO_CLK_OUT, GPIO_OUT, GPIO_PULL_NONE},
+};
+
 void gpio_mapping_init(void) {
-  // Initialize address bus pins as inputs (A0-A7)
-  for (int i = GPIO_ADDR_A0; i <= GPIO_ADDR_A7; i++) {
-    gpio_init(i);
-    gpio_set_dir(i, GPIO_IN);
-    gpio_pull_down(i); // Pull down for stable readings
-  }
-  
-  
-  // Initialize data bus pins as inputs initially (will be switched to output
-  // when needed)
-  for (int i = GPIO_DATA_D0; i <= GPIO_DATA_D7; i++) {
-    gpio_init(i);
-    gpio_set_dir(i, GPIO_IN);
-    gpio_pull_down(i);
-  }
-
-  // Initialize control signal inputs
-  gpio_init(GPIO_WE);
-  gpio_set_dir(GPIO_WE, GPIO_IN);
-  gpio_pull_up(GPIO_WE); // WE is active low
-
-  gpio_init(GPIO_OE);
-  gpio_set_dir(GPIO_OE, GPIO_IN);
-  gpio_pull_up(GPIO_OE); // OE is active low
-
-  // Initialize chip select inputs
-  gpio_init(GPIO_ROM_CS);
-  gpio_set_dir(GPIO_ROM_CS, GPIO_IN);
-  gpio_pull_up(GPIO_ROM_CS); // CS is active low
-
-  gpio_init(GPIO_VIDEO_CS);
-  gpio_set_dir(GPIO_VIDEO_CS, GPIO_IN);
-  gpio_pull_up(GPIO_VIDEO_CS); // CS is active low
-
-  gpio_init(GPIO_GEN_CS);
-  gpio_set_dir(GPIO_GEN_CS, GPIO_IN);
-  gpio_pull_up(GPIO_GEN_CS); // CS is active low
-
-  // Initialize control outputs
-  gpio_init(GPIO_PICOHIRAM);
-  gpio_set_dir(GPIO_PICOHIRAM, GPIO_OUT);
-  gpio_put(GPIO_PICOHIRAM, 1); // Start with MIA banked out (inactive)
-
-  gpio_init(GPIO_RESET_OUT);
-  gpio_set_dir(GPIO_RESET_OUT, GPIO_OUT);
-  gpio_put(GPIO_RESET_OUT, 1); // Start with reset deasserted (active low)
-
-  // Clock output will be initialized by clock_control module
+    // Initialize all GPIOs from configuration table
+    for (size_t i = 0; i < sizeof(gpio_configs) / sizeof(gpio_configs[0]); i++) {
+        const gpio_config_t *cfg = &gpio_configs[i];
+        gpio_init(cfg->pin);
+        gpio_set_dir(cfg->pin, cfg->dir);
+        
+        // Set pull resistors
+        if (cfg->pull == GPIO_PULL_UP) {
+            gpio_pull_up(cfg->pin);
+        } else if (cfg->pull == GPIO_PULL_DOWN) {
+            gpio_pull_down(cfg->pin);
+        }
+    }
+    
+    // Set initial output states
+    gpio_put(GPIO_PICOHIRAM, 1);    // Start with PICOHIRAM deasserted
+    gpio_put(GPIO_RESET_OUT, 0);    // Start with reset asserted
 }
 
 uint16_t gpio_read_address_bus(void) {

@@ -69,6 +69,9 @@
 #define REG_OFFSET_COMMAND          0x04
 // Offsets 0x05-0x0F are reserved for future use
 
+// Performance optimization macros for critical path
+#define get_window_state(window_num) (&g_window_state[window_num])
+
 // ============================================================================
 // Address Decoding (8-bit local addresses)
 // ============================================================================

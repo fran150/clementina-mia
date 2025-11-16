@@ -49,12 +49,6 @@ void bus_sync_pio_init(void) {
  * 
  * This implements the speculative execution strategy to handle the timing
  * constraint that OE and WE are only valid 30ns after PHI2 rises (at 530ns).
- * 
- * OPTIMIZATION NOTES:
- * - Marked as __attribute__((optimize("O3"))) for maximum speed
- * - Uses inline assembly for precise timing delays
- * - Minimizes function calls in critical path
- * - Speculatively prepares READ data to maximize available time
  */
 void __attribute__((optimize("O3"))) bus_sync_pio_irq_handler(void) {
     // Clear the IRQ flag

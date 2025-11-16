@@ -116,6 +116,29 @@
 #define IRQ_MASK_VIDEO_FRAME        IRQ_VIDEO_FRAME_COMPLETE
 #define IRQ_MASK_VIDEO_COLLISION    IRQ_VIDEO_COLLISION
 
+// Performance optimization macros
+#define ADDR_VALID(addr) ((addr) < MIA_MEMORY_SIZE)
+#define CHECK_ADDR_OR_RETURN(addr, retval) \
+    if ((addr) >= MIA_MEMORY_SIZE) { \
+        g_state.status |= STATUS_MEMORY_ERROR; \
+        indexed_memory_set_irq(IRQ_MEMORY_ERROR); \
+        return retval; \
+    }
+
+#define CHECK_ADDR_OR_RETURN_VOID(addr) \
+    if ((addr) >= MIA_MEMORY_SIZE) { \
+        g_state.status |= STATUS_MEMORY_ERROR; \
+        indexed_memory_set_irq(IRQ_MEMORY_ERROR); \
+        return; \
+    }
+
+// Address field type for generic setter
+typedef enum {
+    ADDR_CURRENT,
+    ADDR_DEFAULT, 
+    ADDR_LIMIT
+} addr_field_t;
+
 // Memory index structure (16 bytes per index)
 typedef struct {
     uint32_t current_addr;      // 24-bit current address (upper 8 bits unused)
@@ -143,11 +166,17 @@ typedef struct {
     uint8_t irq_enable;        // Global interrupt enable/disable (1 = enabled, 0 = disabled)
 } indexed_memory_state_t;
 
+// Global system state - exposed for direct access
+// NOTE: For new code, prefer direct access: g_state.indexes[idx].field = value
+// The wrapper functions below are kept for API compatibility
+extern indexed_memory_state_t g_state;
+
 // Function prototypes
 void indexed_memory_init(void);
 void indexed_memory_reset_all(void);
 
 // Index management
+void indexed_memory_set_address(uint8_t idx, addr_field_t field, uint32_t address);
 void indexed_memory_set_index_address(uint8_t idx, uint32_t address);
 void indexed_memory_set_index_default(uint8_t idx, uint32_t address);
 void indexed_memory_set_index_limit(uint8_t idx, uint32_t address);

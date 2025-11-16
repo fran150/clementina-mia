@@ -26,38 +26,8 @@ window_state_t g_window_state[MAX_WINDOWS];
 // ============================================================================
 
 /**
- * Read IDX_SELECT register
- * Returns the currently selected index for the specified window
- * 
- * OPTIMIZATION: Inline for fastest access
- * 
- * @param window_num Window number (0-7 for Windows A-H)
- * @return Currently selected index (0-255)
- */
-static inline uint8_t read_idx_select(uint8_t window_num) {
-    // Return the active index for the specified window
-    return g_window_state[window_num].active_index;
-}
-
-/**
- * Write IDX_SELECT register
- * Updates the active index selection for the specified window
- * 
- * OPTIMIZATION: Inline for fastest access
- * 
- * @param window_num Window number (0-7 for Windows A-H)
- * @param index Index to select (0-255)
- */
-static inline void write_idx_select(uint8_t window_num, uint8_t index) {
-    // Update the active index for the specified window
-    g_window_state[window_num].active_index = index;
-}
-
-/**
  * Read DATA_PORT register
  * Reads a byte from the currently selected index with auto-stepping
- * 
- * OPTIMIZATION: Inline for fastest access (most common operation)
  * 
  * @param window_num Window number (0-7 for Windows A-H)
  * @return Data byte read from the current index address
@@ -75,8 +45,6 @@ static inline uint8_t read_data_port(uint8_t window_num) {
  * Write DATA_PORT register
  * Writes a byte to the currently selected index with auto-stepping
  * 
- * OPTIMIZATION: Inline for fastest access (common operation)
- * 
  * @param window_num Window number (0-7 for Windows A-H)
  * @param data Data byte to write to the current index address
  */
@@ -90,129 +58,24 @@ static inline void write_data_port(uint8_t window_num, uint8_t data) {
 }
 
 /**
- * Read CFG_FIELD_SELECT register
- * Returns the currently selected configuration field for the specified window
- * 
- * OPTIMIZATION: Inline for fastest access
- * 
- * @param window_num Window number (0-7 for Windows A-H)
- * @return Currently selected configuration field
- */
-static inline uint8_t read_cfg_field_select(uint8_t window_num) {
-    // Return the selected configuration field for the specified window
-    return g_window_state[window_num].config_field_select;
-}
-
-/**
- * Write CFG_FIELD_SELECT register
- * Updates the configuration field selection for the specified window
- * 
- * OPTIMIZATION: Inline for fastest access
- * 
- * @param window_num Window number (0-7 for Windows A-H)
- * @param field Configuration field to select
- */
-static inline void write_cfg_field_select(uint8_t window_num, uint8_t field) {
-    // Update the configuration field selection for the specified window
-    g_window_state[window_num].config_field_select = field;
-}
-
-/**
- * Read CFG_DATA register
- * Reads the selected configuration field from the active index
- * 
- * @param window_num Window number (0-7 for Windows A-H)
- * @return Configuration field value
+ * Read CFG_DATA register - optimized
  */
 static inline uint8_t read_cfg_data(uint8_t window_num) {
-    // Get the currently selected index for this window
-    uint8_t idx = g_window_state[window_num].active_index;
-    
-    // Get the selected configuration field for this window
-    uint8_t field = g_window_state[window_num].config_field_select;
-    
-    // Read the configuration field from the index
-    return indexed_memory_get_config_field(idx, field);
+    window_state_t *win = get_window_state(window_num);
+    return indexed_memory_get_config_field(win->active_index, win->config_field_select);
 }
 
 /**
- * Write CFG_DATA register
- * Writes to the selected configuration field of the active index
- * 
- * @param window_num Window number (0-7 for Windows A-H)
- * @param data Data to write to the configuration field
+ * Write CFG_DATA register - optimized
  */
 static inline void write_cfg_data(uint8_t window_num, uint8_t data) {
-    // Get the currently selected index for this window
-    uint8_t idx = g_window_state[window_num].active_index;
-    
-    // Get the selected configuration field for this window
-    uint8_t field = g_window_state[window_num].config_field_select;
-    
-    // Write the configuration field to the index
-    indexed_memory_set_config_field(idx, field, data);
+    window_state_t *win = get_window_state(window_num);
+    indexed_memory_set_config_field(win->active_index, win->config_field_select, data);
 }
 
 // ============================================================================
-// Shared Register Handler Functions
+// Shared Register Handler Functions - Now using macros for performance
 // ============================================================================
-
-/**
- * Read DEVICE_STATUS register
- * Returns the global device status register value
- * 
- * @return System status register value
- */
-static inline uint8_t read_device_status(void) {
-    // Return system status from indexed memory
-    return indexed_memory_get_status();
-}
-
-/**
- * Read IRQ_CAUSE_LOW register
- * Returns the low byte of the interrupt cause register (bits 0-7)
- * 
- * @return Interrupt cause low byte
- */
-static inline uint8_t read_irq_cause_low(void) {
-    // Return low byte of IRQ cause from indexed memory
-    return indexed_memory_get_irq_cause_low();
-}
-
-/**
- * Write IRQ_CAUSE_LOW register
- * Implements write-1-to-clear logic for interrupt acknowledgment
- * Writing 1 to a bit position clears that specific interrupt
- * 
- * @param clear_bits Bits to clear (1 = clear interrupt, 0 = no change)
- */
-static inline void write_irq_cause_low(uint8_t clear_bits) {
-    // Clear specified interrupt bits using write-1-to-clear logic
-    indexed_memory_write_irq_cause_low(clear_bits);
-}
-
-/**
- * Read IRQ_CAUSE_HIGH register
- * Returns the high byte of the interrupt cause register (bits 8-15)
- * 
- * @return Interrupt cause high byte
- */
-static inline uint8_t read_irq_cause_high(void) {
-    // Return high byte of IRQ cause from indexed memory
-    return indexed_memory_get_irq_cause_high();
-}
-
-/**
- * Write IRQ_CAUSE_HIGH register
- * Implements write-1-to-clear logic for interrupt acknowledgment
- * Writing 1 to a bit position clears that specific interrupt
- * 
- * @param clear_bits Bits to clear (1 = clear interrupt, 0 = no change)
- */
-static inline void write_irq_cause_high(uint8_t clear_bits) {
-    // Clear specified interrupt bits using write-1-to-clear logic
-    indexed_memory_write_irq_cause_high(clear_bits);
-}
 
 /**
  * Read IRQ_MASK_LOW register
@@ -275,45 +138,6 @@ static inline uint8_t read_irq_enable(void) {
     return indexed_memory_get_irq_enable();
 }
 
-/**
- * Write IRQ_ENABLE register
- * Sets the global interrupt enable/disable state
- * 
- * @param enable Global interrupt enable (1 = enabled, 0 = disabled)
- */
-static inline void write_irq_enable(uint8_t enable) {
-    // Set global interrupt enable state
-    indexed_memory_set_irq_enable(enable);
-}
-
-/**
- * Write COMMAND register (window-level)
- * Executes a window-level command on the currently selected index
- * 
- * @param window_num Window number (0-7 for Windows A-H)
- * @param command Command code to execute
- */
-static inline void write_window_command(uint8_t window_num, uint8_t command) {
-    // Get the currently selected index for this window
-    uint8_t idx = g_window_state[window_num].active_index;
-    
-    // Execute window-level command on the selected index
-    // Window commands: CMD_NOP, CMD_RESET_INDEX, CMD_SET_DEFAULT_TO_ADDR, CMD_SET_LIMIT_TO_ADDR
-    indexed_memory_execute_window_command(idx, command);
-}
-
-/**
- * Write SHARED_COMMAND register (system-level)
- * Executes a system-wide command that affects the entire indexed memory system
- * 
- * @param command Command code to execute
- */
-static inline void write_shared_command(uint8_t command) {
-    // Execute shared/system-level command
-    // Shared commands: CMD_SHARED_NOP, CMD_RESET_ALL, CMD_CLEAR_IRQ, CMD_COPY_BLOCK, CMD_SYSTEM_RESET
-    indexed_memory_execute_shared_command(command);
-}
-
 // ============================================================================
 // Module Initialization
 // ============================================================================
@@ -341,18 +165,10 @@ void bus_interface_init(void) {
 // ============================================================================
 
 /**
- * Handle a READ operation from the 6502 bus
- * 
- * OPTIMIZATION NOTES:
- * - Marked as __attribute__((optimize("O3"))) for maximum speed
- * - Marked as __attribute__((hot)) to indicate this is a hot path
- * - Uses inline functions for register handlers to minimize call overhead
- * - Optimized for speculative execution (~150-200ns target)
- * - Most common path (DATA_PORT) is optimized first
+ * Handle a READ operation from the 6502 bus 
  */
 uint8_t __attribute__((optimize("O3"))) __attribute__((hot)) bus_interface_read(uint8_t local_addr) {
     // Decode 8-bit local address
-    // OPTIMIZATION: Use bitwise operations for fastest decoding
     bool is_shared = (local_addr & 0x80) != 0;
     uint8_t window_num = (local_addr >> 4) & 0x07;
     uint8_t reg_offset = local_addr & 0x0F;  // Works for both shared and window space
@@ -360,13 +176,12 @@ uint8_t __attribute__((optimize("O3"))) __attribute__((hot)) bus_interface_read(
     // Check if accessing shared register space
     if (is_shared) {
         // Handle shared register reads
-        // OPTIMIZATION: Use if-else chain for most common registers first
         if (local_addr == REG_DEVICE_STATUS) {
-            return read_device_status();
+            return indexed_memory_get_status();
         } else if (local_addr == REG_IRQ_CAUSE_LOW) {
-            return read_irq_cause_low();
+            return indexed_memory_get_irq_cause_low();
         } else if (local_addr == REG_IRQ_CAUSE_HIGH) {
-            return read_irq_cause_high();
+            return indexed_memory_get_irq_cause_high();
         } else if (local_addr == REG_IRQ_MASK_LOW) {
             return read_irq_mask_low();
         } else if (local_addr == REG_IRQ_MASK_HIGH) {
@@ -380,16 +195,15 @@ uint8_t __attribute__((optimize("O3"))) __attribute__((hot)) bus_interface_read(
     }
     
     // Handle window register reads
-    // OPTIMIZATION: Use if-else chain with most common operations first
     // DATA_PORT is the most frequently accessed register
     if (reg_offset == REG_OFFSET_DATA_PORT) {
         return read_data_port(window_num);
     } else if (reg_offset == REG_OFFSET_IDX_SELECT) {
-        return read_idx_select(window_num);
+        return g_window_state[window_num].active_index;
     } else if (reg_offset == REG_OFFSET_CFG_DATA) {
         return read_cfg_data(window_num);
     } else if (reg_offset == REG_OFFSET_CFG_FIELD_SELECT) {
-        return read_cfg_field_select(window_num);
+        return g_window_state[window_num].config_field_select;
     } else {
         // Reserved register offset (5-15) or write-only COMMAND register
         return 0x00;
@@ -411,11 +225,11 @@ void bus_interface_write(uint8_t local_addr, uint8_t data) {
                 break;
                 
             case REG_IRQ_CAUSE_LOW:
-                write_irq_cause_low(data);
+                indexed_memory_write_irq_cause_low(data);
                 break;
                 
             case REG_IRQ_CAUSE_HIGH:
-                write_irq_cause_high(data);
+                indexed_memory_write_irq_cause_high(data);
                 break;
                 
             case REG_IRQ_MASK_LOW:
@@ -427,11 +241,11 @@ void bus_interface_write(uint8_t local_addr, uint8_t data) {
                 break;
                 
             case REG_IRQ_ENABLE:
-                write_irq_enable(data);
+                indexed_memory_set_irq_enable(data);
                 break;
                 
             case REG_SHARED_COMMAND:
-                write_shared_command(data);
+                indexed_memory_execute_shared_command(data);
                 break;
                 
             default:
@@ -445,7 +259,7 @@ void bus_interface_write(uint8_t local_addr, uint8_t data) {
     // Route to appropriate register handler based on offset
     switch (reg_offset) {
         case REG_OFFSET_IDX_SELECT:
-            write_idx_select(window_num, data);
+            g_window_state[window_num].active_index = data;
             break;
             
         case REG_OFFSET_DATA_PORT:
@@ -453,7 +267,7 @@ void bus_interface_write(uint8_t local_addr, uint8_t data) {
             break;
             
         case REG_OFFSET_CFG_FIELD_SELECT:
-            write_cfg_field_select(window_num, data);
+            g_window_state[window_num].config_field_select = data;
             break;
             
         case REG_OFFSET_CFG_DATA:
@@ -461,7 +275,10 @@ void bus_interface_write(uint8_t local_addr, uint8_t data) {
             break;
             
         case REG_OFFSET_COMMAND:
-            write_window_command(window_num, data);
+            {
+                uint8_t idx = g_window_state[window_num].active_index;
+                indexed_memory_execute_window_command(idx, data);
+            }
             break;
             
         default:

@@ -5,6 +5,7 @@
 
 #include "video_controller.h"
 #include "hardware/gpio_mapping.h"
+#include <string.h>
 
 // Graphics memory structures
 static uint8_t character_tables[CHARACTER_TABLES][CHARACTERS_PER_TABLE][BYTES_PER_CHARACTER];
@@ -25,53 +26,17 @@ static uint8_t ppu_status = 0;
 static uint16_t ppu_oam_addr = 0;
 
 void video_controller_init_core0(void) {
-    // Initialize video memory to default values
-    // Clear all character tables
-    for (int table = 0; table < CHARACTER_TABLES; table++) {
-        for (int char_idx = 0; char_idx < CHARACTERS_PER_TABLE; char_idx++) {
-            for (int byte = 0; byte < BYTES_PER_CHARACTER; byte++) {
-                character_tables[table][char_idx][byte] = 0;
-            }
-        }
-    }
-    
-    // Initialize palette banks with default colors
-    for (int bank = 0; bank < PALETTE_BANKS; bank++) {
-        for (int color = 0; color < COLORS_PER_PALETTE; color++) {
-            palette_banks[bank][color] = 0x0000;  // Black
-        }
-    }
-    
-    // Clear nametables
-    for (int buffer = 0; buffer < NAMETABLE_BUFFERS; buffer++) {
-        for (int y = 0; y < NAMETABLE_HEIGHT; y++) {
-            for (int x = 0; x < NAMETABLE_WIDTH; x++) {
-                nametables[buffer][y][x] = 0;
-            }
-        }
-    }
-    
-    // Clear palette tables
-    for (int buffer = 0; buffer < PALETTE_TABLE_BUFFERS; buffer++) {
-        for (int y = 0; y < NAMETABLE_HEIGHT; y++) {
-            for (int x = 0; x < NAMETABLE_WIDTH; x++) {
-                palette_tables[buffer][y][x] = 0;
-            }
-        }
-    }
-    
-    // Clear OAM data
-    for (int sprite = 0; sprite < MAX_SPRITES; sprite++) {
-        for (int byte = 0; byte < BYTES_PER_SPRITE; byte++) {
-            oam_data[sprite][byte] = 0;
-        }
-    }
+    // Initialize video memory to default values using fast memset
+    memset(character_tables, 0, sizeof(character_tables));
+    memset(palette_banks, 0, sizeof(palette_banks));
+    memset(nametables, 0, sizeof(nametables));
+    memset(palette_tables, 0, sizeof(palette_tables));
+    memset(oam_data, 0, sizeof(oam_data));
     
     // Initialize PPU registers
     ppu_control = 0;
     ppu_status = 0;
     ppu_oam_addr = 0;
-    
     frame_ready = false;
 }
 
