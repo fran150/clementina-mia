@@ -19,25 +19,25 @@ typedef struct {
 #define GPIO_PULL_DOWN 2
 
 static const gpio_config_t gpio_configs[] = {
-    // Address bus pins (A0-A7) - inputs with pull-down
-    {GPIO_ADDR_A0, GPIO_IN, GPIO_PULL_DOWN},
-    {GPIO_ADDR_A1, GPIO_IN, GPIO_PULL_DOWN},
-    {GPIO_ADDR_A2, GPIO_IN, GPIO_PULL_DOWN},
-    {GPIO_ADDR_A3, GPIO_IN, GPIO_PULL_DOWN},
-    {GPIO_ADDR_A4, GPIO_IN, GPIO_PULL_DOWN},
-    {GPIO_ADDR_A5, GPIO_IN, GPIO_PULL_DOWN},
-    {GPIO_ADDR_A6, GPIO_IN, GPIO_PULL_DOWN},
-    {GPIO_ADDR_A7, GPIO_IN, GPIO_PULL_DOWN},
+    // Address bus pins (A0-A7) - inputs with no pull (6502 has push-pull outputs)
+    {GPIO_ADDR_A0, GPIO_IN, GPIO_PULL_NONE},
+    {GPIO_ADDR_A1, GPIO_IN, GPIO_PULL_NONE},
+    {GPIO_ADDR_A2, GPIO_IN, GPIO_PULL_NONE},
+    {GPIO_ADDR_A3, GPIO_IN, GPIO_PULL_NONE},
+    {GPIO_ADDR_A4, GPIO_IN, GPIO_PULL_NONE},
+    {GPIO_ADDR_A5, GPIO_IN, GPIO_PULL_NONE},
+    {GPIO_ADDR_A6, GPIO_IN, GPIO_PULL_NONE},
+    {GPIO_ADDR_A7, GPIO_IN, GPIO_PULL_NONE},
     
-    // Data bus pins (D0-D7) - inputs initially with pull-down
-    {GPIO_DATA_D0, GPIO_IN, GPIO_PULL_DOWN},
-    {GPIO_DATA_D1, GPIO_IN, GPIO_PULL_DOWN},
-    {GPIO_DATA_D2, GPIO_IN, GPIO_PULL_DOWN},
-    {GPIO_DATA_D3, GPIO_IN, GPIO_PULL_DOWN},
-    {GPIO_DATA_D4, GPIO_IN, GPIO_PULL_DOWN},
-    {GPIO_DATA_D5, GPIO_IN, GPIO_PULL_DOWN},
-    {GPIO_DATA_D6, GPIO_IN, GPIO_PULL_DOWN},
-    {GPIO_DATA_D7, GPIO_IN, GPIO_PULL_DOWN},
+    // Data bus pins (D0-D7) - inputs initially with no pull (6502 has push-pull outputs)
+    {GPIO_DATA_D0, GPIO_IN, GPIO_PULL_NONE},
+    {GPIO_DATA_D1, GPIO_IN, GPIO_PULL_NONE},
+    {GPIO_DATA_D2, GPIO_IN, GPIO_PULL_NONE},
+    {GPIO_DATA_D3, GPIO_IN, GPIO_PULL_NONE},
+    {GPIO_DATA_D4, GPIO_IN, GPIO_PULL_NONE},
+    {GPIO_DATA_D5, GPIO_IN, GPIO_PULL_NONE},
+    {GPIO_DATA_D6, GPIO_IN, GPIO_PULL_NONE},
+    {GPIO_DATA_D7, GPIO_IN, GPIO_PULL_NONE},
     
     // Control signals - inputs with pull-up (active low)
     {GPIO_WE, GPIO_IN, GPIO_PULL_UP},
@@ -65,6 +65,8 @@ void gpio_mapping_init(void) {
             gpio_pull_up(cfg->pin);
         } else if (cfg->pull == GPIO_PULL_DOWN) {
             gpio_pull_down(cfg->pin);
+        } else {
+            gpio_disable_pulls(cfg->pin);
         }
     }
     
@@ -110,25 +112,16 @@ void gpio_set_data_bus_direction(bool output) {
 
   for (int i = GPIO_DATA_D0; i <= GPIO_DATA_D7; i++) {
     gpio_set_dir(i, direction ? GPIO_OUT : GPIO_IN);
-    if (!output) {
-      gpio_pull_down(i); // Pull down when input
-    }
+    // No pull resistors needed - 6502 has push-pull outputs
   }
 }
 
-bool gpio_read_control_signals(bool *we, bool *oe, bool *rom_cs, bool *video_cs,
+void gpio_read_control_signals(bool *we, bool *oe, bool *rom_cs, bool *video_cs,
                                bool *gen_cs) {
-  if (we)
-    *we = !gpio_get(GPIO_WE); // Active low
-  if (oe)
-    *oe = !gpio_get(GPIO_OE); // Active low
-  if (rom_cs)
-    *rom_cs = !gpio_get(GPIO_ROM_CS); // Active low
-  if (video_cs)
-    *video_cs = !gpio_get(GPIO_VIDEO_CS); // Active low
-  if (gen_cs)
-    *gen_cs = !gpio_get(GPIO_GEN_CS); // Active low
-
-  return true;
+  *we = !gpio_get(GPIO_WE);         // Active low
+  *oe = !gpio_get(GPIO_OE);         // Active low
+  *rom_cs = !gpio_get(GPIO_ROM_CS); // Active low
+  *video_cs = !gpio_get(GPIO_VIDEO_CS); // Active low
+  *gen_cs = !gpio_get(GPIO_GEN_CS); // Active low
 }
 

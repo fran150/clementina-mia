@@ -47,8 +47,8 @@
 // Window base addresses (8-bit local addresses)
 #define WINDOW_A_BASE           0x00    // Window A: 0x00-0x0F
 #define WINDOW_B_BASE           0x10    // Window B: 0x10-0x1F
-#define WINDOW_C_BASE           0x20    // Window C: 0x20-0x2F (reserved)
-#define WINDOW_D_BASE           0x30    // Window D: 0x30-0x3F (reserved)
+#define WINDOW_C_BASE           0x20    // Window C: 0x20-0x2F
+#define WINDOW_D_BASE           0x30    // Window D: 0x30-0x3F
 #define SHARED_BASE             0x80    // Shared registers: 0x80-0xFF
 
 // Active shared register addresses (0xF0-0xFF)
