@@ -52,7 +52,7 @@
 // Data bus mask for 8-bit data
 #define DATA_BUS_MASK   0xFF
 
-// Function prototypes
+// Function prototypes, these are mostly used on the boot phase for ROM emulation
 void gpio_mapping_init(void);
 uint16_t gpio_read_address_bus(void);
 uint8_t gpio_read_data_bus(void);
