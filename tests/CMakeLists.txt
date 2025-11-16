@@ -19,6 +19,7 @@ include_directories(
 # Only include modules that don't require hardware
 set(MODULE_SOURCES
     ../src/bus_interface/bus_interface.c
+    ../src/irq/irq.c
     ../src/indexed_memory/indexed_memory.c
     mocks/indexed_memory_dma_mock.c
     mocks/bus_sync_pio_mock.c

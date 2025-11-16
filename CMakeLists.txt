@@ -61,6 +61,7 @@ add_executable(mia
     src/system/clock_control.c
     src/system/reset_control.c
     src/rom_emulation/rom_emulator.c
+    src/irq/irq.c
     src/indexed_memory/indexed_memory.c
     src/indexed_memory/indexed_memory_dma_hw.c
     src/bus_interface/bus_interface.c
@@ -81,6 +82,7 @@ target_include_directories(mia PRIVATE
     src/hardware/
     src/system/
     src/rom_emulation/
+    src/irq/
     src/indexed_memory/
     src/bus_interface/
     src/video/

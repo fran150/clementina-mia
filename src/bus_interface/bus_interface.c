@@ -10,10 +10,11 @@
 
 #include "bus_interface.h"
 #include "indexed_memory/indexed_memory.h"
+#include "irq/irq.h"
 #include <stddef.h>
 #include <string.h>
 
-// Access to indexed memory state for direct field access
+// Access to indexed memory state for status field
 extern indexed_memory_state_t g_state;
 
 // ============================================================================
@@ -88,7 +89,7 @@ static inline void write_cfg_data(uint8_t window_num, uint8_t data) {
  */
 static inline uint8_t read_irq_mask_low(void) {
     // Get full 16-bit mask and return low byte
-    return g_state.irq_mask & 0xFF;
+    return irq_get_mask() & 0xFF;
 }
 
 /**
@@ -99,8 +100,8 @@ static inline uint8_t read_irq_mask_low(void) {
  */
 static inline void write_irq_mask_low(uint8_t mask) {
     // Get current mask, update low byte, and write back
-    uint16_t new_mask = (g_state.irq_mask & 0xFF00) | mask;
-    indexed_memory_set_irq_mask(new_mask);
+    uint16_t new_mask = (irq_get_mask() & 0xFF00) | mask;
+    irq_set_mask(new_mask);
 }
 
 /**
@@ -111,7 +112,7 @@ static inline void write_irq_mask_low(uint8_t mask) {
  */
 static inline uint8_t read_irq_mask_high(void) {
     // Get full 16-bit mask and return high byte
-    return (g_state.irq_mask >> 8) & 0xFF;
+    return (irq_get_mask() >> 8) & 0xFF;
 }
 
 /**
@@ -122,8 +123,8 @@ static inline uint8_t read_irq_mask_high(void) {
  */
 static inline void write_irq_mask_high(uint8_t mask) {
     // Get current mask, update high byte, and write back
-    uint16_t new_mask = (g_state.irq_mask & 0x00FF) | ((uint16_t)mask << 8);
-    indexed_memory_set_irq_mask(new_mask);
+    uint16_t new_mask = (irq_get_mask() & 0x00FF) | ((uint16_t)mask << 8);
+    irq_set_mask(new_mask);
 }
 
 /**
@@ -134,7 +135,7 @@ static inline void write_irq_mask_high(uint8_t mask) {
  */
 static inline uint8_t read_irq_enable(void) {
     // Return global interrupt enable state
-    return g_state.irq_enable;
+    return irq_get_enable();
 }
 
 // ============================================================================
@@ -176,11 +177,11 @@ uint8_t __attribute__((optimize("O3"))) __attribute__((hot)) bus_interface_read(
     if (is_shared) {
         // Handle shared register reads
         if (local_addr == REG_DEVICE_STATUS) {
-            return g_state.status;
+            return g_state.status | (irq_is_pending() ? STATUS_IRQ_PENDING : 0);
         } else if (local_addr == REG_IRQ_CAUSE_LOW) {
-            return g_state.irq_cause & 0xFF;
+            return irq_get_cause_low();
         } else if (local_addr == REG_IRQ_CAUSE_HIGH) {
-            return (g_state.irq_cause >> 8) & 0xFF;
+            return irq_get_cause_high();
         } else if (local_addr == REG_IRQ_MASK_LOW) {
             return read_irq_mask_low();
         } else if (local_addr == REG_IRQ_MASK_HIGH) {
@@ -224,11 +225,11 @@ void bus_interface_write(uint8_t local_addr, uint8_t data) {
                 break;
                 
             case REG_IRQ_CAUSE_LOW:
-                indexed_memory_write_irq_cause_low(data);
+                irq_write_cause_low(data);
                 break;
                 
             case REG_IRQ_CAUSE_HIGH:
-                indexed_memory_write_irq_cause_high(data);
+                irq_write_cause_high(data);
                 break;
                 
             case REG_IRQ_MASK_LOW:
@@ -240,7 +241,7 @@ void bus_interface_write(uint8_t local_addr, uint8_t data) {
                 break;
                 
             case REG_IRQ_ENABLE:
-                indexed_memory_set_irq_enable(data);
+                irq_set_enable(data);
                 break;
                 
             case REG_SHARED_COMMAND:

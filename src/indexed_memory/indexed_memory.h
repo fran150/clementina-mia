@@ -10,6 +10,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "irq/irq.h"
 
 // Index allocation ranges
 #define IDX_SYSTEM_ERROR        0
@@ -74,9 +75,9 @@
 #define CMD_COPY_BLOCK              0x04    // Execute DMA block copy
 #define CMD_SYSTEM_RESET            0x05    // Full hardware reset (reboots Pico and 6502)
 
-// Status bits
+// Status bits (non-IRQ related)
 #define STATUS_BUSY             0x01
-#define STATUS_IRQ_PENDING      0x02
+#define STATUS_IRQ_PENDING      0x02    // For bus interface compatibility
 #define STATUS_MEMORY_ERROR     0x04
 #define STATUS_INDEX_OVERFLOW   0x08
 #define STATUS_USB_DATA_READY   0x10
@@ -84,41 +85,19 @@
 #define STATUS_DMA_ACTIVE       0x40
 #define STATUS_SYSTEM_READY     0x80
 
-// IRQ cause codes and mask bits (same values used for both purposes)
-// Low byte (bits 0-7): System and I/O interrupts
-#define IRQ_NO_IRQ              0x0000  // Special value: no interrupt
-#define IRQ_MEMORY_ERROR        0x0001  // Bit 0 (low byte)
-#define IRQ_INDEX_OVERFLOW      0x0002  // Bit 1 (low byte)
-#define IRQ_DMA_COMPLETE        0x0004  // Bit 2 (low byte)
-#define IRQ_DMA_ERROR           0x0008  // Bit 3 (low byte)
-#define IRQ_USB_KEYBOARD        0x0010  // Bit 4 (low byte)
-#define IRQ_USB_DEVICE_CHANGE   0x0020  // Bit 5 (low byte)
-#define IRQ_RESERVED_6          0x0040  // Bit 6 (low byte) - reserved
-#define IRQ_RESERVED_7          0x0080  // Bit 7 (low byte) - reserved
-
-// High byte (bits 8-15): Video interrupts
-#define IRQ_VIDEO_FRAME_COMPLETE 0x0100 // Bit 8 (high byte, bit 0)
-#define IRQ_VIDEO_COLLISION     0x0200  // Bit 9 (high byte, bit 1)
-#define IRQ_RESERVED_10         0x0400  // Bit 10 (high byte, bit 2) - reserved
-#define IRQ_RESERVED_11         0x0800  // Bit 11 (high byte, bit 3) - reserved
-#define IRQ_RESERVED_12         0x1000  // Bit 12 (high byte, bit 4) - reserved
-#define IRQ_RESERVED_13         0x2000  // Bit 13 (high byte, bit 5) - reserved
-#define IRQ_RESERVED_14         0x4000  // Bit 14 (high byte, bit 6) - reserved
-#define IRQ_RESERVED_15         0x8000  // Bit 15 (high byte, bit 7) - reserved
-
 // Performance optimization macros
 #define ADDR_VALID(addr) ((addr) < MIA_MEMORY_SIZE)
 #define CHECK_ADDR_OR_RETURN(addr, retval) \
     if ((addr) >= MIA_MEMORY_SIZE) { \
         g_state.status |= STATUS_MEMORY_ERROR; \
-        indexed_memory_set_irq(IRQ_MEMORY_ERROR); \
+        irq_set(IRQ_MEMORY_ERROR); \
         return retval; \
     }
 
 #define CHECK_ADDR_OR_RETURN_VOID(addr) \
     if ((addr) >= MIA_MEMORY_SIZE) { \
         g_state.status |= STATUS_MEMORY_ERROR; \
-        indexed_memory_set_irq(IRQ_MEMORY_ERROR); \
+        irq_set(IRQ_MEMORY_ERROR); \
         return; \
     }
 
@@ -146,14 +125,11 @@ typedef struct {
     uint16_t count;
 } dma_config_t;
 
-// System state
+// System state (non-IRQ related)
 typedef struct {
     index_t indexes[256];       // 256 memory indexes
     dma_config_t dma_config;    // DMA operation configuration
-    uint8_t status;            // System status register
-    uint16_t irq_cause;        // Interrupt cause register (16-bit bit mask)
-    uint16_t irq_mask;         // 16-bit interrupt mask register (which IRQs are enabled)
-    uint8_t irq_enable;        // Global interrupt enable/disable (1 = enabled, 0 = disabled)
+    uint8_t status;            // System status register (non-IRQ bits)
 } indexed_memory_state_t;
 
 // Public API - functions used by other modules
@@ -171,12 +147,7 @@ void indexed_memory_set_config_field(uint8_t idx, uint8_t field, uint8_t value);
 void indexed_memory_execute_window_command(uint8_t idx, uint8_t cmd);
 void indexed_memory_execute_shared_command(uint8_t cmd);
 
-// Status and IRQ management
+// Status management
 void indexed_memory_set_status(uint8_t status_bits);
-void indexed_memory_set_irq(uint16_t cause);
-void indexed_memory_write_irq_cause_low(uint8_t clear_bits);
-void indexed_memory_write_irq_cause_high(uint8_t clear_bits);
-void indexed_memory_set_irq_mask(uint16_t mask);
-void indexed_memory_set_irq_enable(uint8_t enable);
 
 #endif // INDEXED_MEMORY_H

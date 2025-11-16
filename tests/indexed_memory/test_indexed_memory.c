@@ -6,6 +6,7 @@
 
 #include "test_indexed_memory.h"
 #include "indexed_memory/indexed_memory.h"
+#include "irq/irq.h"
 #include "mocks/pico_mock.h"
 #include <stdio.h>
 #include <string.h>
@@ -41,8 +42,8 @@ static void test_set_index_flags(uint8_t idx, uint8_t flags) {
 }
 
 static uint16_t test_get_irq_cause(void) {
-    uint8_t low = g_state.irq_cause & 0xFF;
-    uint8_t high = (g_state.irq_cause >> 8) & 0xFF;
+    uint8_t low = irq_get_cause_low();
+    uint8_t high = irq_get_cause_high();
     return (uint16_t)low | ((uint16_t)high << 8);
 }
 

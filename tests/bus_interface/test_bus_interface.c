@@ -11,6 +11,7 @@
 #include "test_bus_interface.h"
 #include "bus_interface/bus_interface.h"
 #include "indexed_memory/indexed_memory.h"
+#include "irq/irq.h"
 #include <stdio.h>
 
 // Access to indexed memory state for testing
@@ -44,8 +45,8 @@ static void test_set_index_flags(uint8_t idx, uint8_t flags) {
 }
 
 static uint16_t test_get_irq_cause(void) {
-    uint8_t low = g_state.irq_cause & 0xFF;
-    uint8_t high = (g_state.irq_cause >> 8) & 0xFF;
+    uint8_t low = irq_get_cause_low();
+    uint8_t high = irq_get_cause_high();
     return (uint16_t)low | ((uint16_t)high << 8);
 }
 
@@ -1971,7 +1972,7 @@ bool test_bus_interface_device_status_read(void) {
     }
     
     // Trigger an interrupt and verify IRQ_PENDING bit
-    indexed_memory_set_irq(IRQ_DMA_COMPLETE);
+    irq_set(IRQ_DMA_COMPLETE);
     status = bus_interface_read(REG_DEVICE_STATUS);
     
     if ((status & STATUS_IRQ_PENDING) == 0) {
@@ -2010,7 +2011,7 @@ bool test_bus_interface_irq_cause_low_read(void) {
     }
     
     // Set a low byte interrupt (DMA_COMPLETE = bit 2)
-    indexed_memory_set_irq(IRQ_DMA_COMPLETE);
+    irq_set(IRQ_DMA_COMPLETE);
     cause_low = bus_interface_read(REG_IRQ_CAUSE_LOW);
     
     if ((cause_low & 0x04) == 0) {
@@ -2019,7 +2020,7 @@ bool test_bus_interface_irq_cause_low_read(void) {
     }
     
     // Set another low byte interrupt (MEMORY_ERROR = bit 0)
-    indexed_memory_set_irq(IRQ_MEMORY_ERROR);
+    irq_set(IRQ_MEMORY_ERROR);
     cause_low = bus_interface_read(REG_IRQ_CAUSE_LOW);
     
     if ((cause_low & 0x05) != 0x05) {
@@ -2049,7 +2050,7 @@ bool test_bus_interface_irq_cause_high_read(void) {
     }
     
     // Set a high byte interrupt (VIDEO_FRAME_COMPLETE = bit 8, which is bit 0 of high byte)
-    indexed_memory_set_irq(IRQ_VIDEO_FRAME_COMPLETE);
+    irq_set(IRQ_VIDEO_FRAME_COMPLETE);
     cause_high = bus_interface_read(REG_IRQ_CAUSE_HIGH);
     
     if ((cause_high & 0x01) == 0) {
@@ -2058,7 +2059,7 @@ bool test_bus_interface_irq_cause_high_read(void) {
     }
     
     // Set another high byte interrupt (VIDEO_COLLISION = bit 9, which is bit 1 of high byte)
-    indexed_memory_set_irq(IRQ_VIDEO_COLLISION);
+    irq_set(IRQ_VIDEO_COLLISION);
     cause_high = bus_interface_read(REG_IRQ_CAUSE_HIGH);
     
     if ((cause_high & 0x03) != 0x03) {
@@ -2081,7 +2082,7 @@ bool test_bus_interface_irq_cause_write_to_clear(void) {
     indexed_memory_init();
     
     // Set multiple interrupts in low byte
-    indexed_memory_set_irq(IRQ_MEMORY_ERROR | IRQ_INDEX_OVERFLOW | IRQ_DMA_COMPLETE);
+    irq_set(IRQ_MEMORY_ERROR | IRQ_INDEX_OVERFLOW | IRQ_DMA_COMPLETE);
     
     uint8_t cause_low = bus_interface_read(REG_IRQ_CAUSE_LOW);
     if ((cause_low & 0x07) != 0x07) {
@@ -2108,7 +2109,7 @@ bool test_bus_interface_irq_cause_write_to_clear(void) {
     }
     
     // Test high byte write-1-to-clear
-    indexed_memory_set_irq(IRQ_VIDEO_FRAME_COMPLETE | IRQ_VIDEO_COLLISION);
+    irq_set(IRQ_VIDEO_FRAME_COMPLETE | IRQ_VIDEO_COLLISION);
     
     uint8_t cause_high = bus_interface_read(REG_IRQ_CAUSE_HIGH);
     if ((cause_high & 0x03) != 0x03) {
@@ -2262,7 +2263,7 @@ bool test_bus_interface_irq_line_behavior(void) {
     }
     
     // Set an interrupt - should assert IRQ line (IRQ_PENDING bit set)
-    indexed_memory_set_irq(IRQ_DMA_COMPLETE);
+    irq_set(IRQ_DMA_COMPLETE);
     status = bus_interface_read(REG_DEVICE_STATUS);
     
     if ((status & STATUS_IRQ_PENDING) == 0) {
@@ -2281,7 +2282,7 @@ bool test_bus_interface_irq_line_behavior(void) {
     
     // Set an interrupt but disable it in the mask - should not assert IRQ
     bus_interface_write(REG_IRQ_MASK_LOW, 0xFB);  // Disable DMA_COMPLETE (bit 2)
-    indexed_memory_set_irq(IRQ_DMA_COMPLETE);
+    irq_set(IRQ_DMA_COMPLETE);
     status = bus_interface_read(REG_DEVICE_STATUS);
     
     if ((status & STATUS_IRQ_PENDING) != 0) {
@@ -2303,7 +2304,7 @@ bool test_bus_interface_irq_line_behavior(void) {
     
     // Set an interrupt but disable global interrupts - should not assert IRQ
     bus_interface_write(REG_IRQ_ENABLE, 0x00);
-    indexed_memory_set_irq(IRQ_DMA_COMPLETE);
+    irq_set(IRQ_DMA_COMPLETE);
     status = bus_interface_read(REG_DEVICE_STATUS);
     
     if ((status & STATUS_IRQ_PENDING) != 0) {
@@ -2339,7 +2340,7 @@ bool test_bus_interface_individual_interrupt_bits(void) {
         uint16_t irq_bit = 1 << bit;
         
         // Set the interrupt
-        indexed_memory_set_irq(irq_bit);
+        irq_set(irq_bit);
         
         // Read and verify
         uint8_t cause_low = bus_interface_read(REG_IRQ_CAUSE_LOW);
@@ -2364,7 +2365,7 @@ bool test_bus_interface_individual_interrupt_bits(void) {
         uint16_t irq_bit = 1 << (bit + 8);
         
         // Set the interrupt
-        indexed_memory_set_irq(irq_bit);
+        irq_set(irq_bit);
         
         // Read and verify
         uint8_t cause_high = bus_interface_read(REG_IRQ_CAUSE_HIGH);
@@ -2551,9 +2552,9 @@ bool test_bus_interface_command_clear_irq(void) {
     indexed_memory_init();
     
     // Set some interrupts
-    indexed_memory_set_irq(IRQ_MEMORY_ERROR);
-    indexed_memory_set_irq(IRQ_DMA_COMPLETE);
-    indexed_memory_set_irq(IRQ_VIDEO_FRAME_COMPLETE);
+    irq_set(IRQ_MEMORY_ERROR);
+    irq_set(IRQ_DMA_COMPLETE);
+    irq_set(IRQ_VIDEO_FRAME_COMPLETE);
     
     // Verify interrupts are set
     uint16_t cause = test_get_irq_cause();
@@ -2588,7 +2589,7 @@ bool test_bus_interface_command_system_reset(void) {
     
     // Modify system state
     test_set_index_address(128, 0x00013900);
-    indexed_memory_set_irq(IRQ_MEMORY_ERROR);
+    irq_set(IRQ_MEMORY_ERROR);
     
     // Execute CMD_SYSTEM_RESET via SHARED_COMMAND register at 0xFF
     bus_interface_write(0xFF, CMD_SYSTEM_RESET);
@@ -2628,8 +2629,8 @@ bool test_bus_interface_command_factory_reset_all_idx(void) {
     // Modify system state
     test_set_index_address(128, 0x00013900);
     test_set_index_address(129, 0x00013A00);
-    indexed_memory_set_irq(IRQ_MEMORY_ERROR);
-    indexed_memory_set_irq(IRQ_DMA_COMPLETE);
+    irq_set(IRQ_MEMORY_ERROR);
+    irq_set(IRQ_DMA_COMPLETE);
     
     // Execute CMD_FACTORY_RESET_ALL_IDX via SHARED_COMMAND register at 0xFF
     bus_interface_write(0xFF, CMD_FACTORY_RESET_ALL_IDX);

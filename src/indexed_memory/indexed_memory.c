@@ -18,7 +18,6 @@
 
 // Forward declarations
 static void indexed_memory_reset_index(uint8_t idx);
-static void indexed_memory_clear_irq(void);
 static void indexed_memory_copy_block(uint8_t src_idx, uint8_t dst_idx, uint16_t count);
 static void indexed_memory_set_address(uint8_t idx, addr_field_t field, uint32_t address);
 
@@ -47,27 +46,16 @@ static void dma_completion_callback(void) {
     g_state.status &= ~STATUS_DMA_ACTIVE;
     
     // Signal completion
-    indexed_memory_set_irq(IRQ_DMA_COMPLETE);
-}
-
-/**
- * Assert IRQ line to 6502 (active low)
- */
-static inline void assert_irq_line(void) {
-    gpio_put(GPIO_IRQ_OUT, 0);  // Assert IRQ (active low)
-}
-
-/**
- * Deassert IRQ line to 6502 (active low)
- */
-static inline void deassert_irq_line(void) {
-    gpio_put(GPIO_IRQ_OUT, 1);  // Deassert IRQ (active low)
+    irq_set(IRQ_DMA_COMPLETE);
 }
 
 /**
  * Initialize the indexed memory system
  */
 void indexed_memory_init(void) {
+    // Initialize IRQ system first
+    irq_init();
+    
     // Clear all state
     memset(&g_state, 0, sizeof(g_state));
     
@@ -76,9 +64,6 @@ void indexed_memory_init(void) {
     
     // Initialize system status
     g_state.status = STATUS_SYSTEM_READY;
-    g_state.irq_cause = IRQ_NO_IRQ;
-    g_state.irq_mask = 0xFFFF; // All interrupts enabled by default (16-bit)
-    g_state.irq_enable = 0x01; // Global interrupts enabled by default
     
     // Pre-configure system indexes
     
@@ -481,7 +466,7 @@ void indexed_memory_execute_shared_command(uint8_t cmd) {
             break;
         case CMD_CLEAR_IRQ:
             // Clear all pending interrupts
-            indexed_memory_clear_irq();
+            irq_clear_all();
             break;
         case CMD_COPY_BLOCK:
             // Execute DMA block copy using configured parameters
@@ -523,14 +508,14 @@ void indexed_memory_copy_block(uint8_t src_idx, uint8_t dst_idx, uint16_t count)
     // Validate addresses
     if (src_addr >= MIA_MEMORY_SIZE || dst_addr >= MIA_MEMORY_SIZE) {
         g_state.status |= STATUS_MEMORY_ERROR;
-        indexed_memory_set_irq(IRQ_MEMORY_ERROR);
+        irq_set(IRQ_MEMORY_ERROR);
         return;
     }
     
     // Check if transfer would exceed memory bounds
     if (src_addr + count > MIA_MEMORY_SIZE || dst_addr + count > MIA_MEMORY_SIZE) {
         g_state.status |= STATUS_MEMORY_ERROR;
-        indexed_memory_set_irq(IRQ_DMA_ERROR);
+        irq_set(IRQ_DMA_ERROR);
         return;
     }
     
@@ -540,7 +525,7 @@ void indexed_memory_copy_block(uint8_t src_idx, uint8_t dst_idx, uint16_t count)
         // This prevents the MIA from missing 6502 bus timing requirements
         // The 6502 can check STATUS_DMA_ACTIVE before initiating transfers
         // or wait for IRQ_DMA_COMPLETE interrupt
-        indexed_memory_set_irq(IRQ_DMA_ERROR);
+        irq_set(IRQ_DMA_ERROR);
         return;
     }
     
@@ -591,76 +576,28 @@ void indexed_memory_clear_status(uint8_t status_bits) {
  * Write to IRQ cause low byte (write-1-to-clear)
  * Writing 1 to a bit position clears that interrupt
  */
-void indexed_memory_write_irq_cause_low(uint8_t clear_bits) {
-    // Clear bits where clear_bits has 1s (write-1-to-clear)
-    g_state.irq_cause &= ~((uint16_t)clear_bits);
-    
-    // If no enabled interrupts are pending, deassert IRQ line
-    if ((g_state.irq_cause & g_state.irq_mask) == 0) {
-        g_state.status &= ~STATUS_IRQ_PENDING;
-        deassert_irq_line();
-    }
-}
 
 /**
  * Write to IRQ cause high byte (write-1-to-clear)
  * Writing 1 to a bit position clears that interrupt
  */
-void indexed_memory_write_irq_cause_high(uint8_t clear_bits) {
-    // Clear bits where clear_bits has 1s (write-1-to-clear)
-    // Shift clear_bits to high byte position
-    g_state.irq_cause &= ~((uint16_t)clear_bits << 8);
-    
-    // If no enabled interrupts are pending, deassert IRQ line
-    if ((g_state.irq_cause & g_state.irq_mask) == 0) {
-        g_state.status &= ~STATUS_IRQ_PENDING;
-        deassert_irq_line();
-    }
-}
 
 /**
  * Clear IRQ
  * Clears all pending interrupts
  */
-void indexed_memory_clear_irq(void) {
-    // Clear all pending interrupts
-    g_state.irq_cause = IRQ_NO_IRQ;
-    g_state.status &= ~STATUS_IRQ_PENDING;
-    deassert_irq_line();
-}
 
 /**
  * Clear specific IRQ
  * Clears the specified interrupt bit(s) from the pending register
  * If no enabled interrupts remain pending, deasserts the IRQ line
  */
-void indexed_memory_clear_specific_irq(uint16_t cause) {
-    // Clear the specified interrupt bit(s)
-    g_state.irq_cause &= ~cause;
-    
-    // If no enabled interrupts are pending, clear the IRQ line
-    if ((g_state.irq_cause & g_state.irq_mask) == 0) {
-        g_state.status &= ~STATUS_IRQ_PENDING;
-        deassert_irq_line();
-    }
-}
 
 /**
  * Set IRQ
  * Sets the specified interrupt bit(s) in the pending register
  * Only asserts IRQ line if the interrupt source is enabled in the mask and global enable is on
  */
-void indexed_memory_set_irq(uint16_t cause) {
-    // Set the interrupt bit(s) in the pending register (OR to accumulate)
-    g_state.irq_cause |= cause;
-    
-    // Check if this interrupt source is enabled in the 16-bit mask and global enable is on
-    // Only assert IRQ line if at least one enabled interrupt is pending and global enable is on
-    if (g_state.irq_enable && ((g_state.irq_cause & g_state.irq_mask) != 0)) {
-        g_state.status |= STATUS_IRQ_PENDING;
-        assert_irq_line();
-    }
-}
 
 
 
@@ -675,20 +612,6 @@ void indexed_memory_set_irq(uint16_t cause) {
  * Controls which interrupt sources are enabled
  * 1 = enabled, 0 = disabled
  */
-void indexed_memory_set_irq_mask(uint16_t mask) {
-    g_state.irq_mask = mask;
-    
-    // Re-evaluate IRQ line state based on new mask
-    // If no enabled interrupts are pending, deassert IRQ line
-    if ((g_state.irq_cause & g_state.irq_mask) == 0) {
-        g_state.status &= ~STATUS_IRQ_PENDING;
-        deassert_irq_line();
-    } else if (g_state.irq_enable) {
-        // If there are enabled interrupts pending and global enable is on, assert IRQ
-        g_state.status |= STATUS_IRQ_PENDING;
-        assert_irq_line();
-    }
-}
 
 /**
  * Get global IRQ enable state
@@ -699,20 +622,4 @@ void indexed_memory_set_irq_mask(uint16_t mask) {
  * Controls whether interrupts can be asserted to the 6502
  * 1 = enabled, 0 = disabled
  */
-void indexed_memory_set_irq_enable(uint8_t enable) {
-    g_state.irq_enable = enable ? 0x01 : 0x00;
-    
-    // Re-evaluate IRQ line state based on new enable state
-    if (g_state.irq_enable) {
-        // If enabling and there are masked interrupts pending, assert IRQ
-        if ((g_state.irq_cause & g_state.irq_mask) != 0) {
-            g_state.status |= STATUS_IRQ_PENDING;
-            assert_irq_line();
-        }
-    } else {
-        // If disabling, deassert IRQ line
-        g_state.status &= ~STATUS_IRQ_PENDING;
-        deassert_irq_line();
-    }
-}
 
