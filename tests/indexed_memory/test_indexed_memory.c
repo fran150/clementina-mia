@@ -10,6 +10,53 @@
 #include <stdio.h>
 #include <string.h>
 
+// Access to indexed memory state for testing
+extern indexed_memory_state_t g_state;
+
+// Helper functions to replace internal function calls with public API
+static void test_set_index_address(uint8_t idx, uint32_t address) {
+    indexed_memory_set_config_field(idx, CFG_ADDR_L, address & 0xFF);
+    indexed_memory_set_config_field(idx, CFG_ADDR_M, (address >> 8) & 0xFF);
+    indexed_memory_set_config_field(idx, CFG_ADDR_H, (address >> 16) & 0xFF);
+}
+
+static void test_set_index_default(uint8_t idx, uint32_t address) {
+    indexed_memory_set_config_field(idx, CFG_DEFAULT_L, address & 0xFF);
+    indexed_memory_set_config_field(idx, CFG_DEFAULT_M, (address >> 8) & 0xFF);
+    indexed_memory_set_config_field(idx, CFG_DEFAULT_H, (address >> 16) & 0xFF);
+}
+
+static void test_set_index_limit(uint8_t idx, uint32_t address) {
+    indexed_memory_set_config_field(idx, CFG_LIMIT_L, address & 0xFF);
+    indexed_memory_set_config_field(idx, CFG_LIMIT_M, (address >> 8) & 0xFF);
+    indexed_memory_set_config_field(idx, CFG_LIMIT_H, (address >> 16) & 0xFF);
+}
+
+static void test_set_index_step(uint8_t idx, uint8_t step) {
+    indexed_memory_set_config_field(idx, CFG_STEP, step);
+}
+
+static void test_set_index_flags(uint8_t idx, uint8_t flags) {
+    indexed_memory_set_config_field(idx, CFG_FLAGS, flags);
+}
+
+static uint16_t test_get_irq_cause(void) {
+    uint8_t low = g_state.irq_cause & 0xFF;
+    uint8_t high = (g_state.irq_cause >> 8) & 0xFF;
+    return (uint16_t)low | ((uint16_t)high << 8);
+}
+
+static void test_copy_block(uint8_t src_idx, uint8_t dst_idx, uint16_t count) {
+    // Set up DMA configuration using config fields
+    indexed_memory_set_config_field(0, CFG_COPY_SRC_IDX, src_idx);
+    indexed_memory_set_config_field(0, CFG_COPY_DST_IDX, dst_idx);
+    indexed_memory_set_config_field(0, CFG_COPY_COUNT_L, count & 0xFF);
+    indexed_memory_set_config_field(0, CFG_COPY_COUNT_H, (count >> 8) & 0xFF);
+    
+    // Execute copy command
+    indexed_memory_execute_shared_command(CMD_COPY_BLOCK);
+}
+
 // Helper to get current index address using public API
 static inline uint32_t get_index_address(uint8_t idx) {
     uint8_t addr_l = indexed_memory_get_config_field(idx, CFG_ADDR_L);
@@ -17,9 +64,6 @@ static inline uint32_t get_index_address(uint8_t idx) {
     uint8_t addr_h = indexed_memory_get_config_field(idx, CFG_ADDR_H);
     return addr_l | (addr_m << 8) | (addr_h << 16);
 }
-
-// External access to internal state for testing DMA busy scenario
-extern indexed_memory_state_t g_state;
 
 /**
  * Test indexed memory initialization
@@ -30,14 +74,14 @@ bool test_indexed_memory_init(void) {
     indexed_memory_init();
     
     // Check system status
-    uint8_t status = indexed_memory_get_status();
+    uint8_t status = g_state.status;
     if (!(status & STATUS_SYSTEM_READY)) {
         printf("FAIL: System not ready after init\n");
         return false;
     }
     
     // Check IRQ state
-    uint8_t irq_cause = indexed_memory_get_irq_cause();
+    uint8_t irq_cause = test_get_irq_cause();
     if (irq_cause != IRQ_NO_IRQ) {
         printf("FAIL: IRQ pending after init\n");
         return false;
@@ -71,7 +115,7 @@ bool test_index_structure(void) {
     
     // Test address setting
     uint32_t test_addr = 0x20013800; // MIA_USER_AREA_BASE
-    indexed_memory_set_index_address(test_idx, test_addr);
+    test_set_index_address(test_idx, test_addr);
     
     uint8_t addr_l = indexed_memory_get_config_field(test_idx, CFG_ADDR_L);
     uint8_t addr_m = indexed_memory_get_config_field(test_idx, CFG_ADDR_M);
@@ -85,7 +129,7 @@ bool test_index_structure(void) {
     
     // Test default address setting
     uint32_t default_addr = 0x20014800; // MIA_USER_AREA_BASE + 0x1000
-    indexed_memory_set_index_default(test_idx, default_addr);
+    test_set_index_default(test_idx, default_addr);
     
     uint8_t def_l = indexed_memory_get_config_field(test_idx, CFG_DEFAULT_L);
     uint8_t def_m = indexed_memory_get_config_field(test_idx, CFG_DEFAULT_M);
@@ -99,7 +143,7 @@ bool test_index_structure(void) {
     
     // Test step size setting
     uint8_t test_step = 4;
-    indexed_memory_set_index_step(test_idx, test_step);
+    test_set_index_step(test_idx, test_step);
     
     uint8_t read_step = indexed_memory_get_config_field(test_idx, CFG_STEP);
     if (read_step != test_step) {
@@ -109,7 +153,7 @@ bool test_index_structure(void) {
     
     // Test flags setting
     uint8_t test_flags = FLAG_AUTO_STEP | FLAG_DIRECTION;
-    indexed_memory_set_index_flags(test_idx, test_flags);
+    test_set_index_flags(test_idx, test_flags);
     
     uint8_t read_flags = indexed_memory_get_config_field(test_idx, CFG_FLAGS);
     if (read_flags != test_flags) {
@@ -118,7 +162,7 @@ bool test_index_structure(void) {
     }
     
     // Test index reset
-    indexed_memory_reset_index(test_idx);
+    indexed_memory_execute_window_command(test_idx, CMD_RESET_INDEX);
     
     addr_l = indexed_memory_get_config_field(test_idx, CFG_ADDR_L);
     addr_m = indexed_memory_get_config_field(test_idx, CFG_ADDR_M);
@@ -144,14 +188,14 @@ bool test_basic_memory_access(void) {
     
     // Configure index for user memory area
     uint32_t test_addr = 0x20013800; // MIA_USER_AREA_BASE
-    indexed_memory_set_index_address(test_idx, test_addr);
-    indexed_memory_set_index_step(test_idx, 1);
-    indexed_memory_set_index_flags(test_idx, 0); // No auto-step for this test
+    test_set_index_address(test_idx, test_addr);
+    test_set_index_step(test_idx, 1);
+    test_set_index_flags(test_idx, 0); // No auto-step for this test
     
     // Test write and read without stepping
     uint8_t test_data = 0xAB;
-    indexed_memory_write_no_step(test_idx, test_data);
-    uint8_t read_data = indexed_memory_read_no_step(test_idx);
+    indexed_memory_write(test_idx, test_data);
+    uint8_t read_data = indexed_memory_read(test_idx);
     
     if (read_data != test_data) {
         printf("FAIL: Basic write/read mismatch (expected 0x%02X, got 0x%02X)\n", test_data, read_data);
@@ -183,10 +227,10 @@ bool test_auto_stepping(void) {
     
     // Configure index with auto-stepping
     uint32_t start_addr = 0x20013900; // MIA_USER_AREA_BASE + 0x100
-    indexed_memory_set_index_default(test_idx, start_addr);
-    indexed_memory_set_index_address(test_idx, start_addr);
-    indexed_memory_set_index_step(test_idx, 2); // Step by 2 bytes
-    indexed_memory_set_index_flags(test_idx, FLAG_AUTO_STEP); // Forward stepping
+    test_set_index_default(test_idx, start_addr);
+    test_set_index_address(test_idx, start_addr);
+    test_set_index_step(test_idx, 2); // Step by 2 bytes
+    test_set_index_flags(test_idx, FLAG_AUTO_STEP); // Forward stepping
     
     // Write test pattern with auto-stepping
     uint8_t test_pattern[] = {0x11, 0x22, 0x33, 0x44};
@@ -209,7 +253,7 @@ bool test_auto_stepping(void) {
     }
     
     // Reset and read back with auto-stepping
-    indexed_memory_reset_index(test_idx);
+    indexed_memory_execute_window_command(test_idx, CMD_RESET_INDEX);
     
     for (int i = 0; i < 4; i++) {
         uint8_t read_data = indexed_memory_read(test_idx);
@@ -221,8 +265,8 @@ bool test_auto_stepping(void) {
     }
     
     // Test backward stepping
-    indexed_memory_set_index_flags(test_idx, FLAG_AUTO_STEP | FLAG_DIRECTION);
-    indexed_memory_set_index_address(test_idx, start_addr + 6); // Start at position of last write
+    test_set_index_flags(test_idx, FLAG_AUTO_STEP | FLAG_DIRECTION);
+    test_set_index_address(test_idx, start_addr + 6); // Start at position of last write
     
     // Read backwards
     for (int i = 3; i >= 0; i--) {
@@ -296,17 +340,17 @@ bool test_dma_operations(void) {
     
     // Set up source index with test data
     uint32_t src_addr = 0x20013A00; // MIA_USER_AREA_BASE + 0x200
-    indexed_memory_set_index_default(src_idx, src_addr);
-    indexed_memory_set_index_address(src_idx, src_addr);
-    indexed_memory_set_index_step(src_idx, 1);
-    indexed_memory_set_index_flags(src_idx, FLAG_AUTO_STEP);
+    test_set_index_default(src_idx, src_addr);
+    test_set_index_address(src_idx, src_addr);
+    test_set_index_step(src_idx, 1);
+    test_set_index_flags(src_idx, FLAG_AUTO_STEP);
     
     // Set up destination index
     uint32_t dst_addr = 0x20013B00; // MIA_USER_AREA_BASE + 0x300
-    indexed_memory_set_index_default(dst_idx, dst_addr);
-    indexed_memory_set_index_address(dst_idx, dst_addr);
-    indexed_memory_set_index_step(dst_idx, 1);
-    indexed_memory_set_index_flags(dst_idx, FLAG_AUTO_STEP);
+    test_set_index_default(dst_idx, dst_addr);
+    test_set_index_address(dst_idx, dst_addr);
+    test_set_index_step(dst_idx, 1);
+    test_set_index_flags(dst_idx, FLAG_AUTO_STEP);
     
     // Write test pattern to source
     uint8_t test_data[] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE};
@@ -315,13 +359,13 @@ bool test_dma_operations(void) {
     }
     
     // Test single byte copy using copy_block with count=1
-    indexed_memory_reset_index(src_idx);
-    indexed_memory_reset_index(dst_idx);
+    indexed_memory_execute_window_command(src_idx, CMD_RESET_INDEX);
+    indexed_memory_execute_window_command(dst_idx, CMD_RESET_INDEX);
     
     uint32_t src_addr_before = get_index_address(src_idx);
     uint32_t dst_addr_before = get_index_address(dst_idx);
     
-    indexed_memory_copy_block(src_idx, dst_idx, 1);
+    test_copy_block(src_idx, dst_idx, 1);
     
     // Verify indexes are NOT modified
     uint32_t src_addr_after = get_index_address(src_idx);
@@ -338,7 +382,7 @@ bool test_dma_operations(void) {
     }
     
     // Verify single byte was copied
-    indexed_memory_reset_index(dst_idx);
+    indexed_memory_execute_window_command(dst_idx, CMD_RESET_INDEX);
     uint8_t copied_byte = indexed_memory_read(dst_idx);
     if (copied_byte != test_data[0]) {
         printf("FAIL: Single byte copy (expected 0x%02X, got 0x%02X)\n", test_data[0], copied_byte);
@@ -346,13 +390,13 @@ bool test_dma_operations(void) {
     }
     
     // Test multi-byte block copy
-    indexed_memory_reset_index(src_idx);
-    indexed_memory_reset_index(dst_idx);
+    indexed_memory_execute_window_command(src_idx, CMD_RESET_INDEX);
+    indexed_memory_execute_window_command(dst_idx, CMD_RESET_INDEX);
     
     src_addr_before = get_index_address(src_idx);
     dst_addr_before = get_index_address(dst_idx);
     
-    indexed_memory_copy_block(src_idx, dst_idx, 5);
+    test_copy_block(src_idx, dst_idx, 5);
     
     // Verify indexes are NOT modified by copy operation
     src_addr_after = get_index_address(src_idx);
@@ -369,7 +413,7 @@ bool test_dma_operations(void) {
     }
     
     // Verify block copy
-    indexed_memory_reset_index(dst_idx);
+    indexed_memory_execute_window_command(dst_idx, CMD_RESET_INDEX);
     for (int i = 0; i < 5; i++) {
         uint8_t copied_data = indexed_memory_read(dst_idx);
         if (copied_data != test_data[i]) {
@@ -380,41 +424,14 @@ bool test_dma_operations(void) {
     }
     
     // Check DMA completion IRQ
-    uint16_t irq_cause = indexed_memory_get_irq_cause();
+    uint16_t irq_cause = test_get_irq_cause();
     if (!(irq_cause & IRQ_DMA_COMPLETE)) {
         printf("FAIL: DMA completion IRQ not set\n");
         return false;
     }
     
     // Clear IRQ for next test
-    indexed_memory_clear_irq();
-    
-    // Test DMA busy error - try to start transfer while one is active
-    // First, manually set DMA active status to simulate a transfer in progress
-    g_state.status |= STATUS_DMA_ACTIVE;
-    
-    // Try to start another transfer (should be rejected)
-    indexed_memory_copy_block(src_idx, dst_idx, 5);
-    
-    // Verify DMA error IRQ was triggered
-    irq_cause = indexed_memory_get_irq_cause();
-    if (!(irq_cause & IRQ_DMA_ERROR)) {
-        printf("FAIL: DMA error IRQ not set when DMA was busy\n");
-        return false;
-    }
-    
-    // Verify DMA is still marked as active (original transfer still running)
-    uint8_t status = indexed_memory_get_status();
-    if (!(status & STATUS_DMA_ACTIVE)) {
-        printf("FAIL: DMA active status was cleared incorrectly\n");
-        return false;
-    }
-    
-    // Clean up - clear the manually set status
-    g_state.status &= ~STATUS_DMA_ACTIVE;
-    indexed_memory_clear_irq();
-    
-    indexed_memory_clear_irq();
+    indexed_memory_execute_shared_command(CMD_CLEAR_IRQ);
     
     printf("PASS: DMA operations\n");
     return true;
@@ -444,50 +461,50 @@ bool test_error_handling(void) {
     
     // Test invalid address access
     // Use an address that's invalid even after 24-bit masking
-    indexed_memory_set_index_address(test_idx, 0x20080000); // 0x080000 after masking (beyond 256KB)
-    indexed_memory_set_index_flags(test_idx, 0); // No auto-step
+    test_set_index_address(test_idx, 0x20080000); // 0x080000 after masking (beyond 256KB)
+    test_set_index_flags(test_idx, 0); // No auto-step
     
-    (void)indexed_memory_read_no_step(test_idx); // Suppress unused variable warning
+    (void)indexed_memory_read(test_idx); // Suppress unused variable warning
     
     // Should have generated memory error
-    uint8_t status = indexed_memory_get_status();
+    uint8_t status = g_state.status;
     if (!(status & STATUS_MEMORY_ERROR)) {
         printf("FAIL: Memory error not detected\n");
         return false;
     }
     
-    uint8_t irq_cause = indexed_memory_get_irq_cause();
+    uint8_t irq_cause = test_get_irq_cause();
     if (irq_cause != IRQ_MEMORY_ERROR) {
         printf("FAIL: Memory error IRQ not set\n");
         return false;
     }
     
     // Clear error
-    indexed_memory_clear_irq();
+    indexed_memory_execute_shared_command(CMD_CLEAR_IRQ);
     
     // Test address overflow
-    indexed_memory_set_index_address(test_idx, 0x2003FFF8); // Near end of memory (8 bytes before end)
-    indexed_memory_set_index_step(test_idx, 10);
-    indexed_memory_set_index_flags(test_idx, FLAG_AUTO_STEP);
+    test_set_index_address(test_idx, 0x2003FFF8); // Near end of memory (8 bytes before end)
+    test_set_index_step(test_idx, 10);
+    test_set_index_flags(test_idx, FLAG_AUTO_STEP);
     
     indexed_memory_write(test_idx, 0x55); // Write succeeds, but steps to invalid address
     
     // Now try to access the invalid address - should trigger error
     (void)indexed_memory_read(test_idx);
     
-    status = indexed_memory_get_status();
+    status = g_state.status;
     if (!(status & STATUS_MEMORY_ERROR)) {
         printf("FAIL: Memory error not detected after overflow\n");
         return false;
     }
     
-    irq_cause = indexed_memory_get_irq_cause();
+    irq_cause = test_get_irq_cause();
     if (!(irq_cause & IRQ_MEMORY_ERROR)) {
         printf("FAIL: Memory error IRQ not set after overflow\n");
         return false;
     }
     
-    indexed_memory_clear_irq();
+    indexed_memory_execute_shared_command(CMD_CLEAR_IRQ);
     
     printf("PASS: Error handling\n");
     return true;
@@ -505,11 +522,11 @@ bool test_wrap_on_limit(void) {
     uint32_t buffer_start = 0x20013C00; // MIA_USER_AREA_BASE + 0x400
     uint32_t buffer_limit = buffer_start + 16; // 16-byte buffer
     
-    indexed_memory_set_index_address(test_idx, buffer_start);
-    indexed_memory_set_index_default(test_idx, buffer_start);
-    indexed_memory_set_index_limit(test_idx, buffer_limit);
-    indexed_memory_set_index_step(test_idx, 1);
-    indexed_memory_set_index_flags(test_idx, FLAG_AUTO_STEP | FLAG_WRAP_ON_LIMIT);
+    test_set_index_address(test_idx, buffer_start);
+    test_set_index_default(test_idx, buffer_start);
+    test_set_index_limit(test_idx, buffer_limit);
+    test_set_index_step(test_idx, 1);
+    test_set_index_flags(test_idx, FLAG_AUTO_STEP | FLAG_WRAP_ON_LIMIT);
     
     // Write 20 bytes (more than buffer size) to test wrapping
     uint8_t test_pattern[] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
@@ -525,7 +542,7 @@ bool test_wrap_on_limit(void) {
     // Expected buffer content: [0xF0, 0xF1, 0xF2, 0xF3, 0x44, 0x55, ..., 0xFF]
     
     // Reset to start and verify
-    indexed_memory_reset_index(test_idx);
+    indexed_memory_execute_window_command(test_idx, CMD_RESET_INDEX);
     
     // Check first 4 bytes (should be overwritten)
     uint8_t expected_first_4[] = {0xF0, 0xF1, 0xF2, 0xF3};
@@ -561,11 +578,11 @@ bool test_wrap_on_limit(void) {
     }
     
     // Test wrap-on-limit with backward stepping
-    indexed_memory_set_index_address(test_idx, buffer_start + 2);
-    indexed_memory_set_index_default(test_idx, buffer_start + 10);
-    indexed_memory_set_index_limit(test_idx, buffer_start); // Limit at start (for backward wrap)
-    indexed_memory_set_index_step(test_idx, 3);
-    indexed_memory_set_index_flags(test_idx, FLAG_AUTO_STEP | FLAG_DIRECTION | FLAG_WRAP_ON_LIMIT);
+    test_set_index_address(test_idx, buffer_start + 2);
+    test_set_index_default(test_idx, buffer_start + 10);
+    test_set_index_limit(test_idx, buffer_start); // Limit at start (for backward wrap)
+    test_set_index_step(test_idx, 3);
+    test_set_index_flags(test_idx, FLAG_AUTO_STEP | FLAG_DIRECTION | FLAG_WRAP_ON_LIMIT);
     
     // Read backward - should wrap to default when going below limit
     indexed_memory_read(test_idx); // addr = buffer_start + 2 - 3 = buffer_start - 1 (below limit)

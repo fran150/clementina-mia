@@ -13,6 +13,42 @@
 #include "indexed_memory/indexed_memory.h"
 #include <stdio.h>
 
+// Access to indexed memory state for testing
+extern indexed_memory_state_t g_state;
+
+// Helper functions to replace internal function calls with public API
+static void test_set_index_address(uint8_t idx, uint32_t address) {
+    indexed_memory_set_config_field(idx, CFG_ADDR_L, address & 0xFF);
+    indexed_memory_set_config_field(idx, CFG_ADDR_M, (address >> 8) & 0xFF);
+    indexed_memory_set_config_field(idx, CFG_ADDR_H, (address >> 16) & 0xFF);
+}
+
+static void test_set_index_default(uint8_t idx, uint32_t address) {
+    indexed_memory_set_config_field(idx, CFG_DEFAULT_L, address & 0xFF);
+    indexed_memory_set_config_field(idx, CFG_DEFAULT_M, (address >> 8) & 0xFF);
+    indexed_memory_set_config_field(idx, CFG_DEFAULT_H, (address >> 16) & 0xFF);
+}
+
+static void test_set_index_limit(uint8_t idx, uint32_t address) {
+    indexed_memory_set_config_field(idx, CFG_LIMIT_L, address & 0xFF);
+    indexed_memory_set_config_field(idx, CFG_LIMIT_M, (address >> 8) & 0xFF);
+    indexed_memory_set_config_field(idx, CFG_LIMIT_H, (address >> 16) & 0xFF);
+}
+
+static void test_set_index_step(uint8_t idx, uint8_t step) {
+    indexed_memory_set_config_field(idx, CFG_STEP, step);
+}
+
+static void test_set_index_flags(uint8_t idx, uint8_t flags) {
+    indexed_memory_set_config_field(idx, CFG_FLAGS, flags);
+}
+
+static uint16_t test_get_irq_cause(void) {
+    uint8_t low = g_state.irq_cause & 0xFF;
+    uint8_t high = (g_state.irq_cause >> 8) & 0xFF;
+    return (uint16_t)low | ((uint16_t)high << 8);
+}
+
 /**
  * Test address validation
  * All 8-bit addresses are valid (windows + shared space)
@@ -752,7 +788,7 @@ bool test_bus_interface_data_port_read(void) {
     indexed_memory_write(64, 0xCC);
     
     // Reset index to read back the data
-    indexed_memory_reset_index(64);
+    indexed_memory_execute_window_command(64, CMD_RESET_INDEX);
     
     // Read data via DATA_PORT
     uint8_t value = bus_interface_read(0x01);
@@ -772,7 +808,7 @@ bool test_bus_interface_data_port_read(void) {
     bus_interface_write(0x10, 128);  // Select user index
     indexed_memory_write(128, 0x11);
     indexed_memory_write(128, 0x22);
-    indexed_memory_reset_index(128);
+    indexed_memory_execute_window_command(128, CMD_RESET_INDEX);
     
     value = bus_interface_read(0x11);
     if (value != 0x11) {
@@ -783,7 +819,7 @@ bool test_bus_interface_data_port_read(void) {
     // Test reading DATA_PORT for Window C (address 0x21)
     bus_interface_write(0x20, 129);  // Select user index
     indexed_memory_write(129, 0x33);
-    indexed_memory_reset_index(129);
+    indexed_memory_execute_window_command(129, CMD_RESET_INDEX);
     
     value = bus_interface_read(0x21);
     if (value != 0x33) {
@@ -794,7 +830,7 @@ bool test_bus_interface_data_port_read(void) {
     // Test reading DATA_PORT for Window D (address 0x31)
     bus_interface_write(0x30, 130);  // Select user index
     indexed_memory_write(130, 0x44);
-    indexed_memory_reset_index(130);
+    indexed_memory_execute_window_command(130, CMD_RESET_INDEX);
     
     value = bus_interface_read(0x31);
     if (value != 0x44) {
@@ -825,7 +861,7 @@ bool test_bus_interface_data_port_auto_step(void) {
     }
     
     // Reset index to start
-    indexed_memory_reset_index(128);
+    indexed_memory_execute_window_command(128, CMD_RESET_INDEX);
     
     // Read back the sequence via DATA_PORT with auto-stepping
     for (uint8_t i = 0; i < 10; i++) {
@@ -853,17 +889,17 @@ bool test_bus_interface_data_port_multi_window(void) {
     // Configure indexes to point to different memory locations
     // User indexes all start at the same base address, so we need to offset them
     uint32_t base_addr = 0x20013800;  // MIA_USER_AREA_BASE
-    indexed_memory_set_index_address(128, base_addr + 0);
-    indexed_memory_set_index_default(128, base_addr + 0);
+    test_set_index_address(128, base_addr + 0);
+    test_set_index_default(128, base_addr + 0);
     
-    indexed_memory_set_index_address(129, base_addr + 100);
-    indexed_memory_set_index_default(129, base_addr + 100);
+    test_set_index_address(129, base_addr + 100);
+    test_set_index_default(129, base_addr + 100);
     
-    indexed_memory_set_index_address(130, base_addr + 200);
-    indexed_memory_set_index_default(130, base_addr + 200);
+    test_set_index_address(130, base_addr + 200);
+    test_set_index_default(130, base_addr + 200);
     
-    indexed_memory_set_index_address(131, base_addr + 300);
-    indexed_memory_set_index_default(131, base_addr + 300);
+    test_set_index_address(131, base_addr + 300);
+    test_set_index_default(131, base_addr + 300);
     
     // Set up different indexes for each window
     bus_interface_write(0x00, 128);  // Window A -> index 128
@@ -878,10 +914,10 @@ bool test_bus_interface_data_port_multi_window(void) {
     indexed_memory_write(131, 0xDD);
     
     // Reset all indexes to read from the beginning
-    indexed_memory_reset_index(128);
-    indexed_memory_reset_index(129);
-    indexed_memory_reset_index(130);
-    indexed_memory_reset_index(131);
+    indexed_memory_execute_window_command(128, CMD_RESET_INDEX);
+    indexed_memory_execute_window_command(129, CMD_RESET_INDEX);
+    indexed_memory_execute_window_command(130, CMD_RESET_INDEX);
+    indexed_memory_execute_window_command(131, CMD_RESET_INDEX);
     
     // Read from each window and verify independence
     uint8_t val_a = bus_interface_read(0x01);
@@ -925,7 +961,7 @@ bool test_bus_interface_data_port_write(void) {
     bus_interface_write(0x00, 128);
     
     // Reset index to start
-    indexed_memory_reset_index(128);
+    indexed_memory_execute_window_command(128, CMD_RESET_INDEX);
     
     // Write data via DATA_PORT
     bus_interface_write(0x01, 0xAA);
@@ -933,7 +969,7 @@ bool test_bus_interface_data_port_write(void) {
     bus_interface_write(0x01, 0xCC);
     
     // Reset index and read back to verify
-    indexed_memory_reset_index(128);
+    indexed_memory_execute_window_command(128, CMD_RESET_INDEX);
     uint8_t value = indexed_memory_read(128);
     if (value != 0xAA) {
         printf("  FAIL: Window A DATA_PORT write failed, expected 0xAA, got 0x%02X\n", value);
@@ -954,12 +990,12 @@ bool test_bus_interface_data_port_write(void) {
     
     // Test writing DATA_PORT for Window B (address 0x11)
     bus_interface_write(0x10, 129);  // Select user index
-    indexed_memory_reset_index(129);
+    indexed_memory_execute_window_command(129, CMD_RESET_INDEX);
     
     bus_interface_write(0x11, 0x11);
     bus_interface_write(0x11, 0x22);
     
-    indexed_memory_reset_index(129);
+    indexed_memory_execute_window_command(129, CMD_RESET_INDEX);
     value = indexed_memory_read(129);
     if (value != 0x11) {
         printf("  FAIL: Window B DATA_PORT write failed, expected 0x11, got 0x%02X\n", value);
@@ -968,11 +1004,11 @@ bool test_bus_interface_data_port_write(void) {
     
     // Test writing DATA_PORT for Window C (address 0x21)
     bus_interface_write(0x20, 130);  // Select user index
-    indexed_memory_reset_index(130);
+    indexed_memory_execute_window_command(130, CMD_RESET_INDEX);
     
     bus_interface_write(0x21, 0x33);
     
-    indexed_memory_reset_index(130);
+    indexed_memory_execute_window_command(130, CMD_RESET_INDEX);
     value = indexed_memory_read(130);
     if (value != 0x33) {
         printf("  FAIL: Window C DATA_PORT write failed, expected 0x33, got 0x%02X\n", value);
@@ -981,11 +1017,11 @@ bool test_bus_interface_data_port_write(void) {
     
     // Test writing DATA_PORT for Window D (address 0x31)
     bus_interface_write(0x30, 131);  // Select user index
-    indexed_memory_reset_index(131);
+    indexed_memory_execute_window_command(131, CMD_RESET_INDEX);
     
     bus_interface_write(0x31, 0x44);
     
-    indexed_memory_reset_index(131);
+    indexed_memory_execute_window_command(131, CMD_RESET_INDEX);
     value = indexed_memory_read(131);
     if (value != 0x44) {
         printf("  FAIL: Window D DATA_PORT write failed, expected 0x44, got 0x%02X\n", value);
@@ -1010,7 +1046,7 @@ bool test_bus_interface_data_port_write_auto_step(void) {
     bus_interface_write(0x00, 128);
     
     // Reset index to start
-    indexed_memory_reset_index(128);
+    indexed_memory_execute_window_command(128, CMD_RESET_INDEX);
     
     // Write a sequence of bytes via DATA_PORT with auto-stepping
     for (uint8_t i = 0; i < 10; i++) {
@@ -1018,7 +1054,7 @@ bool test_bus_interface_data_port_write_auto_step(void) {
     }
     
     // Reset index and read back to verify
-    indexed_memory_reset_index(128);
+    indexed_memory_execute_window_command(128, CMD_RESET_INDEX);
     for (uint8_t i = 0; i < 10; i++) {
         uint8_t value = indexed_memory_read(128);
         if (value != i * 10) {
@@ -1043,17 +1079,17 @@ bool test_bus_interface_data_port_write_multi_window(void) {
     
     // Configure indexes to point to different memory locations
     uint32_t base_addr = 0x20013800;  // MIA_USER_AREA_BASE
-    indexed_memory_set_index_address(128, base_addr + 0);
-    indexed_memory_set_index_default(128, base_addr + 0);
+    test_set_index_address(128, base_addr + 0);
+    test_set_index_default(128, base_addr + 0);
     
-    indexed_memory_set_index_address(129, base_addr + 100);
-    indexed_memory_set_index_default(129, base_addr + 100);
+    test_set_index_address(129, base_addr + 100);
+    test_set_index_default(129, base_addr + 100);
     
-    indexed_memory_set_index_address(130, base_addr + 200);
-    indexed_memory_set_index_default(130, base_addr + 200);
+    test_set_index_address(130, base_addr + 200);
+    test_set_index_default(130, base_addr + 200);
     
-    indexed_memory_set_index_address(131, base_addr + 300);
-    indexed_memory_set_index_default(131, base_addr + 300);
+    test_set_index_address(131, base_addr + 300);
+    test_set_index_default(131, base_addr + 300);
     
     // Set up different indexes for each window
     bus_interface_write(0x00, 128);  // Window A -> index 128
@@ -1062,10 +1098,10 @@ bool test_bus_interface_data_port_write_multi_window(void) {
     bus_interface_write(0x30, 131);  // Window D -> index 131
     
     // Reset all indexes
-    indexed_memory_reset_index(128);
-    indexed_memory_reset_index(129);
-    indexed_memory_reset_index(130);
-    indexed_memory_reset_index(131);
+    indexed_memory_execute_window_command(128, CMD_RESET_INDEX);
+    indexed_memory_execute_window_command(129, CMD_RESET_INDEX);
+    indexed_memory_execute_window_command(130, CMD_RESET_INDEX);
+    indexed_memory_execute_window_command(131, CMD_RESET_INDEX);
     
     // Write different data to each window
     bus_interface_write(0x01, 0xAA);  // Window A
@@ -1074,10 +1110,10 @@ bool test_bus_interface_data_port_write_multi_window(void) {
     bus_interface_write(0x31, 0xDD);  // Window D
     
     // Reset all indexes and read back to verify independence
-    indexed_memory_reset_index(128);
-    indexed_memory_reset_index(129);
-    indexed_memory_reset_index(130);
-    indexed_memory_reset_index(131);
+    indexed_memory_execute_window_command(128, CMD_RESET_INDEX);
+    indexed_memory_execute_window_command(129, CMD_RESET_INDEX);
+    indexed_memory_execute_window_command(130, CMD_RESET_INDEX);
+    indexed_memory_execute_window_command(131, CMD_RESET_INDEX);
     
     uint8_t val_a = indexed_memory_read(128);
     uint8_t val_b = indexed_memory_read(129);
@@ -1117,7 +1153,7 @@ bool test_bus_interface_data_port_read_write_integration(void) {
     
     // Select index 128 for Window A
     bus_interface_write(0x00, 128);
-    indexed_memory_reset_index(128);
+    indexed_memory_execute_window_command(128, CMD_RESET_INDEX);
     
     // Write data via DATA_PORT
     bus_interface_write(0x01, 0x12);
@@ -1125,7 +1161,7 @@ bool test_bus_interface_data_port_read_write_integration(void) {
     bus_interface_write(0x01, 0x56);
     
     // Reset index and read back via DATA_PORT
-    indexed_memory_reset_index(128);
+    indexed_memory_execute_window_command(128, CMD_RESET_INDEX);
     
     uint8_t val1 = bus_interface_read(0x01);
     uint8_t val2 = bus_interface_read(0x01);
@@ -1138,10 +1174,10 @@ bool test_bus_interface_data_port_read_write_integration(void) {
     }
     
     // Test interleaved read/write operations
-    indexed_memory_reset_index(128);
+    indexed_memory_execute_window_command(128, CMD_RESET_INDEX);
     
     bus_interface_write(0x01, 0xAA);  // Write 0xAA at position 0
-    indexed_memory_reset_index(128);
+    indexed_memory_execute_window_command(128, CMD_RESET_INDEX);
     uint8_t read_val = bus_interface_read(0x01);  // Read 0xAA from position 0
     
     if (read_val != 0xAA) {
@@ -1152,7 +1188,7 @@ bool test_bus_interface_data_port_read_write_integration(void) {
     bus_interface_write(0x01, 0xBB);  // Write 0xBB at position 1 (after read advanced)
     
     // Reset and verify both values
-    indexed_memory_reset_index(128);
+    indexed_memory_execute_window_command(128, CMD_RESET_INDEX);
     val1 = bus_interface_read(0x01);
     val2 = bus_interface_read(0x01);
     
@@ -1177,9 +1213,9 @@ bool test_bus_interface_data_port_step_sizes(void) {
     
     // Test step size of 1 (default)
     bus_interface_write(0x00, 128);  // Select index 128
-    indexed_memory_reset_index(128);
-    indexed_memory_set_index_step(128, 1);
-    indexed_memory_set_index_flags(128, FLAG_AUTO_STEP);
+    indexed_memory_execute_window_command(128, CMD_RESET_INDEX);
+    test_set_index_step(128, 1);
+    test_set_index_flags(128, FLAG_AUTO_STEP);
     
     // Write data with step size 1
     bus_interface_write(0x01, 0x10);
@@ -1187,7 +1223,7 @@ bool test_bus_interface_data_port_step_sizes(void) {
     bus_interface_write(0x01, 0x30);
     
     // Read back with step size 1
-    indexed_memory_reset_index(128);
+    indexed_memory_execute_window_command(128, CMD_RESET_INDEX);
     if (bus_interface_read(0x01) != 0x10 || 
         bus_interface_read(0x01) != 0x20 || 
         bus_interface_read(0x01) != 0x30) {
@@ -1196,8 +1232,8 @@ bool test_bus_interface_data_port_step_sizes(void) {
     }
     
     // Test step size of 2
-    indexed_memory_reset_index(128);
-    indexed_memory_set_index_step(128, 2);
+    indexed_memory_execute_window_command(128, CMD_RESET_INDEX);
+    test_set_index_step(128, 2);
     
     // Write data with step size 2 (should skip every other byte)
     bus_interface_write(0x01, 0xAA);  // Position 0
@@ -1205,7 +1241,7 @@ bool test_bus_interface_data_port_step_sizes(void) {
     bus_interface_write(0x01, 0xCC);  // Position 4
     
     // Read back with step size 2
-    indexed_memory_reset_index(128);
+    indexed_memory_execute_window_command(128, CMD_RESET_INDEX);
     if (bus_interface_read(0x01) != 0xAA || 
         bus_interface_read(0x01) != 0xBB || 
         bus_interface_read(0x01) != 0xCC) {
@@ -1214,8 +1250,8 @@ bool test_bus_interface_data_port_step_sizes(void) {
     }
     
     // Test step size of 4
-    indexed_memory_reset_index(128);
-    indexed_memory_set_index_step(128, 4);
+    indexed_memory_execute_window_command(128, CMD_RESET_INDEX);
+    test_set_index_step(128, 4);
     
     // Write data with step size 4
     bus_interface_write(0x01, 0x11);  // Position 0
@@ -1223,7 +1259,7 @@ bool test_bus_interface_data_port_step_sizes(void) {
     bus_interface_write(0x01, 0x33);  // Position 8
     
     // Read back with step size 4
-    indexed_memory_reset_index(128);
+    indexed_memory_execute_window_command(128, CMD_RESET_INDEX);
     if (bus_interface_read(0x01) != 0x11 || 
         bus_interface_read(0x01) != 0x22 || 
         bus_interface_read(0x01) != 0x33) {
@@ -1247,9 +1283,9 @@ bool test_bus_interface_data_port_directions(void) {
     
     // Test forward direction (default)
     bus_interface_write(0x00, 128);  // Select index 128
-    indexed_memory_reset_index(128);
-    indexed_memory_set_index_step(128, 1);
-    indexed_memory_set_index_flags(128, FLAG_AUTO_STEP);  // Forward direction
+    indexed_memory_execute_window_command(128, CMD_RESET_INDEX);
+    test_set_index_step(128, 1);
+    test_set_index_flags(128, FLAG_AUTO_STEP);  // Forward direction
     
     // Write data in forward direction
     bus_interface_write(0x01, 0x01);
@@ -1258,7 +1294,7 @@ bool test_bus_interface_data_port_directions(void) {
     bus_interface_write(0x01, 0x04);
     
     // Read back in forward direction
-    indexed_memory_reset_index(128);
+    indexed_memory_execute_window_command(128, CMD_RESET_INDEX);
     if (bus_interface_read(0x01) != 0x01 || 
         bus_interface_read(0x01) != 0x02 || 
         bus_interface_read(0x01) != 0x03 || 
@@ -1270,10 +1306,10 @@ bool test_bus_interface_data_port_directions(void) {
     // Test backward direction
     // Set address to position 10 and step backward
     uint32_t base_addr = 0x20013800;  // MIA_USER_AREA_BASE
-    indexed_memory_set_index_address(128, base_addr + 10);
-    indexed_memory_set_index_default(128, base_addr + 10);
-    indexed_memory_set_index_step(128, 1);
-    indexed_memory_set_index_flags(128, FLAG_AUTO_STEP | FLAG_DIRECTION);  // Backward
+    test_set_index_address(128, base_addr + 10);
+    test_set_index_default(128, base_addr + 10);
+    test_set_index_step(128, 1);
+    test_set_index_flags(128, FLAG_AUTO_STEP | FLAG_DIRECTION);  // Backward
     
     // Write data in backward direction (from position 10 going down)
     bus_interface_write(0x01, 0xAA);  // Position 10
@@ -1282,7 +1318,7 @@ bool test_bus_interface_data_port_directions(void) {
     bus_interface_write(0x01, 0xDD);  // Position 7
     
     // Read back in backward direction
-    indexed_memory_set_index_address(128, base_addr + 10);
+    test_set_index_address(128, base_addr + 10);
     if (bus_interface_read(0x01) != 0xAA || 
         bus_interface_read(0x01) != 0xBB || 
         bus_interface_read(0x01) != 0xCC || 
@@ -1292,15 +1328,15 @@ bool test_bus_interface_data_port_directions(void) {
     }
     
     // Test backward with step size 2
-    indexed_memory_set_index_address(128, base_addr + 20);
-    indexed_memory_set_index_step(128, 2);
-    indexed_memory_set_index_flags(128, FLAG_AUTO_STEP | FLAG_DIRECTION);
+    test_set_index_address(128, base_addr + 20);
+    test_set_index_step(128, 2);
+    test_set_index_flags(128, FLAG_AUTO_STEP | FLAG_DIRECTION);
     
     bus_interface_write(0x01, 0x11);  // Position 20
     bus_interface_write(0x01, 0x22);  // Position 18
     bus_interface_write(0x01, 0x33);  // Position 16
     
-    indexed_memory_set_index_address(128, base_addr + 20);
+    test_set_index_address(128, base_addr + 20);
     if (bus_interface_read(0x01) != 0x11 || 
         bus_interface_read(0x01) != 0x22 || 
         bus_interface_read(0x01) != 0x33) {
@@ -1329,11 +1365,11 @@ bool test_bus_interface_data_port_wrap_on_limit(void) {
     uint32_t limit_addr = base_addr + 5;  // Wrap when reaching position 5
     
     bus_interface_write(0x00, 128);  // Select index 128
-    indexed_memory_set_index_address(128, default_addr);
-    indexed_memory_set_index_default(128, default_addr);
-    indexed_memory_set_index_limit(128, limit_addr);
-    indexed_memory_set_index_step(128, 1);
-    indexed_memory_set_index_flags(128, FLAG_AUTO_STEP | FLAG_WRAP_ON_LIMIT);
+    test_set_index_address(128, default_addr);
+    test_set_index_default(128, default_addr);
+    test_set_index_limit(128, limit_addr);
+    test_set_index_step(128, 1);
+    test_set_index_flags(128, FLAG_AUTO_STEP | FLAG_WRAP_ON_LIMIT);
     
     // Write data that will trigger wrap
     // Positions 0-4 are valid, position 5 triggers wrap
@@ -1345,11 +1381,11 @@ bool test_bus_interface_data_port_wrap_on_limit(void) {
     bus_interface_write(0x01, 0x05);  // Write to position 0 (wrapped), then step to 1
     
     // Read back and verify wrap occurred
-    indexed_memory_reset_index(128);
+    indexed_memory_execute_window_command(128, CMD_RESET_INDEX);
     if (bus_interface_read(0x01) != 0x05) {  // Position 0 should have wrapped value
         printf("  FAIL: Wrap-on-limit did not wrap correctly, expected 0x05, got 0x%02X\n", 
                bus_interface_read(0x01));
-        indexed_memory_reset_index(128);
+        indexed_memory_execute_window_command(128, CMD_RESET_INDEX);
         uint8_t val = bus_interface_read(0x01);
         printf("  DEBUG: Position 0 contains 0x%02X\n", val);
         return false;
@@ -1360,33 +1396,33 @@ bool test_bus_interface_data_port_wrap_on_limit(void) {
     }
     
     // Test wrap with step size 2
-    indexed_memory_set_index_address(128, default_addr);
-    indexed_memory_set_index_limit(128, base_addr + 6);  // Wrap when reaching position 6
-    indexed_memory_set_index_step(128, 2);
-    indexed_memory_set_index_flags(128, FLAG_AUTO_STEP | FLAG_WRAP_ON_LIMIT);
+    test_set_index_address(128, default_addr);
+    test_set_index_limit(128, base_addr + 6);  // Wrap when reaching position 6
+    test_set_index_step(128, 2);
+    test_set_index_flags(128, FLAG_AUTO_STEP | FLAG_WRAP_ON_LIMIT);
     
     bus_interface_write(0x01, 0xAA);  // Write to position 0, step to 2
     bus_interface_write(0x01, 0xBB);  // Write to position 2, step to 4
     bus_interface_write(0x01, 0xCC);  // Write to position 4, step to 6 (>= limit, wraps to 0)
     bus_interface_write(0x01, 0xDD);  // Write to position 0 (wrapped), step to 2
     
-    indexed_memory_reset_index(128);
+    indexed_memory_execute_window_command(128, CMD_RESET_INDEX);
     if (bus_interface_read(0x01) != 0xDD) {  // Position 0 should have wrapped value
         printf("  FAIL: Wrap-on-limit with step size 2 did not wrap correctly\n");
         return false;
     }
     
     // Skip position 1 (step size 2)
-    indexed_memory_set_index_address(128, base_addr + 2);
+    test_set_index_address(128, base_addr + 2);
     if (bus_interface_read(0x01) != 0xBB) {  // Position 2 should still have original value
         printf("  FAIL: Position 2 incorrect after wrap with step size 2\n");
         return false;
     }
     
     // Test without wrap-on-limit (should not wrap)
-    indexed_memory_set_index_address(128, default_addr);
-    indexed_memory_set_index_step(128, 1);
-    indexed_memory_set_index_flags(128, FLAG_AUTO_STEP);  // No wrap flag
+    test_set_index_address(128, default_addr);
+    test_set_index_step(128, 1);
+    test_set_index_flags(128, FLAG_AUTO_STEP);  // No wrap flag
     
     bus_interface_write(0x01, 0x10);  // Position 0
     bus_interface_write(0x01, 0x20);  // Position 1
@@ -1396,7 +1432,7 @@ bool test_bus_interface_data_port_wrap_on_limit(void) {
     bus_interface_write(0x01, 0x60);  // Position 5
     bus_interface_write(0x01, 0x70);  // Position 6 (no wrap, continues)
     
-    indexed_memory_reset_index(128);
+    indexed_memory_execute_window_command(128, CMD_RESET_INDEX);
     if (bus_interface_read(0x01) != 0x10) {  // Position 0 should be original value
         printf("  FAIL: Non-wrap mode incorrectly wrapped\n");
         return false;
@@ -1418,9 +1454,9 @@ bool test_bus_interface_data_port_sequential_operations(void) {
     
     // Test sequential reads
     bus_interface_write(0x00, 128);  // Select index 128
-    indexed_memory_reset_index(128);
-    indexed_memory_set_index_step(128, 1);
-    indexed_memory_set_index_flags(128, FLAG_AUTO_STEP);
+    indexed_memory_execute_window_command(128, CMD_RESET_INDEX);
+    test_set_index_step(128, 1);
+    test_set_index_flags(128, FLAG_AUTO_STEP);
     
     // Write a sequence
     for (uint8_t i = 0; i < 20; i++) {
@@ -1428,7 +1464,7 @@ bool test_bus_interface_data_port_sequential_operations(void) {
     }
     
     // Read back the sequence
-    indexed_memory_reset_index(128);
+    indexed_memory_execute_window_command(128, CMD_RESET_INDEX);
     for (uint8_t i = 0; i < 20; i++) {
         uint8_t value = bus_interface_read(0x01);
         if (value != i) {
@@ -1439,13 +1475,13 @@ bool test_bus_interface_data_port_sequential_operations(void) {
     }
     
     // Test sequential writes
-    indexed_memory_reset_index(128);
+    indexed_memory_execute_window_command(128, CMD_RESET_INDEX);
     for (uint8_t i = 0; i < 15; i++) {
         bus_interface_write(0x01, 0xFF - i);
     }
     
     // Verify sequential writes
-    indexed_memory_reset_index(128);
+    indexed_memory_execute_window_command(128, CMD_RESET_INDEX);
     for (uint8_t i = 0; i < 15; i++) {
         uint8_t value = bus_interface_read(0x01);
         if (value != (0xFF - i)) {
@@ -1568,11 +1604,11 @@ bool test_bus_interface_cfg_data_read(void) {
     uint8_t test_step = 0x42;
     uint8_t test_flags = FLAG_AUTO_STEP | FLAG_WRAP_ON_LIMIT;
     
-    indexed_memory_set_index_address(128, test_addr);
-    indexed_memory_set_index_default(128, test_default);
-    indexed_memory_set_index_limit(128, test_limit);
-    indexed_memory_set_index_step(128, test_step);
-    indexed_memory_set_index_flags(128, test_flags);
+    test_set_index_address(128, test_addr);
+    test_set_index_default(128, test_default);
+    test_set_index_limit(128, test_limit);
+    test_set_index_step(128, test_step);
+    test_set_index_flags(128, test_flags);
     
     // Test reading current address (24-bit, 3 bytes)
     bus_interface_write(0x02, CFG_ADDR_L);
@@ -1944,7 +1980,7 @@ bool test_bus_interface_device_status_read(void) {
     }
     
     // Clear interrupt and verify IRQ_PENDING bit is cleared
-    indexed_memory_clear_irq();
+    indexed_memory_execute_shared_command(CMD_CLEAR_IRQ);
     status = bus_interface_read(REG_DEVICE_STATUS);
     
     if ((status & STATUS_IRQ_PENDING) != 0) {
@@ -2367,7 +2403,7 @@ bool test_bus_interface_command_reset_index(void) {
     
     // Set up index with non-default address
     // User indexes default to MIA_USER_AREA_BASE (0x00013800)
-    indexed_memory_set_index_address(128, 0x00013900);  // Different from default
+    test_set_index_address(128, 0x00013900);  // Different from default
     
     // Verify address is not at default
     uint8_t addr_h = indexed_memory_get_config_field(128, CFG_ADDR_H);
@@ -2411,7 +2447,7 @@ bool test_bus_interface_command_set_default_to_addr(void) {
     bus_interface_write(0x00, 128);
     
     // Set current address to a different value
-    indexed_memory_set_index_address(128, 0x00014000);
+    test_set_index_address(128, 0x00014000);
     
     // Execute CMD_SET_DEFAULT_TO_ADDR via COMMAND register (Window A at 0x04)
     bus_interface_write(0x04, CMD_SET_DEFAULT_TO_ADDR);
@@ -2445,7 +2481,7 @@ bool test_bus_interface_command_set_limit_to_addr(void) {
     bus_interface_write(0x00, 128);
     
     // Set current address to a specific value
-    indexed_memory_set_index_address(128, 0x00015000);
+    test_set_index_address(128, 0x00015000);
     
     // Execute CMD_SET_LIMIT_TO_ADDR via COMMAND register (Window A at 0x04)
     bus_interface_write(0x04, CMD_SET_LIMIT_TO_ADDR);
@@ -2476,9 +2512,9 @@ bool test_bus_interface_command_reset_all(void) {
     indexed_memory_init();
     
     // Modify several indexes
-    indexed_memory_set_index_address(128, 0x00013900);
-    indexed_memory_set_index_address(129, 0x00013A00);
-    indexed_memory_set_index_address(130, 0x00013B00);
+    test_set_index_address(128, 0x00013900);
+    test_set_index_address(129, 0x00013A00);
+    test_set_index_address(130, 0x00013B00);
     
     // Execute CMD_RESET_ALL_IDX via SHARED_COMMAND register at 0xFF
     bus_interface_write(0xFF, CMD_RESET_ALL_IDX);
@@ -2520,7 +2556,7 @@ bool test_bus_interface_command_clear_irq(void) {
     indexed_memory_set_irq(IRQ_VIDEO_FRAME_COMPLETE);
     
     // Verify interrupts are set
-    uint16_t cause = indexed_memory_get_irq_cause();
+    uint16_t cause = test_get_irq_cause();
     if (cause == 0) {
         printf("  FAIL: Interrupts should be set before clear\n");
         return false;
@@ -2530,7 +2566,7 @@ bool test_bus_interface_command_clear_irq(void) {
     bus_interface_write(0xFF, CMD_CLEAR_IRQ);
     
     // Verify all interrupts were cleared
-    cause = indexed_memory_get_irq_cause();
+    cause = test_get_irq_cause();
     if (cause != 0) {
         printf("  FAIL: All interrupts should be cleared, got 0x%04X\n", cause);
         return false;
@@ -2551,7 +2587,7 @@ bool test_bus_interface_command_system_reset(void) {
     indexed_memory_init();
     
     // Modify system state
-    indexed_memory_set_index_address(128, 0x00013900);
+    test_set_index_address(128, 0x00013900);
     indexed_memory_set_irq(IRQ_MEMORY_ERROR);
     
     // Execute CMD_SYSTEM_RESET via SHARED_COMMAND register at 0xFF
@@ -2569,7 +2605,7 @@ bool test_bus_interface_command_system_reset(void) {
     }
     
     // Check that interrupts were cleared
-    uint16_t cause = indexed_memory_get_irq_cause();
+    uint16_t cause = test_get_irq_cause();
     if (cause != 0) {
         printf("  FAIL: Interrupts should be cleared after reinit, got 0x%04X\n", cause);
         return false;
@@ -2590,8 +2626,8 @@ bool test_bus_interface_command_factory_reset_all_idx(void) {
     indexed_memory_init();
     
     // Modify system state
-    indexed_memory_set_index_address(128, 0x00013900);
-    indexed_memory_set_index_address(129, 0x00013A00);
+    test_set_index_address(128, 0x00013900);
+    test_set_index_address(129, 0x00013A00);
     indexed_memory_set_irq(IRQ_MEMORY_ERROR);
     indexed_memory_set_irq(IRQ_DMA_COMPLETE);
     
@@ -2615,14 +2651,14 @@ bool test_bus_interface_command_factory_reset_all_idx(void) {
     }
     
     // Check that interrupts were cleared
-    uint16_t cause = indexed_memory_get_irq_cause();
+    uint16_t cause = test_get_irq_cause();
     if (cause != 0) {
         printf("  FAIL: Interrupts should be cleared after subsystem reset, got 0x%04X\n", cause);
         return false;
     }
     
     // Check that system is ready
-    uint8_t status = indexed_memory_get_status();
+    uint8_t status = g_state.status;
     if (!(status & STATUS_SYSTEM_READY)) {
         printf("  FAIL: System should be ready after subsystem reset\n");
         return false;
@@ -2644,7 +2680,7 @@ bool test_bus_interface_command_multi_window(void) {
     
     // Test CMD_RESET_INDEX from Window A (0x04)
     bus_interface_write(0x00, 128);  // Select index 128 for Window A
-    indexed_memory_set_index_address(128, 0x00014000);
+    test_set_index_address(128, 0x00014000);
     bus_interface_write(0x04, CMD_RESET_INDEX);
     uint32_t addr_a = (indexed_memory_get_config_field(128, CFG_ADDR_H) << 16) |
                       (indexed_memory_get_config_field(128, CFG_ADDR_M) << 8) |
@@ -2656,7 +2692,7 @@ bool test_bus_interface_command_multi_window(void) {
     
     // Test CMD_RESET_INDEX from Window B (0x14)
     bus_interface_write(0x10, 129);  // Select index 129 for Window B
-    indexed_memory_set_index_address(129, 0x00014000);
+    test_set_index_address(129, 0x00014000);
     bus_interface_write(0x14, CMD_RESET_INDEX);
     uint32_t addr_b = (indexed_memory_get_config_field(129, CFG_ADDR_H) << 16) |
                       (indexed_memory_get_config_field(129, CFG_ADDR_M) << 8) |
@@ -2668,7 +2704,7 @@ bool test_bus_interface_command_multi_window(void) {
     
     // Test CMD_RESET_INDEX from Window C (0x24)
     bus_interface_write(0x20, 130);  // Select index 130 for Window C
-    indexed_memory_set_index_address(130, 0x00014000);
+    test_set_index_address(130, 0x00014000);
     bus_interface_write(0x24, CMD_RESET_INDEX);
     uint32_t addr_c = (indexed_memory_get_config_field(130, CFG_ADDR_H) << 16) |
                       (indexed_memory_get_config_field(130, CFG_ADDR_M) << 8) |
@@ -2680,7 +2716,7 @@ bool test_bus_interface_command_multi_window(void) {
     
     // Test CMD_RESET_INDEX from Window D (0x34)
     bus_interface_write(0x30, 131);  // Select index 131 for Window D
-    indexed_memory_set_index_address(131, 0x00014000);
+    test_set_index_address(131, 0x00014000);
     bus_interface_write(0x34, CMD_RESET_INDEX);
     uint32_t addr_d = (indexed_memory_get_config_field(131, CFG_ADDR_H) << 16) |
                       (indexed_memory_get_config_field(131, CFG_ADDR_M) << 8) |
@@ -2705,16 +2741,16 @@ bool test_bus_interface_command_copy_single_byte(void) {
     indexed_memory_init();
     
     // Set up source index (128) with test data
-    indexed_memory_set_index_address(128, 0x00013A00);
-    indexed_memory_set_index_default(128, 0x00013A00);
+    test_set_index_address(128, 0x00013A00);
+    test_set_index_default(128, 0x00013A00);
     indexed_memory_write(128, 0xAB);  // Write test byte
-    indexed_memory_reset_index(128);  // Reset to start
+    indexed_memory_execute_window_command(128, CMD_RESET_INDEX);  // Reset to start
     
     // Set up destination index (129)
-    indexed_memory_set_index_address(129, 0x00013B00);
-    indexed_memory_set_index_default(129, 0x00013B00);
+    test_set_index_address(129, 0x00013B00);
+    test_set_index_default(129, 0x00013B00);
     indexed_memory_write(129, 0x00);  // Clear destination
-    indexed_memory_reset_index(129);  // Reset to start
+    indexed_memory_execute_window_command(129, CMD_RESET_INDEX);  // Reset to start
     
     // Configure DMA via CFG_DATA register
     // Select index 128 for Window A
@@ -2743,7 +2779,7 @@ bool test_bus_interface_command_copy_single_byte(void) {
     // In test environment, DMA completes immediately
     
     // Verify data was copied
-    indexed_memory_reset_index(129);  // Reset destination to read
+    indexed_memory_execute_window_command(129, CMD_RESET_INDEX);  // Reset destination to read
     uint8_t copied_value = indexed_memory_read(129);
     
     if (copied_value != 0xAB) {
@@ -2766,24 +2802,24 @@ bool test_bus_interface_command_copy_multi_byte(void) {
     indexed_memory_init();
     
     // Set up source index (128) with test data
-    indexed_memory_set_index_address(128, 0x00013A00);
-    indexed_memory_set_index_default(128, 0x00013A00);
+    test_set_index_address(128, 0x00013A00);
+    test_set_index_default(128, 0x00013A00);
     
     // Write test pattern
     for (uint8_t i = 0; i < 10; i++) {
         indexed_memory_write(128, 0x10 + i);
     }
-    indexed_memory_reset_index(128);  // Reset to start
+    indexed_memory_execute_window_command(128, CMD_RESET_INDEX);  // Reset to start
     
     // Set up destination index (129)
-    indexed_memory_set_index_address(129, 0x00013B00);
-    indexed_memory_set_index_default(129, 0x00013B00);
+    test_set_index_address(129, 0x00013B00);
+    test_set_index_default(129, 0x00013B00);
     
     // Clear destination
     for (uint8_t i = 0; i < 10; i++) {
         indexed_memory_write(129, 0x00);
     }
-    indexed_memory_reset_index(129);  // Reset to start
+    indexed_memory_execute_window_command(129, CMD_RESET_INDEX);  // Reset to start
     
     // Configure DMA via CFG_DATA register
     // Select index 128 for Window A
@@ -2809,7 +2845,7 @@ bool test_bus_interface_command_copy_multi_byte(void) {
     bus_interface_write(0xFF, CMD_COPY_BLOCK);
     
     // Verify data was copied
-    indexed_memory_reset_index(129);  // Reset destination to read
+    indexed_memory_execute_window_command(129, CMD_RESET_INDEX);  // Reset destination to read
     
     for (uint8_t i = 0; i < 10; i++) {
         uint8_t copied_value = indexed_memory_read(129);
@@ -2897,17 +2933,17 @@ bool test_bus_interface_dma_completion_interrupt(void) {
     indexed_memory_init();
     
     // Clear any pending interrupts
-    indexed_memory_clear_irq();
+    indexed_memory_execute_shared_command(CMD_CLEAR_IRQ);
     
     // Set up source and destination indexes
-    indexed_memory_set_index_address(128, 0x00013A00);
-    indexed_memory_set_index_default(128, 0x00013A00);
+    test_set_index_address(128, 0x00013A00);
+    test_set_index_default(128, 0x00013A00);
     indexed_memory_write(128, 0xCD);
-    indexed_memory_reset_index(128);
+    indexed_memory_execute_window_command(128, CMD_RESET_INDEX);
     
-    indexed_memory_set_index_address(129, 0x00013B00);
-    indexed_memory_set_index_default(129, 0x00013B00);
-    indexed_memory_reset_index(129);
+    test_set_index_address(129, 0x00013B00);
+    test_set_index_default(129, 0x00013B00);
+    indexed_memory_execute_window_command(129, CMD_RESET_INDEX);
     
     // Configure DMA
     bus_interface_write(0x00, 128);
@@ -2924,7 +2960,7 @@ bool test_bus_interface_dma_completion_interrupt(void) {
     bus_interface_write(0xFF, CMD_COPY_BLOCK);
     
     // Check for DMA completion interrupt
-    uint16_t irq_cause = indexed_memory_get_irq_cause();
+    uint16_t irq_cause = test_get_irq_cause();
     
     if ((irq_cause & IRQ_DMA_COMPLETE) == 0) {
         printf("  FAIL: DMA completion interrupt should be set, got 0x%04X\n", irq_cause);
@@ -2935,7 +2971,7 @@ bool test_bus_interface_dma_completion_interrupt(void) {
     bus_interface_write(REG_IRQ_CAUSE_LOW, IRQ_DMA_COMPLETE & 0xFF);
     
     // Verify it was cleared
-    irq_cause = indexed_memory_get_irq_cause();
+    irq_cause = test_get_irq_cause();
     if ((irq_cause & IRQ_DMA_COMPLETE) != 0) {
         printf("  FAIL: DMA completion interrupt should be cleared\n");
         return false;

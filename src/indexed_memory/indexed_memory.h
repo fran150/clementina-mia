@@ -84,7 +84,7 @@
 #define STATUS_DMA_ACTIVE       0x40
 #define STATUS_SYSTEM_READY     0x80
 
-// IRQ cause codes (bit masks for 16-bit mask register)
+// IRQ cause codes and mask bits (same values used for both purposes)
 // Low byte (bits 0-7): System and I/O interrupts
 #define IRQ_NO_IRQ              0x0000  // Special value: no interrupt
 #define IRQ_MEMORY_ERROR        0x0001  // Bit 0 (low byte)
@@ -105,16 +105,6 @@
 #define IRQ_RESERVED_13         0x2000  // Bit 13 (high byte, bit 5) - reserved
 #define IRQ_RESERVED_14         0x4000  // Bit 14 (high byte, bit 6) - reserved
 #define IRQ_RESERVED_15         0x8000  // Bit 15 (high byte, bit 7) - reserved
-
-// IRQ mask bits (same as cause codes for convenience)
-#define IRQ_MASK_MEMORY_ERROR       IRQ_MEMORY_ERROR
-#define IRQ_MASK_INDEX_OVERFLOW     IRQ_INDEX_OVERFLOW
-#define IRQ_MASK_DMA_COMPLETE       IRQ_DMA_COMPLETE
-#define IRQ_MASK_DMA_ERROR          IRQ_DMA_ERROR
-#define IRQ_MASK_USB_KEYBOARD       IRQ_USB_KEYBOARD
-#define IRQ_MASK_USB_DEVICE_CHANGE  IRQ_USB_DEVICE_CHANGE
-#define IRQ_MASK_VIDEO_FRAME        IRQ_VIDEO_FRAME_COMPLETE
-#define IRQ_MASK_VIDEO_COLLISION    IRQ_VIDEO_COLLISION
 
 // Performance optimization macros
 #define ADDR_VALID(addr) ((addr) < MIA_MEMORY_SIZE)
@@ -166,60 +156,27 @@ typedef struct {
     uint8_t irq_enable;        // Global interrupt enable/disable (1 = enabled, 0 = disabled)
 } indexed_memory_state_t;
 
-// Global system state - exposed for direct access
-// NOTE: For new code, prefer direct access: g_state.indexes[idx].field = value
-// The wrapper functions below are kept for API compatibility
-extern indexed_memory_state_t g_state;
-
-// Function prototypes
+// Public API - functions used by other modules
 void indexed_memory_init(void);
-void indexed_memory_reset_all(void);
 
-// Index management
-void indexed_memory_set_address(uint8_t idx, addr_field_t field, uint32_t address);
-void indexed_memory_set_index_address(uint8_t idx, uint32_t address);
-void indexed_memory_set_index_default(uint8_t idx, uint32_t address);
-void indexed_memory_set_index_limit(uint8_t idx, uint32_t address);
-void indexed_memory_set_index_step(uint8_t idx, uint8_t step);
-void indexed_memory_set_index_flags(uint8_t idx, uint8_t flags);
-void indexed_memory_reset_index(uint8_t idx);
-
-// Memory access via indexes
+// Memory access
 uint8_t indexed_memory_read(uint8_t idx);
 void indexed_memory_write(uint8_t idx, uint8_t data);
-uint8_t indexed_memory_read_no_step(uint8_t idx);
-void indexed_memory_write_no_step(uint8_t idx, uint8_t data);
 
-// Configuration field access
+// Configuration
 uint8_t indexed_memory_get_config_field(uint8_t idx, uint8_t field);
 void indexed_memory_set_config_field(uint8_t idx, uint8_t field, uint8_t value);
 
-// Command execution
+// Commands
 void indexed_memory_execute_window_command(uint8_t idx, uint8_t cmd);
 void indexed_memory_execute_shared_command(uint8_t cmd);
 
-// DMA operations
-// Note: Copy operations use indexes as address pointers only
-// Indexes are NOT modified by copy operations (auto-step is ignored)
-void indexed_memory_copy_block(uint8_t src_idx, uint8_t dst_idx, uint16_t count);
-bool indexed_memory_is_dma_busy(void);
-
-// Status and interrupt management
-uint8_t indexed_memory_get_status(void);
-void indexed_memory_set_status(uint8_t status_bits);      // Set status bits (OR operation)
-void indexed_memory_clear_status(uint8_t status_bits);    // Clear status bits (AND NOT operation)
-uint16_t indexed_memory_get_irq_cause(void);
-uint8_t indexed_memory_get_irq_cause_low(void);
-uint8_t indexed_memory_get_irq_cause_high(void);
+// Status and IRQ management
+void indexed_memory_set_status(uint8_t status_bits);
+void indexed_memory_set_irq(uint16_t cause);
 void indexed_memory_write_irq_cause_low(uint8_t clear_bits);
 void indexed_memory_write_irq_cause_high(uint8_t clear_bits);
-void indexed_memory_clear_irq(void);
-void indexed_memory_clear_specific_irq(uint16_t cause);
-void indexed_memory_set_irq(uint16_t cause);
-void indexed_memory_trigger_irq(uint16_t cause);          // Set IRQ cause and assert IRQ line
-uint16_t indexed_memory_get_irq_mask(void);
 void indexed_memory_set_irq_mask(uint16_t mask);
-uint8_t indexed_memory_get_irq_enable(void);
 void indexed_memory_set_irq_enable(uint8_t enable);
 
 #endif // INDEXED_MEMORY_H

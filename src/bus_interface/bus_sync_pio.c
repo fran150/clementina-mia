@@ -67,7 +67,7 @@ void __attribute__((optimize("O3"))) bus_sync_pio_irq_handler(void) {
         
         // Set error status and trigger interrupt
         indexed_memory_set_status(STATUS_MEMORY_ERROR);
-        indexed_memory_trigger_irq(IRQ_MEMORY_ERROR);
+        indexed_memory_set_irq(IRQ_MEMORY_ERROR);
         
         // Push NOP control byte and return
         pio_sm_put(pio_instance, sm, BUS_CTRL_NOP);
@@ -157,7 +157,7 @@ void __attribute__((optimize("O3"))) bus_sync_pio_irq_handler(void) {
             
             // Set error status and trigger interrupt
             indexed_memory_set_status(STATUS_MEMORY_ERROR);
-            indexed_memory_trigger_irq(IRQ_MEMORY_ERROR);
+            indexed_memory_set_irq(IRQ_MEMORY_ERROR);
             
             return;  // Cannot push, abort
         }
@@ -188,7 +188,7 @@ void __attribute__((optimize("O3"))) bus_sync_pio_irq_handler(void) {
             
             // Set error status and trigger interrupt
             indexed_memory_set_status(STATUS_MEMORY_ERROR);
-            indexed_memory_trigger_irq(IRQ_MEMORY_ERROR);
+            indexed_memory_set_irq(IRQ_MEMORY_ERROR);
             
             // Tri-state bus and abort
             gpio_set_dir(8, GPIO_IN);
@@ -214,7 +214,7 @@ void __attribute__((optimize("O3"))) bus_sync_pio_irq_handler(void) {
             
             // Set error status and trigger interrupt
             indexed_memory_set_status(STATUS_MEMORY_ERROR);
-            indexed_memory_trigger_irq(IRQ_MEMORY_ERROR);
+            indexed_memory_set_irq(IRQ_MEMORY_ERROR);
             
             // Tri-state bus and abort
             gpio_set_dir(8, GPIO_IN);
@@ -252,7 +252,7 @@ void __attribute__((optimize("O3"))) bus_sync_pio_irq_handler(void) {
             
             // Set error status and trigger interrupt
             indexed_memory_set_status(STATUS_MEMORY_ERROR);
-            indexed_memory_trigger_irq(IRQ_MEMORY_ERROR);
+            indexed_memory_set_irq(IRQ_MEMORY_ERROR);
             
             return;
         }

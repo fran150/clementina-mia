@@ -12,11 +12,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-
-
 // Always include GPIO for IRQ line control (mocked in tests)
 #include "hardware/gpio.h"
 #include "hardware/watchdog.h"
+
+// Forward declarations
+static void indexed_memory_reset_index(uint8_t idx);
+static void indexed_memory_clear_irq(void);
+static void indexed_memory_copy_block(uint8_t src_idx, uint8_t dst_idx, uint16_t count);
+static void indexed_memory_set_address(uint8_t idx, addr_field_t field, uint32_t address);
 
 // MIA memory layout (256KB properly allocated)
 // All addresses are logical offsets (0x000000 - 0x03FFFF) into the mia_memory array
@@ -79,20 +83,20 @@ void indexed_memory_init(void) {
     // Pre-configure system indexes
     
     // Index 0: System error log
-    indexed_memory_set_index_address(IDX_SYSTEM_ERROR, MIA_SYSTEM_AREA_BASE);
-    indexed_memory_set_index_default(IDX_SYSTEM_ERROR, MIA_SYSTEM_AREA_BASE);
-    indexed_memory_set_index_step(IDX_SYSTEM_ERROR, 1);
-    indexed_memory_set_index_flags(IDX_SYSTEM_ERROR, FLAG_AUTO_STEP);
+    indexed_memory_set_address(IDX_SYSTEM_ERROR, ADDR_CURRENT, MIA_SYSTEM_AREA_BASE);
+    indexed_memory_set_address(IDX_SYSTEM_ERROR, ADDR_DEFAULT, MIA_SYSTEM_AREA_BASE);
+    g_state.indexes[IDX_SYSTEM_ERROR].step = 1;
+    g_state.indexes[IDX_SYSTEM_ERROR].flags = FLAG_AUTO_STEP;
     
     // Character tables (indexes 16-23) - 8 tables, shared by background and sprites
     for (int i = 0; i < 8; i++) {
         uint8_t idx = IDX_CHARACTER_START + i;
         uint32_t addr = MIA_VIDEO_AREA_BASE + (i * 256 * 24); // 256 chars × 24 bytes each
-        indexed_memory_set_index_address(idx, addr);
-        indexed_memory_set_index_default(idx, addr);
-        indexed_memory_set_index_limit(idx, addr + (256 * 24)); // Wrap at end of character table (6KB)
-        indexed_memory_set_index_step(idx, 1);
-        indexed_memory_set_index_flags(idx, FLAG_AUTO_STEP | FLAG_WRAP_ON_LIMIT);
+        indexed_memory_set_address(idx, ADDR_CURRENT, addr);
+        indexed_memory_set_address(idx, ADDR_DEFAULT, addr);
+        indexed_memory_set_address(idx, ADDR_LIMIT, addr + (256 * 24)); // Wrap at end of character table (6KB)
+        g_state.indexes[idx].step = 1;
+        g_state.indexes[idx].flags = FLAG_AUTO_STEP | FLAG_WRAP_ON_LIMIT;
     }
     
     // Palette banks (indexes 32-47) - 16 banks, shared resource
@@ -100,11 +104,11 @@ void indexed_memory_init(void) {
     for (int i = 0; i < 16; i++) {
         uint8_t idx = IDX_PALETTE_START + i;
         uint32_t addr = palette_base + (i * 16); // 8 colors × 2 bytes per bank
-        indexed_memory_set_index_address(idx, addr);
-        indexed_memory_set_index_default(idx, addr);
-        indexed_memory_set_index_limit(idx, addr + 16); // Wrap at end of palette bank (16 bytes)
-        indexed_memory_set_index_step(idx, 1);
-        indexed_memory_set_index_flags(idx, FLAG_AUTO_STEP | FLAG_WRAP_ON_LIMIT);
+        indexed_memory_set_address(idx, ADDR_CURRENT, addr);
+        indexed_memory_set_address(idx, ADDR_DEFAULT, addr);
+        indexed_memory_set_address(idx, ADDR_LIMIT, addr + 16); // Wrap at end of palette bank (16 bytes)
+        g_state.indexes[idx].step = 1;
+        g_state.indexes[idx].flags = FLAG_AUTO_STEP | FLAG_WRAP_ON_LIMIT;
     }
     
     // Nametables (indexes 48-51) - 4 tables for double buffering and scrolling
@@ -112,11 +116,11 @@ void indexed_memory_init(void) {
     for (int i = 0; i < 4; i++) {
         uint8_t idx = IDX_NAMETABLE_START + i;
         uint32_t addr = nametable_base + (i * 40 * 25); // 40×25 bytes per nametable
-        indexed_memory_set_index_address(idx, addr);
-        indexed_memory_set_index_default(idx, addr);
-        indexed_memory_set_index_limit(idx, addr + (40 * 25)); // Wrap at end of nametable (1000 bytes)
-        indexed_memory_set_index_step(idx, 1);
-        indexed_memory_set_index_flags(idx, FLAG_AUTO_STEP | FLAG_WRAP_ON_LIMIT);
+        indexed_memory_set_address(idx, ADDR_CURRENT, addr);
+        indexed_memory_set_address(idx, ADDR_DEFAULT, addr);
+        indexed_memory_set_address(idx, ADDR_LIMIT, addr + (40 * 25)); // Wrap at end of nametable (1000 bytes)
+        g_state.indexes[idx].step = 1;
+        g_state.indexes[idx].flags = FLAG_AUTO_STEP | FLAG_WRAP_ON_LIMIT;
     }
     
     // Palette tables (indexes 52-55) - 4 tables for double buffering and scrolling
@@ -124,79 +128,79 @@ void indexed_memory_init(void) {
     for (int i = 0; i < 4; i++) {
         uint8_t idx = IDX_PALETTE_TABLE_START + i;
         uint32_t addr = palette_table_base + (i * 40 * 25); // 40×25 bytes per palette table
-        indexed_memory_set_index_address(idx, addr);
-        indexed_memory_set_index_default(idx, addr);
-        indexed_memory_set_index_limit(idx, addr + (40 * 25)); // Wrap at end of palette table (1000 bytes)
-        indexed_memory_set_index_step(idx, 1);
-        indexed_memory_set_index_flags(idx, FLAG_AUTO_STEP | FLAG_WRAP_ON_LIMIT);
+        indexed_memory_set_address(idx, ADDR_CURRENT, addr);
+        indexed_memory_set_address(idx, ADDR_DEFAULT, addr);
+        indexed_memory_set_address(idx, ADDR_LIMIT, addr + (40 * 25)); // Wrap at end of palette table (1000 bytes)
+        g_state.indexes[idx].step = 1;
+        g_state.indexes[idx].flags = FLAG_AUTO_STEP | FLAG_WRAP_ON_LIMIT;
     }
     
     // Sprite OAM (index 56) - 256 sprites × 4 bytes, sprites use character table graphics
     uint32_t sprite_oam_base = palette_table_base + (4 * 40 * 25); // After palette tables (4KB)
-    indexed_memory_set_index_address(IDX_SPRITE_OAM, sprite_oam_base);
-    indexed_memory_set_index_default(IDX_SPRITE_OAM, sprite_oam_base);
-    indexed_memory_set_index_limit(IDX_SPRITE_OAM, sprite_oam_base + (256 * 4)); // Wrap at end of OAM (1024 bytes)
-    indexed_memory_set_index_step(IDX_SPRITE_OAM, 4); // Step by sprite record size (4 bytes)
-    indexed_memory_set_index_flags(IDX_SPRITE_OAM, FLAG_AUTO_STEP | FLAG_WRAP_ON_LIMIT);
+    indexed_memory_set_address(IDX_SPRITE_OAM, ADDR_CURRENT, sprite_oam_base);
+    indexed_memory_set_address(IDX_SPRITE_OAM, ADDR_DEFAULT, sprite_oam_base);
+    indexed_memory_set_address(IDX_SPRITE_OAM, ADDR_LIMIT, sprite_oam_base + (256 * 4)); // Wrap at end of OAM (1024 bytes)
+    g_state.indexes[IDX_SPRITE_OAM].step = 4; // Step by sprite record size (4 bytes)
+    g_state.indexes[IDX_SPRITE_OAM].flags = FLAG_AUTO_STEP | FLAG_WRAP_ON_LIMIT;
     
     // Active frame control (index 57) - selects which buffer set (0 or 1) for video transmission
     uint32_t active_frame_base = sprite_oam_base + (256 * 4); // After sprite OAM (1KB)
-    indexed_memory_set_index_address(IDX_ACTIVE_FRAME, active_frame_base);
-    indexed_memory_set_index_default(IDX_ACTIVE_FRAME, active_frame_base);
-    indexed_memory_set_index_step(IDX_ACTIVE_FRAME, 1);
-    indexed_memory_set_index_flags(IDX_ACTIVE_FRAME, 0); // No auto-step
+    indexed_memory_set_address(IDX_ACTIVE_FRAME, ADDR_CURRENT, active_frame_base);
+    indexed_memory_set_address(IDX_ACTIVE_FRAME, ADDR_DEFAULT, active_frame_base);
+    g_state.indexes[IDX_ACTIVE_FRAME].step = 1;
+    g_state.indexes[IDX_ACTIVE_FRAME].flags = 0; // No auto-step
     
     // USB keyboard buffer (indexes 64-79)
     uint32_t usb_base = MIA_IO_BUFFER_BASE;
     
     // Index 64: USB keyboard circular buffer
-    indexed_memory_set_index_address(64, usb_base);
-    indexed_memory_set_index_default(64, usb_base);
-    indexed_memory_set_index_limit(64, usb_base + 64); // Wrap at end of keyboard buffer (64 bytes)
-    indexed_memory_set_index_step(64, 1);
-    indexed_memory_set_index_flags(64, FLAG_AUTO_STEP | FLAG_WRAP_ON_LIMIT);
+    indexed_memory_set_address(64, ADDR_CURRENT, usb_base);
+    indexed_memory_set_address(64, ADDR_DEFAULT, usb_base);
+    indexed_memory_set_address(64, ADDR_LIMIT, usb_base + 64); // Wrap at end of keyboard buffer (64 bytes)
+    g_state.indexes[64].step = 1;
+    g_state.indexes[64].flags = FLAG_AUTO_STEP | FLAG_WRAP_ON_LIMIT;
     
     // Index 65: USB status
-    indexed_memory_set_index_address(65, usb_base + 64);
-    indexed_memory_set_index_default(65, usb_base + 64);
-    indexed_memory_set_index_step(65, 1);
-    indexed_memory_set_index_flags(65, 0); // No auto-step for status
+    indexed_memory_set_address(65, ADDR_CURRENT, usb_base + 64);
+    indexed_memory_set_address(65, ADDR_DEFAULT, usb_base + 64);
+    g_state.indexes[65].step = 1;
+    g_state.indexes[65].flags = 0; // No auto-step for status
     
     // System control (indexes 80-95)
     uint32_t sysctrl_base = MIA_SYSTEM_AREA_BASE + 0x1000;
     
     // Index 80: Clock control
-    indexed_memory_set_index_address(80, sysctrl_base);
-    indexed_memory_set_index_default(80, sysctrl_base);
-    indexed_memory_set_index_step(80, 1);
-    indexed_memory_set_index_flags(80, 0);
+    indexed_memory_set_address(80, ADDR_CURRENT, sysctrl_base);
+    indexed_memory_set_address(80, ADDR_DEFAULT, sysctrl_base);
+    g_state.indexes[80].step = 1;
+    g_state.indexes[80].flags = 0;
     
     // Index 81: Reset control
-    indexed_memory_set_index_address(81, sysctrl_base + 16);
-    indexed_memory_set_index_default(81, sysctrl_base + 16);
-    indexed_memory_set_index_step(81, 1);
-    indexed_memory_set_index_flags(81, 0);
+    indexed_memory_set_address(81, ADDR_CURRENT, sysctrl_base + 16);
+    indexed_memory_set_address(81, ADDR_DEFAULT, sysctrl_base + 16);
+    g_state.indexes[81].step = 1;
+    g_state.indexes[81].flags = 0;
     
     // Index 83: IRQ mask control low byte (enable/disable interrupt sources 0-7)
-    indexed_memory_set_index_address(83, sysctrl_base + 48);
-    indexed_memory_set_index_default(83, sysctrl_base + 48);
-    indexed_memory_set_index_step(83, 1);
-    indexed_memory_set_index_flags(83, 0);
+    indexed_memory_set_address(83, ADDR_CURRENT, sysctrl_base + 48);
+    indexed_memory_set_address(83, ADDR_DEFAULT, sysctrl_base + 48);
+    g_state.indexes[83].step = 1;
+    g_state.indexes[83].flags = 0;
     
     // Index 84: IRQ mask control high byte (enable/disable interrupt sources 8-15)
-    indexed_memory_set_index_address(84, sysctrl_base + 49);
-    indexed_memory_set_index_default(84, sysctrl_base + 49);
-    indexed_memory_set_index_step(84, 1);
-    indexed_memory_set_index_flags(84, 0);
+    indexed_memory_set_address(84, ADDR_CURRENT, sysctrl_base + 49);
+    indexed_memory_set_address(84, ADDR_DEFAULT, sysctrl_base + 49);
+    g_state.indexes[84].step = 1;
+    g_state.indexes[84].flags = 0;
     
     // User area (indexes 128-255) - 162KB of user RAM
     // All user indexes start at the base of user memory
     // Users will reconfigure as needed for their applications
     for (int i = IDX_USER_START; i <= IDX_USER_END; i++) {
-        indexed_memory_set_index_address(i, MIA_USER_AREA_BASE);
-        indexed_memory_set_index_default(i, MIA_USER_AREA_BASE);
-        indexed_memory_set_index_step(i, 1);
-        indexed_memory_set_index_flags(i, FLAG_AUTO_STEP);
+        indexed_memory_set_address(i, ADDR_CURRENT, MIA_USER_AREA_BASE);
+        indexed_memory_set_address(i, ADDR_DEFAULT, MIA_USER_AREA_BASE);
+        g_state.indexes[i].step = 1;
+        g_state.indexes[i].flags = FLAG_AUTO_STEP;
     }
     
     // Initialize DMA for memory copy operations
@@ -219,7 +223,7 @@ void indexed_memory_reset_all(void) {
 /**
  * Generic address setter - replaces three separate functions
  */
-void indexed_memory_set_address(uint8_t idx, addr_field_t field, uint32_t address) {
+static void indexed_memory_set_address(uint8_t idx, addr_field_t field, uint32_t address) {
     address &= 0xFFFFFF;  // Ensure 24-bit
     switch (field) {
         case ADDR_CURRENT: g_state.indexes[idx].current_addr = address; break;
@@ -228,36 +232,7 @@ void indexed_memory_set_address(uint8_t idx, addr_field_t field, uint32_t addres
     }
 }
 
-/**
- * Legacy compatibility functions - now just call generic setter
- */
-void indexed_memory_set_index_address(uint8_t idx, uint32_t address) {
-    indexed_memory_set_address(idx, ADDR_CURRENT, address);
-}
 
-void indexed_memory_set_index_default(uint8_t idx, uint32_t address) {
-    indexed_memory_set_address(idx, ADDR_DEFAULT, address);
-}
-
-void indexed_memory_set_index_limit(uint8_t idx, uint32_t address) {
-    indexed_memory_set_address(idx, ADDR_LIMIT, address);
-}
-
-/**
- * Set index step size
- * NOTE: For new code, prefer direct access: g_state.indexes[idx].step = step
- */
-void indexed_memory_set_index_step(uint8_t idx, uint8_t step) {
-    g_state.indexes[idx].step = step;
-}
-
-/**
- * Set index flags  
- * NOTE: For new code, prefer direct access: g_state.indexes[idx].flags = flags
- */
-void indexed_memory_set_index_flags(uint8_t idx, uint8_t flags) {
-    g_state.indexes[idx].flags = flags;
-}
 
 /**
  * Reset index to default address
@@ -590,17 +565,9 @@ void indexed_memory_copy_block(uint8_t src_idx, uint8_t dst_idx, uint16_t count)
  * Check if DMA transfer is currently in progress
  * Returns true if DMA is busy, false if idle
  */
-bool indexed_memory_is_dma_busy(void) {
-    return indexed_memory_dma_is_busy();
-}
-
 /**
  * Get system status
  */
-uint8_t indexed_memory_get_status(void) {
-    return g_state.status;
-}
-
 /**
  * Set status bits (OR operation)
  * Sets the specified status bit(s) in the status register
@@ -620,24 +587,6 @@ void indexed_memory_clear_status(uint8_t status_bits) {
 /**
  * Get IRQ cause (full 16-bit value)
  */
-uint16_t indexed_memory_get_irq_cause(void) {
-    return g_state.irq_cause;
-}
-
-/**
- * Get IRQ cause low byte (bits 0-7)
- */
-uint8_t indexed_memory_get_irq_cause_low(void) {
-    return g_state.irq_cause & 0xFF;
-}
-
-/**
- * Get IRQ cause high byte (bits 8-15)
- */
-uint8_t indexed_memory_get_irq_cause_high(void) {
-    return (g_state.irq_cause >> 8) & 0xFF;
-}
-
 /**
  * Write to IRQ cause low byte (write-1-to-clear)
  * Writing 1 to a bit position clears that interrupt
@@ -713,15 +662,7 @@ void indexed_memory_set_irq(uint16_t cause) {
     }
 }
 
-/**
- * Trigger IRQ
- * Convenience function that sets IRQ cause and asserts IRQ line
- * This is equivalent to indexed_memory_set_irq() but with a more descriptive name
- * for use in error handling contexts
- */
-void indexed_memory_trigger_irq(uint16_t cause) {
-    indexed_memory_set_irq(cause);
-}
+
 
 
 
@@ -729,10 +670,6 @@ void indexed_memory_trigger_irq(uint16_t cause) {
  * Get IRQ mask (16-bit)
  * Returns which interrupt sources are enabled
  */
-uint16_t indexed_memory_get_irq_mask(void) {
-    return g_state.irq_mask;
-}
-
 /**
  * Set IRQ mask (16-bit)
  * Controls which interrupt sources are enabled
@@ -757,10 +694,6 @@ void indexed_memory_set_irq_mask(uint16_t mask) {
  * Get global IRQ enable state
  * Returns whether interrupts are globally enabled
  */
-uint8_t indexed_memory_get_irq_enable(void) {
-    return g_state.irq_enable;
-}
-
 /**
  * Set global IRQ enable state
  * Controls whether interrupts can be asserted to the 6502
