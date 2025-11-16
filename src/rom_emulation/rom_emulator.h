@@ -30,15 +30,10 @@ typedef enum {
     ROM_STATE_COMPLETE
 } rom_state_t;
 
-// Function prototypes
+// Public API - functions used by other modules
 void rom_emulator_init(void);
 void rom_emulator_process(void);
-bool rom_emulator_handle_read(uint16_t address, uint8_t *data);
-bool rom_emulator_handle_write(uint16_t address, uint8_t data);
-rom_state_t rom_emulator_get_state(void);
 void rom_emulator_start_boot_sequence(void);
 bool rom_emulator_is_active(void);
-uint32_t rom_emulator_get_kernel_size(void);
-uint32_t rom_emulator_get_bytes_transferred(void);
 
 #endif // ROM_EMULATOR_H

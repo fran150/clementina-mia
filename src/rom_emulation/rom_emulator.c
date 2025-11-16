@@ -17,6 +17,9 @@ static uint32_t kernel_data_pointer = 0;
 static absolute_time_t reset_start_time;
 static uint32_t reset_cycle_count = 0;
 
+// Forward declarations for internal functions
+static bool rom_emulator_handle_read(uint16_t address, uint8_t *data);
+
 // 6502 Boot Loader Assembly Code
 // This code runs on the 6502 CPU and copies the kernel from MIA to RAM
 // Memory addresses shown are the 6502 CPU addresses ($E000-$E0FF)
@@ -159,7 +162,7 @@ void rom_emulator_process(void) {
     }
 }
 
-bool rom_emulator_handle_read(uint16_t address, uint8_t *data) {
+static bool rom_emulator_handle_read(uint16_t address, uint8_t *data) {
     if (!data) return false;
     
     // Handle reset vector ($FFFC-$FFFD maps to $FC-$FD in MIA space)
@@ -224,27 +227,6 @@ bool rom_emulator_handle_read(uint16_t address, uint8_t *data) {
     return true;
 }
 
-bool rom_emulator_handle_write(uint16_t address, uint8_t data) {
-    (void)address;  // Unused parameter
-    (void)data;     // Unused parameter
-    
-    // ROM emulation typically doesn't handle writes
-    // Could be extended for special control registers if needed
-    return false;
-}
-
-rom_state_t rom_emulator_get_state(void) {
-    return current_state;
-}
-
 bool rom_emulator_is_active(void) {
     return current_state != ROM_STATE_INACTIVE;
-}
-
-uint32_t rom_emulator_get_kernel_size(void) {
-    return kernel_data_size;
-}
-
-uint32_t rom_emulator_get_bytes_transferred(void) {
-    return kernel_data_pointer;
 }
