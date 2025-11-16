@@ -62,10 +62,7 @@ int main() {
     // Initialize indexed memory system
     indexed_memory_init();
     printf("Indexed memory system initialized\n");
-    
-    // Note: Unit tests have been moved to tests/ directory
-    // Run 'make test' to execute tests on your development machine
-    
+        
     // Initialize video controller (Core 0 portion)
     video_controller_init_core0();
     printf("Video controller (Core 0) initialized\n");
