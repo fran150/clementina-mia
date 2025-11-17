@@ -38,6 +38,7 @@ void supporting_functions_loop() {
         video_controller_process();
         usb_controller_process();
         wifi_controller_process();
+        indexed_memory_process_copy_command();
         
         tight_loop_contents();
     }
@@ -57,6 +58,10 @@ int main() {
     clock_control_init();
     printf("Clock control initialized\n");
     
+    // Initialize IRQ system first
+    irq_init();
+    printf("IRQ system initialized\n");
+
     // Initialize indexed memory system
     indexed_memory_init();
     printf("Indexed memory system initialized\n");

@@ -14,9 +14,6 @@
 #include <stddef.h>
 #include <string.h>
 
-// Access to indexed memory state for status field
-extern indexed_memory_state_t g_state;
-
 // ============================================================================
 // Window State Management
 // ============================================================================
@@ -177,7 +174,7 @@ uint8_t __attribute__((optimize("O3"))) __attribute__((hot)) bus_interface_read(
     if (is_shared) {
         // Handle shared register reads
         if (local_addr == REG_DEVICE_STATUS) {
-            return g_state.status | (irq_is_pending() ? STATUS_IRQ_PENDING : 0);
+            return indexed_memory_get_status() | (irq_is_pending() ? STATUS_IRQ_PENDING : 0);
         } else if (local_addr == REG_IRQ_CAUSE_LOW) {
             return irq_get_cause_low();
         } else if (local_addr == REG_IRQ_CAUSE_HIGH) {

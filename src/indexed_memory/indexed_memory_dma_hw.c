@@ -66,16 +66,6 @@ bool indexed_memory_dma_is_busy(void) {
     return dma_channel_is_busy(dma_channel);
 }
 
-void indexed_memory_dma_wait_for_completion(void) {
-    // ⚠️ WARNING: This function blocks!
-    // Should only be used in special cases (shutdown, debugging, etc.)
-    // NOT for normal operation - will violate bus timing
-    if (dma_channel < 0) {
-        return;
-    }
-    dma_channel_wait_for_finish_blocking(dma_channel);
-}
-
 void indexed_memory_dma_set_completion_callback(void (*callback)(void)) {
     completion_callback = callback;
 }

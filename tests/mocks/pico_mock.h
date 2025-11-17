@@ -13,6 +13,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include "irq/irq.h"
+
 
 // Define uint type (used by Pico SDK)
 typedef unsigned int uint;
@@ -55,6 +57,7 @@ static inline void watchdog_reboot(uint32_t pc, uint32_t sp, uint32_t delay_ms) 
     printf("Mock watchdog reboot triggered - simulating system reboot\n");
     // In tests, simulate a reboot by reinitializing the indexed memory system
     // This mimics what would happen after a real reboot
+    irq_init();
     indexed_memory_init();
 }
 

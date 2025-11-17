@@ -14,8 +14,11 @@
 #include "irq/irq.h"
 #include <stdio.h>
 
-// Access to indexed memory state for testing
-extern indexed_memory_state_t g_state;
+// Test setup helper - initializes dependencies in correct order
+static void test_setup_indexed_memory(void) {
+    irq_init();                    // Initialize IRQ system first
+    indexed_memory_init();         // Then initialize indexed memory
+}
 
 // Helper functions to replace internal function calls with public API
 static void test_set_index_address(uint8_t idx, uint32_t address) {
@@ -777,7 +780,7 @@ bool test_bus_interface_data_port_read(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Test reading DATA_PORT for Window A (address 0x01)
     // Select index 64 (USB keyboard buffer) for Window A
@@ -851,7 +854,7 @@ bool test_bus_interface_data_port_auto_step(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Select index 128 (user area) for Window A
     bus_interface_write(0x00, 128);
@@ -885,7 +888,7 @@ bool test_bus_interface_data_port_multi_window(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Configure indexes to point to different memory locations
     // User indexes all start at the same base address, so we need to offset them
@@ -955,7 +958,7 @@ bool test_bus_interface_data_port_write(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Test writing DATA_PORT for Window A (address 0x01)
     // Select index 128 (user area) for Window A
@@ -1041,7 +1044,7 @@ bool test_bus_interface_data_port_write_auto_step(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Select index 128 (user area) for Window A
     bus_interface_write(0x00, 128);
@@ -1076,7 +1079,7 @@ bool test_bus_interface_data_port_write_multi_window(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Configure indexes to point to different memory locations
     uint32_t base_addr = 0x20013800;  // MIA_USER_AREA_BASE
@@ -1150,7 +1153,7 @@ bool test_bus_interface_data_port_read_write_integration(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Select index 128 for Window A
     bus_interface_write(0x00, 128);
@@ -1210,7 +1213,7 @@ bool test_bus_interface_data_port_step_sizes(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Test step size of 1 (default)
     bus_interface_write(0x00, 128);  // Select index 128
@@ -1280,7 +1283,7 @@ bool test_bus_interface_data_port_directions(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Test forward direction (default)
     bus_interface_write(0x00, 128);  // Select index 128
@@ -1357,7 +1360,7 @@ bool test_bus_interface_data_port_wrap_on_limit(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Configure index 128 with wrap-on-limit
     // Wrap happens when address >= limit, so limit should be one past the last valid position
@@ -1451,7 +1454,7 @@ bool test_bus_interface_data_port_sequential_operations(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Test sequential reads
     bus_interface_write(0x00, 128);  // Select index 128
@@ -1593,7 +1596,7 @@ bool test_bus_interface_cfg_data_read(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Select index 128 for Window A
     bus_interface_write(0x00, 128);
@@ -1681,7 +1684,7 @@ bool test_bus_interface_cfg_data_write(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Select index 128 for Window A
     bus_interface_write(0x00, 128);
@@ -1770,7 +1773,7 @@ bool test_bus_interface_cfg_data_multibyte_fields(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Select index 129 for Window B
     bus_interface_write(0x10, 129);
@@ -1829,7 +1832,7 @@ bool test_bus_interface_cfg_data_dma_fields(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Select index 128 for Window A
     bus_interface_write(0x00, 128);
@@ -1899,7 +1902,7 @@ bool test_bus_interface_cfg_multi_window(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Configure different indexes for each window
     bus_interface_write(0x00, 128);  // Window A -> index 128
@@ -1960,7 +1963,7 @@ bool test_bus_interface_device_status_read(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Read DEVICE_STATUS register (address 0xF0)
     uint8_t status = bus_interface_read(REG_DEVICE_STATUS);
@@ -2001,7 +2004,7 @@ bool test_bus_interface_irq_cause_low_read(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Initially should be 0 (no interrupts)
     uint8_t cause_low = bus_interface_read(REG_IRQ_CAUSE_LOW);
@@ -2040,7 +2043,7 @@ bool test_bus_interface_irq_cause_high_read(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Initially should be 0 (no interrupts)
     uint8_t cause_high = bus_interface_read(REG_IRQ_CAUSE_HIGH);
@@ -2079,7 +2082,7 @@ bool test_bus_interface_irq_cause_write_to_clear(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Set multiple interrupts in low byte
     irq_set(IRQ_MEMORY_ERROR | IRQ_INDEX_OVERFLOW | IRQ_DMA_COMPLETE);
@@ -2138,7 +2141,7 @@ bool test_bus_interface_irq_mask_read_write(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Initially all interrupts should be enabled (mask = 0xFFFF)
     uint8_t mask_low = bus_interface_read(REG_IRQ_MASK_LOW);
@@ -2205,7 +2208,7 @@ bool test_bus_interface_irq_enable_read_write(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Initially should be enabled (1)
     uint8_t enable = bus_interface_read(REG_IRQ_ENABLE);
@@ -2253,7 +2256,7 @@ bool test_bus_interface_irq_line_behavior(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Initially no interrupts pending
     uint8_t status = bus_interface_read(REG_DEVICE_STATUS);
@@ -2333,7 +2336,7 @@ bool test_bus_interface_individual_interrupt_bits(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Test each low byte interrupt bit individually
     for (int bit = 0; bit < 8; bit++) {
@@ -2397,7 +2400,7 @@ bool test_bus_interface_command_reset_index(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Select index 128 for Window A
     bus_interface_write(0x00, 128);
@@ -2442,7 +2445,7 @@ bool test_bus_interface_command_set_default_to_addr(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Select index 128 for Window A
     bus_interface_write(0x00, 128);
@@ -2476,7 +2479,7 @@ bool test_bus_interface_command_set_limit_to_addr(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Select index 128 for Window A
     bus_interface_write(0x00, 128);
@@ -2510,7 +2513,7 @@ bool test_bus_interface_command_reset_all(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Modify several indexes
     test_set_index_address(128, 0x00013900);
@@ -2549,7 +2552,7 @@ bool test_bus_interface_command_clear_irq(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Set some interrupts
     irq_set(IRQ_MEMORY_ERROR);
@@ -2585,7 +2588,7 @@ bool test_bus_interface_command_system_reset(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Modify system state
     test_set_index_address(128, 0x00013900);
@@ -2624,7 +2627,7 @@ bool test_bus_interface_command_factory_reset_all_idx(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Modify system state
     test_set_index_address(128, 0x00013900);
@@ -2659,7 +2662,7 @@ bool test_bus_interface_command_factory_reset_all_idx(void) {
     }
     
     // Check that system is ready
-    uint8_t status = g_state.status;
+    uint8_t status = bus_interface_read(0xF0);  // REG_DEVICE_STATUS
     if (!(status & STATUS_SYSTEM_READY)) {
         printf("  FAIL: System should be ready after subsystem reset\n");
         return false;
@@ -2677,7 +2680,7 @@ bool test_bus_interface_command_multi_window(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Test CMD_RESET_INDEX from Window A (0x04)
     bus_interface_write(0x00, 128);  // Select index 128 for Window A
@@ -2739,7 +2742,7 @@ bool test_bus_interface_command_copy_single_byte(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Set up source index (128) with test data
     test_set_index_address(128, 0x00013A00);
@@ -2776,8 +2779,10 @@ bool test_bus_interface_command_copy_single_byte(void) {
     // Execute CMD_COPY_BLOCK via SHARED_COMMAND register at 0xFF
     bus_interface_write(0xFF, CMD_COPY_BLOCK);
     
-    // Wait for DMA to complete (in real hardware this would be async)
-    // In test environment, DMA completes immediately
+    // Process queued commands (simulates Core 1 processing)
+    for (int i = 0; i < 10; i++) {
+        indexed_memory_process_copy_command();
+    }
     
     // Verify data was copied
     indexed_memory_execute_window_command(129, CMD_RESET_INDEX);  // Reset destination to read
@@ -2800,7 +2805,7 @@ bool test_bus_interface_command_copy_multi_byte(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Set up source index (128) with test data
     test_set_index_address(128, 0x00013A00);
@@ -2845,6 +2850,11 @@ bool test_bus_interface_command_copy_multi_byte(void) {
     // Execute CMD_COPY_BLOCK via SHARED_COMMAND register at 0xFF
     bus_interface_write(0xFF, CMD_COPY_BLOCK);
     
+    // Process queued commands (simulates Core 1 processing)
+    for (int i = 0; i < 10; i++) {
+        indexed_memory_process_copy_command();
+    }
+    
     // Verify data was copied
     indexed_memory_execute_window_command(129, CMD_RESET_INDEX);  // Reset destination to read
     
@@ -2871,7 +2881,7 @@ bool test_bus_interface_dma_configuration(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Select index 128 for Window A
     bus_interface_write(0x00, 128);
@@ -2931,7 +2941,7 @@ bool test_bus_interface_dma_completion_interrupt(void) {
     
     // Initialize the bus interface and indexed memory
     bus_interface_init();
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Clear any pending interrupts
     indexed_memory_execute_shared_command(CMD_CLEAR_IRQ);
@@ -2959,6 +2969,11 @@ bool test_bus_interface_dma_completion_interrupt(void) {
     
     // Execute DMA operation via SHARED_COMMAND register at 0xFF
     bus_interface_write(0xFF, CMD_COPY_BLOCK);
+    
+    // Process queued commands (simulates Core 1 processing)
+    for (int i = 0; i < 10; i++) {
+        indexed_memory_process_copy_command();
+    }
     
     // Check for DMA completion interrupt
     uint16_t irq_cause = test_get_irq_cause();

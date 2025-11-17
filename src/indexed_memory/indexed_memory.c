@@ -8,6 +8,7 @@
 #include "indexed_memory.h"
 #include "indexed_memory_dma.h"
 #include "hardware/gpio_mapping.h"
+#include "pico/util/queue.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,6 +16,10 @@
 // Always include GPIO for IRQ line control (mocked in tests)
 #include "hardware/gpio.h"
 #include "hardware/watchdog.h"
+
+// Inter-core command queue
+#define COMMAND_QUEUE_SIZE 8
+static queue_t command_queue;
 
 // Forward declarations
 static void indexed_memory_reset_index(uint8_t idx);
@@ -29,10 +34,10 @@ static void indexed_memory_set_address(uint8_t idx, addr_field_t field, uint32_t
 #define MIA_VIDEO_AREA_BASE     0x00004800  // 60KB
 #define MIA_USER_AREA_BASE      0x00013800  // 162KB
 #define MIA_IO_BUFFER_BASE      0x0003C000  // 16KB
-#define MIA_MEMORY_SIZE         0x40000     // 256KB total MIA memory
+#define MIA_MEMORY_SIZE         0x00040000  // 256KB total MIA memory
 
-// Global system state (non-static for testing access)
-indexed_memory_state_t g_state;
+// Global system state
+static indexed_memory_state_t g_state;
 
 // MIA memory array - properly allocated by linker to avoid SDK conflicts
 // All index addresses are offsets into this array
@@ -52,10 +57,7 @@ static void dma_completion_callback(void) {
 /**
  * Initialize the indexed memory system
  */
-void indexed_memory_init(void) {
-    // Initialize IRQ system first
-    irq_init();
-    
+void indexed_memory_init(void) {    
     // Clear all state
     memset(&g_state, 0, sizeof(g_state));
     
@@ -192,6 +194,9 @@ void indexed_memory_init(void) {
     int dma_channel = indexed_memory_dma_init();
     indexed_memory_dma_set_completion_callback(dma_completion_callback);
     
+    // Initialize inter-core command queue
+    queue_init(&command_queue, sizeof(copy_command_t), COMMAND_QUEUE_SIZE);
+    
     printf("Indexed memory system initialized with 256 indexes\n");
     printf("DMA channel %d claimed for memory operations\n", dma_channel);
 }
@@ -221,7 +226,6 @@ static void indexed_memory_set_address(uint8_t idx, addr_field_t field, uint32_t
 
 /**
  * Reset index to default address
- * NOTE: For new code, prefer direct access: g_state.indexes[idx].current_addr = g_state.indexes[idx].default_addr
  */
 void indexed_memory_reset_index(uint8_t idx) {
     g_state.indexes[idx].current_addr = g_state.indexes[idx].default_addr;
@@ -296,32 +300,6 @@ void indexed_memory_write(uint8_t idx, uint8_t data) {
         
         index->current_addr = addr;
     }
-}
-
-/**
- * Read byte from index without auto-stepping
- */
-uint8_t indexed_memory_read_no_step(uint8_t idx) {
-    uint32_t addr = g_state.indexes[idx].current_addr;
-    
-    // Fast address validation
-    CHECK_ADDR_OR_RETURN(addr, 0);
-    
-    // Read data without stepping
-    return mia_memory[addr];
-}
-
-/**
- * Write byte to index without auto-stepping
- */
-void indexed_memory_write_no_step(uint8_t idx, uint8_t data) {
-    uint32_t addr = g_state.indexes[idx].current_addr;
-    
-    // Fast address validation
-    CHECK_ADDR_OR_RETURN_VOID(addr);
-    
-    // Write data without stepping
-    mia_memory[addr] = data;
 }
 
 /**
@@ -462,6 +440,7 @@ void indexed_memory_execute_shared_command(uint8_t cmd) {
             // This resets all indexes to factory defaults, clears IRQ state,
             // resets DMA config, and clears all MIA memory
             // Does NOT reset other MIA components (ROM emulator, clock, etc.)
+            irq_clear_all();
             indexed_memory_init();
             break;
         case CMD_CLEAR_IRQ:
@@ -469,8 +448,15 @@ void indexed_memory_execute_shared_command(uint8_t cmd) {
             irq_clear_all();
             break;
         case CMD_COPY_BLOCK:
-            // Execute DMA block copy using configured parameters
-            indexed_memory_copy_block(g_state.dma_config.src_idx, g_state.dma_config.dst_idx, g_state.dma_config.count);
+            // Enqueue copy command for Core 1 processing
+            {
+                copy_command_t cmd = {
+                    .src_idx = g_state.dma_config.src_idx,
+                    .dst_idx = g_state.dma_config.dst_idx,
+                    .count = g_state.dma_config.count
+                };
+                queue_try_add(&command_queue, &cmd);
+            }
             break;
         case CMD_SYSTEM_RESET:
             // Full system reset: reboot the Pico via watchdog
@@ -547,13 +533,6 @@ void indexed_memory_copy_block(uint8_t src_idx, uint8_t dst_idx, uint16_t count)
 }
 
 /**
- * Check if DMA transfer is currently in progress
- * Returns true if DMA is busy, false if idle
- */
-/**
- * Get system status
- */
-/**
  * Set status bits (OR operation)
  * Sets the specified status bit(s) in the status register
  */
@@ -570,56 +549,18 @@ void indexed_memory_clear_status(uint8_t status_bits) {
 }
 
 /**
- * Get IRQ cause (full 16-bit value)
+ * Get status register value
  */
-/**
- * Write to IRQ cause low byte (write-1-to-clear)
- * Writing 1 to a bit position clears that interrupt
- */
-
-/**
- * Write to IRQ cause high byte (write-1-to-clear)
- * Writing 1 to a bit position clears that interrupt
- */
+uint8_t indexed_memory_get_status(void) {
+    return g_state.status;
+}
 
 /**
- * Clear IRQ
- * Clears all pending interrupts
+ * Process copy commands from Core 0 (called from Core 1)
  */
-
-/**
- * Clear specific IRQ
- * Clears the specified interrupt bit(s) from the pending register
- * If no enabled interrupts remain pending, deasserts the IRQ line
- */
-
-/**
- * Set IRQ
- * Sets the specified interrupt bit(s) in the pending register
- * Only asserts IRQ line if the interrupt source is enabled in the mask and global enable is on
- */
-
-
-
-
-
-/**
- * Get IRQ mask (16-bit)
- * Returns which interrupt sources are enabled
- */
-/**
- * Set IRQ mask (16-bit)
- * Controls which interrupt sources are enabled
- * 1 = enabled, 0 = disabled
- */
-
-/**
- * Get global IRQ enable state
- * Returns whether interrupts are globally enabled
- */
-/**
- * Set global IRQ enable state
- * Controls whether interrupts can be asserted to the 6502
- * 1 = enabled, 0 = disabled
- */
-
+void indexed_memory_process_copy_command(void) {
+    copy_command_t cmd;
+    if (queue_try_remove(&command_queue, &cmd)) {
+        indexed_memory_copy_block(cmd.src_idx, cmd.dst_idx, cmd.count);
+    }
+}

@@ -36,12 +36,6 @@ bool indexed_memory_dma_is_busy(void) {
     return dma_busy;
 }
 
-void indexed_memory_dma_wait_for_completion(void) {
-    // ⚠️ WARNING: This function blocks in hardware implementation!
-    // In mock, transfers complete immediately, so nothing to wait for
-    dma_busy = false;
-}
-
 void indexed_memory_dma_set_completion_callback(void (*callback)(void)) {
     completion_callback = callback;
 }

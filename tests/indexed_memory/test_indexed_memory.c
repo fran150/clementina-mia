@@ -8,11 +8,15 @@
 #include "indexed_memory/indexed_memory.h"
 #include "irq/irq.h"
 #include "mocks/pico_mock.h"
+#include "bus_interface/bus_interface.h"
 #include <stdio.h>
 #include <string.h>
 
-// Access to indexed memory state for testing
-extern indexed_memory_state_t g_state;
+// Test setup helper - initializes dependencies in correct order
+static void test_setup_indexed_memory(void) {
+    irq_init();                    // Initialize IRQ system first
+    indexed_memory_init();         // Then initialize indexed memory
+}
 
 // Helper functions to replace internal function calls with public API
 static void test_set_index_address(uint8_t idx, uint32_t address) {
@@ -56,6 +60,12 @@ static void test_copy_block(uint8_t src_idx, uint8_t dst_idx, uint16_t count) {
     
     // Execute copy command
     indexed_memory_execute_shared_command(CMD_COPY_BLOCK);
+    
+    // Process queued commands (simulates Core 1 processing)
+    // Call multiple times to ensure all queued commands are processed
+    for (int i = 0; i < 10; i++) {
+        indexed_memory_process_copy_command();
+    }
 }
 
 // Helper to get current index address using public API
@@ -72,10 +82,10 @@ static inline uint32_t get_index_address(uint8_t idx) {
 bool test_indexed_memory_init(void) {
     printf("Testing indexed memory initialization...\n");
     
-    indexed_memory_init();
+    test_setup_indexed_memory();
     
     // Check system status
-    uint8_t status = g_state.status;
+    uint8_t status = bus_interface_read(0xF0);  // REG_DEVICE_STATUS
     if (!(status & STATUS_SYSTEM_READY)) {
         printf("FAIL: System not ready after init\n");
         return false;
@@ -468,7 +478,7 @@ bool test_error_handling(void) {
     (void)indexed_memory_read(test_idx); // Suppress unused variable warning
     
     // Should have generated memory error
-    uint8_t status = g_state.status;
+    uint8_t status = bus_interface_read(0xF0);  // REG_DEVICE_STATUS
     if (!(status & STATUS_MEMORY_ERROR)) {
         printf("FAIL: Memory error not detected\n");
         return false;
@@ -493,7 +503,7 @@ bool test_error_handling(void) {
     // Now try to access the invalid address - should trigger error
     (void)indexed_memory_read(test_idx);
     
-    status = g_state.status;
+    status = bus_interface_read(0xF0);  // REG_DEVICE_STATUS
     if (!(status & STATUS_MEMORY_ERROR)) {
         printf("FAIL: Memory error not detected after overflow\n");
         return false;

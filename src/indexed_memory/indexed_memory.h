@@ -12,6 +12,13 @@
 #include <stdbool.h>
 #include "irq/irq.h"
 
+// Inter-core command structure, used to queue DMA copy commands from Core 0 to Core 1
+typedef struct {
+    uint8_t src_idx;
+    uint8_t dst_idx;
+    uint16_t count;
+} copy_command_t;
+
 // Index allocation ranges
 #define IDX_SYSTEM_ERROR        0
 #define IDX_SYSTEM_START        1
@@ -149,5 +156,9 @@ void indexed_memory_execute_shared_command(uint8_t cmd);
 
 // Status management
 void indexed_memory_set_status(uint8_t status_bits);
+uint8_t indexed_memory_get_status(void);
+
+// Core 1 processing
+void indexed_memory_process_copy_command(void);
 
 #endif // INDEXED_MEMORY_H

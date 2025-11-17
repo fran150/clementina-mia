@@ -154,6 +154,7 @@ static void test_irq_mask_functionality(void) {
         printf("  FAIL: Masked IRQ should not be pending\n");
         return;
     }
+    mia_irq_clear(IRQ_VIDEO_FRAME_COMPLETE);
     
     // Test that unmasked IRQs do trigger pending state
     irq_set(IRQ_DMA_COMPLETE); // Low byte, should not be masked
