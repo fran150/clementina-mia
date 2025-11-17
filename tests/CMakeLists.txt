@@ -31,6 +31,7 @@ set(TEST_SOURCES
     bus_interface/test_bus_interface.c
     bus_interface/test_bus_sync_pio_fifo.c
     indexed_memory/test_indexed_memory.c
+    irq/test_irq.c
     rom_emulation/test_rom_emulator.c
     system/test_clock_control.c
 )

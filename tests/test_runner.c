@@ -12,6 +12,7 @@
 #include "bus_interface/test_bus_interface.h"
 #include "bus_interface/test_bus_sync_pio_fifo.h"
 #include "indexed_memory/test_indexed_memory.h"
+#include "irq/test_irq.h"
 #include "rom_emulation/test_rom_emulator.h"
 #include "system/test_clock_control.h"
 
@@ -45,6 +46,13 @@ int main(void) {
         all_passed = false;
         printf("✗ Indexed Memory Tests FAILED\n\n");
     }
+    
+    // Run IRQ tests
+    printf("Running IRQ Tests...\n");
+    total_suites++;
+    run_irq_tests();
+    passed_suites++;
+    printf("✓ IRQ Tests PASSED\n\n");
     
     // Run ROM emulator tests
     printf("Running ROM Emulator Tests...\n");
