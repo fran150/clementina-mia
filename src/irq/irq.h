@@ -38,8 +38,8 @@
 
 // Public API
 void irq_init(void);
-void irq_set(uint16_t cause);
-void mia_irq_clear(uint16_t cause);
+void irq_set_bits(uint16_t cause);
+void irq_clear_bits(uint16_t cause);
 void irq_clear_all(void);
 uint16_t irq_get_cause(void);
 uint8_t irq_get_cause_low(void);

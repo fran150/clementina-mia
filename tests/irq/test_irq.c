@@ -53,14 +53,14 @@ static void test_irq_cause_management(void) {
     irq_init();
     
     // Test setting single IRQ
-    irq_set(IRQ_DMA_COMPLETE);
+    irq_set_bits(IRQ_DMA_COMPLETE);
     if (irq_get_cause() != IRQ_DMA_COMPLETE) {
         printf("  FAIL: IRQ cause should be 0x%04X, got 0x%04X\n", IRQ_DMA_COMPLETE, irq_get_cause());
         return;
     }
     
     // Test accumulating IRQs
-    irq_set(IRQ_MEMORY_ERROR);
+    irq_set_bits(IRQ_MEMORY_ERROR);
     uint16_t expected = IRQ_DMA_COMPLETE | IRQ_MEMORY_ERROR;
     if (irq_get_cause() != expected) {
         printf("  FAIL: IRQ cause should be 0x%04X, got 0x%04X\n", expected, irq_get_cause());
@@ -68,7 +68,7 @@ static void test_irq_cause_management(void) {
     }
     
     // Test clearing specific IRQ
-    mia_irq_clear(IRQ_DMA_COMPLETE);
+    irq_clear_bits(IRQ_DMA_COMPLETE);
     if (irq_get_cause() != IRQ_MEMORY_ERROR) {
         printf("  FAIL: IRQ cause should be 0x%04X, got 0x%04X\n", IRQ_MEMORY_ERROR, irq_get_cause());
         return;
@@ -93,7 +93,7 @@ static void test_irq_cause_byte_access(void) {
     irq_init();
     
     // Set low byte IRQ
-    irq_set(IRQ_DMA_COMPLETE);
+    irq_set_bits(IRQ_DMA_COMPLETE);
     if (irq_get_cause_low() != (IRQ_DMA_COMPLETE & 0xFF)) {
         printf("  FAIL: IRQ cause low should be 0x%02X, got 0x%02X\n", 
                (IRQ_DMA_COMPLETE & 0xFF), irq_get_cause_low());
@@ -105,7 +105,7 @@ static void test_irq_cause_byte_access(void) {
     }
     
     // Set high byte IRQ
-    irq_set(IRQ_VIDEO_FRAME_COMPLETE);
+    irq_set_bits(IRQ_VIDEO_FRAME_COMPLETE);
     if (irq_get_cause_high() != ((IRQ_VIDEO_FRAME_COMPLETE >> 8) & 0xFF)) {
         printf("  FAIL: IRQ cause high should be 0x%02X, got 0x%02X\n", 
                ((IRQ_VIDEO_FRAME_COMPLETE >> 8) & 0xFF), irq_get_cause_high());
@@ -149,15 +149,15 @@ static void test_irq_mask_functionality(void) {
     }
     
     // Test that masked IRQs don't trigger pending state
-    irq_set(IRQ_VIDEO_FRAME_COMPLETE); // High byte, should be masked
+    irq_set_bits(IRQ_VIDEO_FRAME_COMPLETE); // High byte, should be masked
     if (irq_is_pending()) {
         printf("  FAIL: Masked IRQ should not be pending\n");
         return;
     }
-    mia_irq_clear(IRQ_VIDEO_FRAME_COMPLETE);
+    irq_clear_bits(IRQ_VIDEO_FRAME_COMPLETE);
     
     // Test that unmasked IRQs do trigger pending state
-    irq_set(IRQ_DMA_COMPLETE); // Low byte, should not be masked
+    irq_set_bits(IRQ_DMA_COMPLETE); // Low byte, should not be masked
     if (!irq_is_pending()) {
         printf("  FAIL: Unmasked IRQ should be pending\n");
         return;
@@ -182,7 +182,7 @@ static void test_irq_enable_functionality(void) {
     irq_init();
     
     // Set up IRQ condition
-    irq_set(IRQ_DMA_COMPLETE);
+    irq_set_bits(IRQ_DMA_COMPLETE);
     if (!irq_is_pending()) {
         printf("  FAIL: IRQ should be pending initially\n");
         return;
@@ -228,7 +228,7 @@ static void test_irq_pending_logic(void) {
     }
     
     // Test: IRQ pending when cause & mask & enable
-    irq_set(IRQ_DMA_COMPLETE);
+    irq_set_bits(IRQ_DMA_COMPLETE);
     irq_set_mask(0xFFFF);
     irq_set_enable(1);
     if (!irq_is_pending()) {
@@ -272,7 +272,7 @@ static void test_multiple_irq_sources(void) {
     
     // Set multiple IRQs
     uint16_t irqs = IRQ_MEMORY_ERROR | IRQ_DMA_COMPLETE | IRQ_VIDEO_FRAME_COMPLETE | IRQ_USB_KEYBOARD;
-    irq_set(irqs);
+    irq_set_bits(irqs);
     
     if (irq_get_cause() != irqs) {
         printf("  FAIL: IRQ cause should be 0x%04X, got 0x%04X\n", irqs, irq_get_cause());
@@ -280,7 +280,7 @@ static void test_multiple_irq_sources(void) {
     }
     
     // Clear some IRQs
-    mia_irq_clear(IRQ_DMA_COMPLETE | IRQ_USB_KEYBOARD);
+    irq_clear_bits(IRQ_DMA_COMPLETE | IRQ_USB_KEYBOARD);
     uint16_t remaining = IRQ_MEMORY_ERROR | IRQ_VIDEO_FRAME_COMPLETE;
     if (irq_get_cause() != remaining) {
         printf("  FAIL: IRQ cause should be 0x%04X, got 0x%04X\n", remaining, irq_get_cause());
@@ -295,7 +295,7 @@ static void test_multiple_irq_sources(void) {
     }
     
     // Clear the allowed IRQ
-    mia_irq_clear(IRQ_MEMORY_ERROR);
+    irq_clear_bits(IRQ_MEMORY_ERROR);
     if (irq_is_pending()) {
         printf("  FAIL: No IRQ should be pending after clearing allowed IRQ\n");
         return;

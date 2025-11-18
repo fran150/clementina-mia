@@ -51,7 +51,7 @@ static void dma_completion_callback(void) {
     g_state.status &= ~STATUS_DMA_ACTIVE;
     
     // Signal completion
-    irq_set(IRQ_DMA_COMPLETE);
+    irq_set_bits(IRQ_DMA_COMPLETE);
 }
 
 /**
@@ -494,14 +494,14 @@ void indexed_memory_copy_block(uint8_t src_idx, uint8_t dst_idx, uint16_t count)
     // Validate addresses
     if (src_addr >= MIA_MEMORY_SIZE || dst_addr >= MIA_MEMORY_SIZE) {
         g_state.status |= STATUS_MEMORY_ERROR;
-        irq_set(IRQ_MEMORY_ERROR);
+        irq_set_bits(IRQ_MEMORY_ERROR);
         return;
     }
     
     // Check if transfer would exceed memory bounds
     if (src_addr + count > MIA_MEMORY_SIZE || dst_addr + count > MIA_MEMORY_SIZE) {
         g_state.status |= STATUS_MEMORY_ERROR;
-        irq_set(IRQ_DMA_ERROR);
+        irq_set_bits(IRQ_DMA_ERROR);
         return;
     }
     
@@ -511,7 +511,7 @@ void indexed_memory_copy_block(uint8_t src_idx, uint8_t dst_idx, uint16_t count)
         // This prevents the MIA from missing 6502 bus timing requirements
         // The 6502 can check STATUS_DMA_ACTIVE before initiating transfers
         // or wait for IRQ_DMA_COMPLETE interrupt
-        irq_set(IRQ_DMA_ERROR);
+        irq_set_bits(IRQ_DMA_ERROR);
         return;
     }
     

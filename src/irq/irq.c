@@ -49,7 +49,7 @@ void irq_init(void) {
 /**
  * Set interrupt cause and assert IRQ line if enabled
  */
-void irq_set(uint16_t cause) {
+void irq_set_bits(uint16_t cause) {
     // Set the interrupt bit(s) in the pending register (OR to accumulate)
     g_irq_state.irq_cause |= cause;
     
@@ -62,7 +62,7 @@ void irq_set(uint16_t cause) {
 /**
  * Clear interrupt cause and deassert IRQ line if no more enabled interrupts
  */
-void mia_irq_clear(uint16_t cause) {
+void irq_clear_bits(uint16_t cause) {
     // Clear the interrupt bit(s) from the pending register
     g_irq_state.irq_cause &= ~cause;
     

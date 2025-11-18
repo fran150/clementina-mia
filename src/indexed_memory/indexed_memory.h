@@ -97,14 +97,14 @@ typedef struct {
 #define CHECK_ADDR_OR_RETURN(addr, retval) \
     if ((addr) >= MIA_MEMORY_SIZE) { \
         g_state.status |= STATUS_MEMORY_ERROR; \
-        irq_set(IRQ_MEMORY_ERROR); \
+        irq_set_bits(IRQ_MEMORY_ERROR); \
         return retval; \
     }
 
 #define CHECK_ADDR_OR_RETURN_VOID(addr) \
     if ((addr) >= MIA_MEMORY_SIZE) { \
         g_state.status |= STATUS_MEMORY_ERROR; \
-        irq_set(IRQ_MEMORY_ERROR); \
+        irq_set_bits(IRQ_MEMORY_ERROR); \
         return; \
     }
 
