@@ -149,6 +149,36 @@ void irq_set_mask(uint16_t mask) {
 }
 
 /**
+ * Get IRQ mask low byte
+ */
+uint8_t irq_get_mask_low(void) {
+    return g_irq_state.irq_mask & 0xFF;
+}
+
+/**
+ * Set IRQ mask low byte
+ */
+void irq_set_mask_low(uint8_t mask) {
+    uint16_t new_mask = (g_irq_state.irq_mask & 0xFF00) | mask;
+    irq_set_mask(new_mask);
+}
+
+/**
+ * Get IRQ mask high byte
+ */
+uint8_t irq_get_mask_high(void) {
+    return (g_irq_state.irq_mask >> 8) & 0xFF;
+}
+
+/**
+ * Set IRQ mask high byte
+ */
+void irq_set_mask_high(uint8_t mask) {
+    uint16_t new_mask = (g_irq_state.irq_mask & 0x00FF) | ((uint16_t)mask << 8);
+    irq_set_mask(new_mask);
+}
+
+/**
  * Get global IRQ enable state
  */
 uint8_t irq_get_enable(void) {

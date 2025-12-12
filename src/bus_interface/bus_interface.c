@@ -34,12 +34,10 @@ window_state_t g_window_state[MAX_WINDOWS];
  * @return Data byte read from the current index address
  */
 static inline uint8_t read_data_port(uint8_t window_num) {
-    // Get the currently selected index for this window
-    uint8_t idx = g_window_state[window_num].active_index;
-    
+    window_state_t *win = get_window_state(window_num);
     // Read byte from index with auto-stepping
-    // indexed_memory_read() handles auto-stepping based on index configuration
-    return indexed_memory_read(idx);
+    // this function handles auto-stepping based on index configuration
+    return indexed_memory_read(win->active_index);
 }
 
 /**
@@ -50,12 +48,10 @@ static inline uint8_t read_data_port(uint8_t window_num) {
  * @param data Data byte to write to the current index address
  */
 static inline void write_data_port(uint8_t window_num, uint8_t data) {
-    // Get the currently selected index for this window
-    uint8_t idx = g_window_state[window_num].active_index;
-    
+    window_state_t *win = get_window_state(window_num);
     // Write byte to index with auto-stepping
     // indexed_memory_write() handles auto-stepping based on index configuration
-    indexed_memory_write(idx, data);
+    indexed_memory_write(win->active_index, data);
 }
 
 /**
@@ -75,67 +71,6 @@ static inline void write_cfg_data(uint8_t window_num, uint8_t data) {
 }
 
 // ============================================================================
-// Shared Register Handler Functions - Now using macros for performance
-// ============================================================================
-
-/**
- * Read IRQ_MASK_LOW register
- * Returns the low byte of the interrupt mask register (bits 0-7)
- * 
- * @return Interrupt mask low byte
- */
-static inline uint8_t read_irq_mask_low(void) {
-    // Get full 16-bit mask and return low byte
-    return irq_get_mask() & 0xFF;
-}
-
-/**
- * Write IRQ_MASK_LOW register
- * Sets which interrupt sources are enabled (bits 0-7)
- * 
- * @param mask Interrupt mask low byte (1 = enabled, 0 = disabled)
- */
-static inline void write_irq_mask_low(uint8_t mask) {
-    // Get current mask, update low byte, and write back
-    uint16_t new_mask = (irq_get_mask() & 0xFF00) | mask;
-    irq_set_mask(new_mask);
-}
-
-/**
- * Read IRQ_MASK_HIGH register
- * Returns the high byte of the interrupt mask register (bits 8-15)
- * 
- * @return Interrupt mask high byte
- */
-static inline uint8_t read_irq_mask_high(void) {
-    // Get full 16-bit mask and return high byte
-    return (irq_get_mask() >> 8) & 0xFF;
-}
-
-/**
- * Write IRQ_MASK_HIGH register
- * Sets which interrupt sources are enabled (bits 8-15)
- * 
- * @param mask Interrupt mask high byte (1 = enabled, 0 = disabled)
- */
-static inline void write_irq_mask_high(uint8_t mask) {
-    // Get current mask, update high byte, and write back
-    uint16_t new_mask = (irq_get_mask() & 0x00FF) | ((uint16_t)mask << 8);
-    irq_set_mask(new_mask);
-}
-
-/**
- * Read IRQ_ENABLE register
- * Returns the global interrupt enable/disable state
- * 
- * @return Global interrupt enable (1 = enabled, 0 = disabled)
- */
-static inline uint8_t read_irq_enable(void) {
-    // Return global interrupt enable state
-    return irq_get_enable();
-}
-
-// ============================================================================
 // Module Initialization
 // ============================================================================
 
@@ -148,13 +83,6 @@ void bus_interface_init(void) {
         g_window_state[i].active_index = 0;
         g_window_state[i].config_field_select = 0;
     }
-    
-    // Note: indexed_memory_init() should be called before this function
-    // It is initialized in main.c before bus_interface_init()
-    
-    // TODO: Initialize GPIO pins for bus interface
-    // TODO: Initialize PIO state machines for timing-critical operations
-    // TODO: Set up interrupt handlers for bus operations
 }
 
 // ============================================================================
@@ -180,11 +108,11 @@ uint8_t __attribute__((optimize("O3"))) __attribute__((hot)) bus_interface_read(
         } else if (local_addr == REG_IRQ_CAUSE_HIGH) {
             return irq_get_cause_high();
         } else if (local_addr == REG_IRQ_MASK_LOW) {
-            return read_irq_mask_low();
+            return irq_get_mask_low();
         } else if (local_addr == REG_IRQ_MASK_HIGH) {
-            return read_irq_mask_high();
+            return irq_get_mask_high();
         } else if (local_addr == REG_IRQ_ENABLE) {
-            return read_irq_enable();
+            return irq_get_enable();
         } else {
             // Reserved shared register or write-only register
             return 0x00;
@@ -196,11 +124,11 @@ uint8_t __attribute__((optimize("O3"))) __attribute__((hot)) bus_interface_read(
     if (reg_offset == REG_OFFSET_DATA_PORT) {
         return read_data_port(window_num);
     } else if (reg_offset == REG_OFFSET_IDX_SELECT) {
-        return g_window_state[window_num].active_index;
+        return get_window_state(window_num)->active_index;
     } else if (reg_offset == REG_OFFSET_CFG_DATA) {
         return read_cfg_data(window_num);
     } else if (reg_offset == REG_OFFSET_CFG_FIELD_SELECT) {
-        return g_window_state[window_num].config_field_select;
+        return get_window_state(window_num)->config_field_select;
     } else {
         // Reserved register offset (5-15) or write-only COMMAND register
         return 0x00;
@@ -230,11 +158,11 @@ void bus_interface_write(uint8_t local_addr, uint8_t data) {
                 break;
                 
             case REG_IRQ_MASK_LOW:
-                write_irq_mask_low(data);
+                irq_set_mask_low(data);
                 break;
                 
             case REG_IRQ_MASK_HIGH:
-                write_irq_mask_high(data);
+                irq_set_mask_high(data);
                 break;
                 
             case REG_IRQ_ENABLE:
@@ -256,7 +184,7 @@ void bus_interface_write(uint8_t local_addr, uint8_t data) {
     // Route to appropriate register handler based on offset
     switch (reg_offset) {
         case REG_OFFSET_IDX_SELECT:
-            g_window_state[window_num].active_index = data;
+            get_window_state(window_num)->active_index = data;
             break;
             
         case REG_OFFSET_DATA_PORT:
@@ -264,7 +192,7 @@ void bus_interface_write(uint8_t local_addr, uint8_t data) {
             break;
             
         case REG_OFFSET_CFG_FIELD_SELECT:
-            g_window_state[window_num].config_field_select = data;
+            get_window_state(window_num)->config_field_select = data;
             break;
             
         case REG_OFFSET_CFG_DATA:
@@ -273,7 +201,7 @@ void bus_interface_write(uint8_t local_addr, uint8_t data) {
             
         case REG_OFFSET_COMMAND:
             {
-                uint8_t idx = g_window_state[window_num].active_index;
+                uint8_t idx = get_window_state(window_num)->active_index;
                 indexed_memory_execute_window_command(idx, data);
             }
             break;
