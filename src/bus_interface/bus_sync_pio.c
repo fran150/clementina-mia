@@ -34,14 +34,14 @@ void bus_sync_pio_init(void) {
     // Load PIO program into PIO memory
     pio_offset = pio_add_program(pio_instance, &bus_sync_program);
     
-    // Initialize the PIO state machine
-    bus_sync_program_init(pio_instance, sm, pio_offset);
-    
     // Set up IRQ handler for PIO IRQ 0
     // The PIO will trigger this when CS is sampled active at 200ns
     irq_set_exclusive_handler(PIO0_IRQ_0, bus_sync_pio_irq_handler);
     irq_set_enabled(PIO0_IRQ_0, true);
-    
+
+    // Initialize the PIO state machine
+    bus_sync_program_init(pio_instance, sm, pio_offset);
+        
     // Note: The PIO state machine is already started by bus_sync_program_init()
 }
 
@@ -308,58 +308,3 @@ bool bus_sync_pio_process_write_data(void) {
     return true;
 }
 
-/**
- * Check if PIO is ready for next cycle
- */
-bool bus_sync_pio_is_ready(void) {
-    // Check if FIFOs are not stalled
-    // A stalled FIFO indicates a problem
-    if (pio_sm_is_tx_fifo_full(pio_instance, sm) ||
-        pio_sm_is_rx_fifo_empty(pio_instance, sm)) {
-        // This is normal - TX FIFO full means C hasn't consumed data yet
-        // RX FIFO empty means no pending operations
-    }
-    
-    return true;
-}
-
-/**
- * Get PIO statistics for debugging
- */
-void bus_sync_pio_get_stats(uint8_t *rx_level, uint8_t *tx_level, bool *stalled) {
-    if (rx_level) {
-        *rx_level = pio_sm_get_rx_fifo_level(pio_instance, sm);
-    }
-    
-    if (tx_level) {
-        *tx_level = pio_sm_get_tx_fifo_level(pio_instance, sm);
-    }
-    
-    if (stalled) {
-        // Check if state machine is stalled
-        // This would indicate a timing problem
-        *stalled = pio_sm_is_tx_fifo_full(pio_instance, sm) &&
-                   pio_sm_is_rx_fifo_full(pio_instance, sm);
-    }
-}
-
-/**
- * Check for FIFO overflow/underflow conditions
- * 
- * @param rx_overflow Pointer to store RX FIFO overflow status
- * @param tx_underflow Pointer to store TX FIFO underflow status
- */
-void bus_sync_pio_check_fifo_errors(bool *rx_overflow, bool *tx_underflow) {
-    if (rx_overflow) {
-        // RX FIFO overflow occurs when PIO tries to push but FIFO is full
-        // This would indicate C code is not consuming data fast enough
-        *rx_overflow = pio_sm_is_rx_fifo_full(pio_instance, sm);
-    }
-    
-    if (tx_underflow) {
-        // TX FIFO underflow occurs when PIO tries to pull but FIFO is empty
-        // This would indicate C code is not providing data fast enough
-        // Note: PIO uses blocking pull, so this shouldn't happen in normal operation
-        *tx_underflow = pio_sm_is_tx_fifo_empty(pio_instance, sm);
-    }
-}

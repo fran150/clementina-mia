@@ -29,7 +29,6 @@ set(MODULE_SOURCES
 set(TEST_SOURCES
     test_runner.c
     bus_interface/test_bus_interface.c
-    bus_interface/test_bus_sync_pio_fifo.c
     indexed_memory/test_indexed_memory.c
     irq/test_irq.c
     rom_emulation/test_rom_emulator.c

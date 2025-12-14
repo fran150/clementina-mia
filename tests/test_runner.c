@@ -10,7 +10,6 @@
 
 // Include test headers
 #include "bus_interface/test_bus_interface.h"
-#include "bus_interface/test_bus_sync_pio_fifo.h"
 #include "indexed_memory/test_indexed_memory.h"
 #include "irq/test_irq.h"
 #include "rom_emulation/test_rom_emulator.h"
@@ -76,19 +75,6 @@ int main(void) {
         printf("✗ Clock Control Tests FAILED\n\n");
     }
     
-    // Run PIO-C FIFO communication tests
-    printf("Running PIO-C FIFO Communication Tests...\n");
-    total_suites++;
-    test_bus_sync_pio_fifo_run_all();
-    int fifo_run = 0, fifo_passed = 0, fifo_failed = 0;
-    test_bus_sync_pio_fifo_get_results(&fifo_run, &fifo_passed, &fifo_failed);
-    if (fifo_failed == 0 && fifo_run > 0) {
-        passed_suites++;
-        printf("✓ PIO-C FIFO Communication Tests PASSED\n\n");
-    } else {
-        all_passed = false;
-        printf("✗ PIO-C FIFO Communication Tests FAILED\n\n");
-    }
     
     // Print summary
     printf("===========================================\n");

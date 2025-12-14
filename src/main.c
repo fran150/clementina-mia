@@ -96,6 +96,7 @@ int main() {
     printf("Bus interface initialized\n");
 
     while (true) {
+        bus_sync_pio_process_write_data();
         tight_loop_contents();
     }
     
