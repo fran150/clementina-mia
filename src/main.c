@@ -13,6 +13,7 @@
 #include "hardware/gpio_mapping.h"
 #include "system/clock_control.h"
 #include "system/reset_control.h"
+#include "system/led_status.h"
 #include "rom_emulation/rom_emulator.h"
 #include "indexed_memory/indexed_memory.h"
 #include "bus_interface/bus_interface.h"
@@ -27,7 +28,7 @@ void supporting_functions_loop() {
     video_controller_init();
     printf("[Video] Controller Initialized.\n");
     
-    // // Initialize USB controller (mode detection and setup)
+    // Initialize USB controller (mode detection and setup)
     usb_controller_init();
     printf("[USB] Controller Initialized.\n");
 
@@ -45,8 +46,15 @@ void supporting_functions_loop() {
 }
 
 int main() {
+    // Initialize LED status system first
+    led_status_init();
+    
     // Initialize standard I/O
     stdio_init_all();
+    
+    // Wait for USB enumeration
+    sleep_ms(2000);
+    led_status_set(LED_STATUS_USB_READY);
     
     printf("MIA (Multifunction Interface Adapter) Starting...\n");
     
@@ -81,9 +89,13 @@ int main() {
                 
         // Handle reset control
         reset_control_process();
+        
+        // Update LED status
+        led_status_update();
     }
 
     printf("Boot sequence completed. Transitioning to normal operation...\n");
+    led_status_set(LED_STATUS_BOOT_COMPLETE);
 
     // Launch Core 1 for video processing
     multicore_launch_core1(supporting_functions_loop);
@@ -95,8 +107,12 @@ int main() {
     bus_sync_pio_init();
     printf("Bus interface initialized\n");
 
+    // Set running status
+    led_status_set(LED_STATUS_RUNNING);
+
     while (true) {
         bus_sync_pio_process_write_data();
+        led_status_update();
         tight_loop_contents();
     }
     

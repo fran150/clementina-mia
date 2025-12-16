@@ -19,29 +19,32 @@ A Raspberry Pi Pico 2 W-based system that provides multiple critical functions f
 
 | GPIO | Function | Description |
 |------|----------|-------------|
-| 0-9  | Address Bus | A0-A9 (10-bit addressing) |
-| 10-17| Data Bus | D0-D7 (bidirectional) |
-| 18   | PICOHIRAM | Banks MIA into high memory (active low) |
-| 19   | Reset Out | Reset line to Clementina system |
-| 20   | WE | Write Enable input from 6502 |
-| 21   | OE | Output Enable input from 6502 |
-| 22   | ROM CS | ROM Emulation Chip Select |
-| 23   | Video CS | Video Chip Select (Device 4) |
-| 24   | Gen CS | General Interface Chip Select (Device 0) |
-| 25   | Clock Out | PWM clock output to Clementina |
-| 26   | USB Mode | Jumper for USB mode selection |
+| 0-7  | Address Bus | A0-A7 (8-bit addressing) |
+| 8-15 | Data Bus | D0-D7 (bidirectional) |
+| 16   | PICOHIRAM | Banks MIA into high memory (active low) |
+| 17   | Reset Out | Reset line to Clementina system (active low) |
+| 18   | WE | Write Enable input from 6502 (active low) |
+| 19   | OE | Output Enable input from 6502 (active low) |
+| 20   | ROM CS | ROM Emulation Chip Select (active low) |
+| 21   | Video CS | Video Chip Select (Device 4) (active low) |
+| 22   | Gen CS | General Interface Chip Select (Device 0) (active low) |
+| 26   | IRQ Out | Interrupt Request to 6502 CPU (active low) |
+| 28   | Clock Out | PWM clock output to Clementina |
 
 ## Memory Mapping
 
 ### ROM Emulation ($E000-$FFFF)
+
 - Boot loader code and kernel data streaming
 - Reset vector response at $FFFC-$FFFD
 
 ### General Interface ($C000-$C3FF)
+
 - $C000-$C0FF: USB keyboard input and status
 - $C100: Reset line control
 
 ### Video Interface ($D000-$D3FF)
+
 - $D000-$D0FF: Palette bank configuration
 - $D100-$D1FF: Character table management
 - $D200-$D2FF: OAM data and sprite configuration
@@ -70,10 +73,12 @@ The build will generate `mia.uf2` which can be flashed to the Pico 2 W.
 ## Development Environment
 
 ### TinyUSB Configuration
+
 - Host mode: Multiple device support via USB hub
 - Device mode: CDC console for debugging and development
 
 ### Wi-Fi Configuration
+
 - Connects to local network for video transmission
 - UDP-based communication for low latency
 - 30 FPS frame transmission (33.33ms intervals)
@@ -81,10 +86,12 @@ The build will generate `mia.uf2` which can be flashed to the Pico 2 W.
 ## Architecture
 
 ### Dual-Core Operation
+
 - **Core 0**: System control (ROM emulation, USB, reset control)
 - **Core 1**: Video processing (graphics management, Wi-Fi transmission)
 
 ### Boot Sequence
+
 1. Start at 100 kHz clock for ROM emulation
 2. Provide boot loader code to 6502
 3. Stream kernel data to system memory
@@ -94,6 +101,7 @@ The build will generate `mia.uf2` which can be flashed to the Pico 2 W.
 ## Video System
 
 ### Graphics Capabilities
+
 - 320x200 pixel resolution
 - 8 character tables (256 chars each, 8x8 pixels, 3-bit color)
 - 16 palette banks (8 colors each, 16-bit RGB565)
@@ -101,6 +109,7 @@ The build will generate `mia.uf2` which can be flashed to the Pico 2 W.
 - Double-buffered nametables and palette tables
 
 ### Network Transmission
+
 - Frame data: Nametable + Palette table + OAM data
 - Resource updates: Character tables and palette banks
 - Automatic client discovery and connection

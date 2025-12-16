@@ -29,21 +29,12 @@ void usb_controller_init(void) {
     buffer_tail = 0;
     buffer_full = false;
     
-    // Initialize TinyUSB based on mode
-    if (current_mode == USB_MODE_HOST) {
-        // Initialize TinyUSB Host stack
-        tusb_init();
-    } else {
-        // Initialize TinyUSB Device stack
-        tusb_init();
-    }
+    // TinyUSB is already initialized by stdio_init_all()
 }
 
 void usb_controller_process(void) {
-    // Process TinyUSB tasks
-    tud_task();
-    
-    // Host mode disabled for now
+    // Only process TinyUSB tasks in host mode
+    // In device mode, stdio_usb handles USB communication
     #if CFG_TUH_ENABLED
     if (current_mode == USB_MODE_HOST) {
         tuh_task();
@@ -136,22 +127,4 @@ bool usb_controller_is_buffer_full(void) {
 
 bool usb_controller_is_key_available(void) {
     return (buffer_head != buffer_tail) || buffer_full;
-}
-
-// TinyUSB callbacks (these will be expanded in later tasks)
-void tud_mount_cb(void) {
-    // Device mounted callback
-}
-
-void tud_umount_cb(void) {
-    // Device unmounted callback
-}
-
-void tud_suspend_cb(bool remote_wakeup_en) {
-    (void)remote_wakeup_en;  // Unused parameter
-    // Device suspended callback
-}
-
-void tud_resume_cb(void) {
-    // Device resumed callback
 }

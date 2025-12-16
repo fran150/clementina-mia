@@ -31,7 +31,8 @@ tusb_desc_device_t const desc_device = {
 
 // Invoked when received GET DEVICE DESCRIPTOR
 // Application return pointer to descriptor
-uint8_t const * tud_descriptor_device_cb(void) {
+// RENAMED to avoid conflict with stdio USB
+uint8_t const * tud_descriptor_device_cb_custom(void) {
     return (uint8_t const *) &desc_device;
 }
 

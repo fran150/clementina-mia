@@ -40,11 +40,11 @@ static const gpio_config_t gpio_configs[] = {
     {GPIO_DATA_D7, GPIO_IN, GPIO_PULL_NONE},
     
     // Control signals - inputs with pull-up (active low)
-    {GPIO_WE, GPIO_IN, GPIO_PULL_UP},
-    {GPIO_OE, GPIO_IN, GPIO_PULL_UP},
-    {GPIO_ROM_CS, GPIO_IN, GPIO_PULL_UP},
-    {GPIO_VIDEO_CS, GPIO_IN, GPIO_PULL_UP},
-    {GPIO_GEN_CS, GPIO_IN, GPIO_PULL_UP},
+    {GPIO_WE, GPIO_IN, GPIO_PULL_NONE},
+    {GPIO_OE, GPIO_IN, GPIO_PULL_NONE},
+    {GPIO_ROM_CS, GPIO_IN, GPIO_PULL_NONE},
+    {GPIO_VIDEO_CS, GPIO_IN, GPIO_PULL_NONE},
+    {GPIO_GEN_CS, GPIO_IN, GPIO_PULL_NONE},
     
     // Control outputs
     {GPIO_PICOHIRAM, GPIO_OUT, GPIO_PULL_NONE},

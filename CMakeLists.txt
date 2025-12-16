@@ -26,7 +26,7 @@ endif()
 include($ENV{PICO_SDK_PATH}/external/pico_sdk_import.cmake)
 
 # Set project name and languages
-project(mia_multifunction_interface_adapter C CXX ASM)
+project(mia C CXX ASM)
 
 # Set C standard
 set(CMAKE_C_STANDARD 11)
@@ -60,6 +60,7 @@ add_executable(mia
     src/hardware/gpio_mapping.c
     src/system/clock_control.c
     src/system/reset_control.c
+    src/system/led_status.c
     src/rom_emulation/rom_emulator.c
     src/irq/irq.c
     src/indexed_memory/indexed_memory.c
@@ -68,7 +69,6 @@ add_executable(mia
     src/bus_interface/bus_sync_pio.c
     src/video/video_controller.c
     src/usb/usb_controller.c
-    src/usb/usb_descriptors.c
     src/network/wifi_controller.c
     ${KERNEL_DATA_FILE}  # Add generated kernel data
 )
@@ -95,13 +95,14 @@ target_include_directories(mia PRIVATE
 target_link_libraries(mia
     pico_stdlib
     pico_multicore
+    pico_bootrom
     hardware_gpio
     hardware_pwm
     hardware_clocks
     hardware_pio
     hardware_dma
     pico_cyw43_arch_lwip_poll
-    tinyusb_device
+    # tinyusb_device  # stdio USB provides its own TinyUSB integration
     m  # Math library for floating point operations
 )
 
