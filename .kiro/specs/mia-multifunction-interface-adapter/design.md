@@ -11,12 +11,14 @@ The MIA (Multifunction Interface Adapter) design implements a sophisticated syst
 The MIA operates in two distinct phases with different timing and processing requirements:
 
 **Boot Phase (100 kHz):**
+
 - Raspberry Pi PWM module generates slow clock enabling C-based ROM emulation without PIO assembly
 - ARM cores have 1,330 cycles per 6502 cycle for comfortable response timing
 - ROM emulation provides kernel loading functionality using C code
 - Simple memory-mapped interface for boot operations
 
 **Normal Operation Phase (1 MHz or higher):**
+
 - Raspberry Pi PWM module generates high-speed clock for normal 6502 operation
 - Indexed memory interface provides unified access to all MIA functionality
 - PIO state machines handle timing-critical register access and bus protocol
@@ -27,6 +29,7 @@ The MIA operates in two distinct phases with different timing and processing req
 ### Dual-Core Architecture
 
 **Core 0 - Real-Time System Control:**
+
 - **Boot Phase:** ROM emulation using C code (relaxed timing at 100 kHz)
 - **Normal Phase:** PIO state machine coordination and timing-critical operations
 - **Bus Interface:** Direct handling of 6502 bus protocol and register access
@@ -37,6 +40,7 @@ The MIA operates in two distinct phases with different timing and processing req
 - **Priority:** All timing-critical operations that must meet 250-500ns requirements
 
 **Core 1 - Background Processing:**
+
 - **Complex Index Operations:** Configuration field updates, address calculations
 - **Video Processing:** Graphics data management and frame composition
 - **Wi-Fi Communication:** Network transmission of video data and status
@@ -46,6 +50,7 @@ The MIA operates in two distinct phases with different timing and processing req
 - **Priority:** All non-timing-critical operations that can tolerate longer response times
 
 **Inter-Core Communication:**
+
 - Core 0 signals Core 1 for complex operations via interrupts
 - Shared memory structures for index data and system state
 - Core 1 updates index configurations atomically for Core 0 consumption
@@ -56,6 +61,7 @@ The MIA operates in two distinct phases with different timing and processing req
 ### Hardware Interface
 
 **GPIO Pin Mapping:**
+
 - **GPIO 0-7**: Address bus lines A0-A7 (8-bit addressing)
 - **GPIO 8-15**: Data bus lines D0-D7 for bidirectional data transfer
 - **GPIO 16**: PICOHIRAM (active low) - banks MIA into high memory during ROM emulation
@@ -65,11 +71,10 @@ The MIA operates in two distinct phases with different timing and processing req
 - **GPIO 20**: HIRAM Chip Select input for ROM emulation (active low)
 - **GPIO 21**: IO0 Chip Select input for indexed memory interface (active low)
 - **GPIO 26**: IRQ line output to 6502 CPU for interrupt notification
-- **GPIO 27**: Reserved for future use
 - **GPIO 28**: Clock output (PWM6A) to Clementina
 
-
 **6502 Bus Interface:**
+
 - Address decoding using GPIO 0-7 for 8-bit addressing with register mirroring
 - Bidirectional data transfer via GPIO 8-15
 - Control signal coordination through WE/OE inputs (active low)
@@ -77,6 +82,7 @@ The MIA operates in two distinct phases with different timing and processing req
 - IRQ line (GPIO 26) for interrupt-driven event notification
 
 **Clock Generation:**
+
 - Raspberry Pi PWM module on GPIO 28 (PWM6A) for clock output to Clementina
 - Software-controllable frequency (100 kHz boot phase, 1 MHz normal operation)
 - High stability requirement (<0.1% frequency deviation)
@@ -85,11 +91,13 @@ The MIA operates in two distinct phases with different timing and processing req
 - Future optimization target: 2 MHz operation with enhanced timing implementation
 
 **Reset Control:**
+
 - GPIO 17 controls reset line to all Clementina system chips
 - Minimum 10ms assertion time for reliable reset
 - Coordinated with MIA state reinitialization
 
 **Dual USB Interface:**
+
 - Build-time configuration determines USB operation mode
 - USB Host Mode: TinyUSB Host stack for multiple device support via hub
 - USB Device Mode: TinyUSB Device stack for development console
@@ -100,6 +108,7 @@ The MIA operates in two distinct phases with different timing and processing req
 ### Memory Mapping
 
 **ROM Emulation Region ($E000-$FFFF):**
+
 - 256-byte address space using 8 address lines (A0-A7) with mirroring every 256 bytes
 - Reset vector at $FFFC-$FFFD (mirrors to addresses $FC-$FD in MIA space)
 - Boot loader code space starts at $E000 (maps to MIA $00)
@@ -109,6 +118,7 @@ The MIA operates in two distinct phases with different timing and processing req
 - Active during boot phase only (HIRAM_CS on GPIO 20)
 
 **Indexed Memory Interface ($C000-$C3FF):**
+
 - 1KB address space (6502 perspective) with multi-window architecture and shared registers
 - MIA only sees 8 address lines (A0-A7 on GPIO 0-7), creating 256-byte address space
 - 256-byte pattern mirrors 4 times throughout 1KB range ($C000-$C0FF, $C100-$C1FF, $C200-$C2FF, $C300-$C3FF)
@@ -117,6 +127,7 @@ The MIA operates in two distinct phases with different timing and processing req
 
 **Address Mapping Note:**
 From MIA's perspective (8-bit addresses):
+
 - $00-$0F: Window A registers
 - $10-$1F: Window B registers
 - $20-$2F: Window C registers
@@ -125,6 +136,7 @@ From MIA's perspective (8-bit addresses):
 - $80-$FF: Shared register space
 
 From 6502's perspective (16-bit addresses, with mirroring):
+
 - $C000-$C00F: Window A (mirrors at $C100, $C200, $C300)
 - $C010-$C01F: Window B (mirrors at $C110, $C210, $C310)
 - $C020-$C02F: Window C (mirrors at $C120, $C220, $C320)
@@ -132,6 +144,7 @@ From 6502's perspective (16-bit addresses, with mirroring):
 - $C0F0-$C0FF: Shared registers (mirrors at $C1F0, $C2F0, $C3F0)
 
 **Window A Registers ($C000-$C00F, MIA sees $00-$0F):**
+
 - $C000 (MIA $00): IDX_SELECT_A - Select active index (0-255) for Window A
 - $C001 (MIA $01): DATA_PORT_A - Read/write byte at current index address with auto-step
 - $C002 (MIA $02): CFG_FIELD_SELECT_A - Select configuration field for active index
@@ -140,6 +153,7 @@ From 6502's perspective (16-bit addresses, with mirroring):
 - $C005-$C00F (MIA $05-$0F): Reserved for future use (11 registers)
 
 **Window B Registers ($C010-$C01F, MIA sees $10-$1F):**
+
 - $C010 (MIA $10): IDX_SELECT_B - Select active index (0-255) for Window B
 - $C011 (MIA $11): DATA_PORT_B - Read/write byte at current index address with auto-step
 - $C012 (MIA $12): CFG_FIELD_SELECT_B - Select configuration field for active index
@@ -148,6 +162,7 @@ From 6502's perspective (16-bit addresses, with mirroring):
 - $C015-$C01F (MIA $15-$1F): Reserved for future use (11 registers)
 
 **Window C Registers ($C020-$C02F, MIA sees $20-$2F):**
+
 - $C020 (MIA $20): IDX_SELECT_C - Select active index (0-255) for Window C
 - $C021 (MIA $21): DATA_PORT_C - Read/write byte at current index address with auto-step
 - $C022 (MIA $22): CFG_FIELD_SELECT_C - Select configuration field for active index
@@ -156,6 +171,7 @@ From 6502's perspective (16-bit addresses, with mirroring):
 - $C025-$C02F (MIA $25-$2F): Reserved for future use (11 registers)
 
 **Window D Registers ($C030-$C03F, MIA sees $30-$3F):**
+
 - $C030 (MIA $30): IDX_SELECT_D - Select active index (0-255) for Window D
 - $C031 (MIA $31): DATA_PORT_D - Read/write byte at current index address with auto-step
 - $C032 (MIA $32): CFG_FIELD_SELECT_D - Select configuration field for active index
@@ -164,9 +180,11 @@ From 6502's perspective (16-bit addresses, with mirroring):
 - $C035-$C03F (MIA $35-$3F): Reserved for future use (11 registers)
 
 **Future Window Space ($C040-$C07F, MIA sees $40-$7F):**
+
 - Reserved for Windows E-H (64 bytes, 4 windows × 16 registers)
 
 **Shared Registers ($C0F0-$C0FF, MIA sees $F0-$FF):**
+
 - $C0F0 (MIA $F0): DEVICE_STATUS - Global device status (command completion, errors, system state)
 - $C0F1 (MIA $F1): IRQ_CAUSE_LOW - Interrupt source identification low byte (bits 0-7)
 - $C0F2 (MIA $F2): IRQ_CAUSE_HIGH - Interrupt source identification high byte (bits 8-15)
@@ -177,6 +195,7 @@ From 6502's perspective (16-bit addresses, with mirroring):
 - $C080-$C0EF (MIA $80-$EF): Reserved shared space (112 bytes for future expansion)
 
 **Index Memory Organization:**
+
 - 256 shared indexes (0-255) accessible from all windows
 - Each index contains: current address (24-bit), default address (24-bit), step size (8-bit), flags (8-bit)
 - Pre-configured indexes for system functions, video data, USB input, and user applications
@@ -187,6 +206,7 @@ From 6502's perspective (16-bit addresses, with mirroring):
 The MIA must comply with the specific timing requirements of the W65C02S6TPG-14 processor as detailed in docs/BUS_TIMING.md:
 
 **Primary Target: 1 MHz Operation (1000ns cycle time):**
+
 - **Address Setup Time (tADS):** 40ns max after PHI2 falls
 - **Address Hold Time (tAH):** 10ns min after PHI2 falls  
 - **Data Setup Time (tDSR):** 15ns min before PHI2 falls (reads)
@@ -198,6 +218,7 @@ The MIA must comply with the specific timing requirements of the W65C02S6TPG-14 
 
 **MIA Synchronous Operation Strategy:**
 The MIA operates synchronously with the clock signal it generates, sampling signals at precise times to avoid reacting to transient signals during settling periods:
+
 - **0ns:** MIA detects PHI2 falling edge (clock low)
 - **60ns:** MIA samples address bus (40ns tADS + 50% safety margin)
 - **200ns:** MIA samples CS signal (after address mapping logic settles)
@@ -205,6 +226,7 @@ The MIA operates synchronously with the clock signal it generates, sampling sign
 - **530ns:** MIA samples R/W and OE signals (30ns after PHI2 high)
 
 **MIA Response Requirements at 1 MHz:**
+
 - **READ Operations:**
   - 785ns available from CS sampling (200ns) to data deadline (985ns)
   - 455ns available from R/W sampling (530ns) to data deadline (985ns)
@@ -220,11 +242,13 @@ The MIA operates synchronously with the clock signal it generates, sampling sign
   - This extended drive period is safe as CPU doesn't drive bus during this time
 
 **Future Optimization Target: 2 MHz Operation (500ns cycle time):**
+
 - READ preparation: 200ns to 485ns = 285ns available (still adequate)
 - Confirmed read response: 280ns to 485ns = 205ns available (tight but possible)
 - Would require PIO-only fast path and enhanced caching for reliable operation
 
 **PIO Implementation Strategy:**
+
 - PIO State Machine 0: Bus protocol and address decoding (GPIO 0-7, 18-21)
 - PIO State Machine 1: DATA_PORT fast path for common operations
 - PIO State Machine 2: Available for DMA operations or future expansion
@@ -233,6 +257,7 @@ The MIA operates synchronously with the clock signal it generates, sampling sign
 - Interrupt-driven coordination between PIO and C code
 
 **Register Access Handling:**
+
 - PIO monitors IO0_CS (GPIO 21) for indexed interface activation
 - Address decoding via GPIO 0-7 for register selection, window detection, and shared space detection
 - Window detection: bits 4-6 determine window number (0=A, 1=B, 2=C, 3=D, 4-7=future)
@@ -251,8 +276,9 @@ The MIA operates synchronously with the clock signal it generates, sampling sign
 - **Future 2 MHz optimization:** Will require PIO-only fast path and enhanced caching
 
 **W65C02S Bus Protocol Compliance (1 MHz Primary Target):**
-```
+
 Read Cycle Timing (1000ns cycle, 785ns preparation budget):
+
 1. PHI2 falls (0ns) → MIA detects clock low, cycle start, address bus begins changing
 2. Address valid (40ns) → Address stable on A0-A15 (tADS)
 3. MIA samples address (60ns) → MIA reads address bus (40ns + 50% margin)
@@ -267,6 +293,7 @@ Read Cycle Timing (1000ns cycle, 785ns preparation budget):
 12. Tri-state (1015ns) → Release data bus, return to wait for clock low
 
 Write Cycle Timing (1000ns cycle, 470ns sampling budget):
+
 1. PHI2 falls (0ns) → MIA detects clock low, cycle start, address bus begins changing
 2. Address valid (40ns) → Address stable on A0-A15 (tADS)
 3. MIA samples address (60ns) → MIA reads address bus (40ns + 50% margin)
@@ -279,9 +306,9 @@ Write Cycle Timing (1000ns cycle, 470ns sampling budget):
 10. PHI2 falls (1000ns) → Optimal sampling point (MIA latches data on falling edge)
 11. Data hold (1000-1010ns) → CPU maintains data for tDHW (10ns after PHI2 falls)
 12. Process write (1010ns+) → Update internal registers/memory, return to wait for clock low
-```
 
 **Timing Optimization:**
+
 - 80% of operations use PIO fast path (IDX_SELECT, simple DATA_PORT access)
 - 20% of operations use C slow path (configuration, commands, complex addressing)
 - Speculative preparation during 200-530ns window maximizes available time for memory access
@@ -294,12 +321,14 @@ Write Cycle Timing (1000ns cycle, 470ns sampling budget):
 ### Indexed Memory System
 
 **Architecture Overview:**
+
 - 256 independent memory indexes (0-255) shared between all windows
 - Each index acts as a smart pointer with automatic stepping capability
 - 24-bit addressing provides access to full 16MB address space
 - Four-window design enables efficient copying and parallel access to multiple memory locations
 
 **Index Structure:**
+
 ```c
 typedef struct {
     uint32_t current_addr;    // 24-bit current address + 8-bit flags
@@ -310,6 +339,7 @@ typedef struct {
 ```
 
 **Index Allocation Strategy:**
+
 - **Index 0:** System error log and status information
 - **Indexes 1-15:** System/kernel reserved
 - **Indexes 16-23:** Character tables (8 tables for video rendering, shared by background and sprites)
@@ -325,6 +355,7 @@ typedef struct {
 - **Indexes 128-255:** User applications and general-purpose RAM
 
 **Configuration Fields:**
+
 - **ADDR_L/M/H (0x00-0x02):** Current address pointer (24-bit)
 - **DEFAULT_L/M/H (0x03-0x05):** Default/base address (24-bit)
 - **LIMIT_L/M/H (0x06-0x08):** Limit address for wrap-on-limit (24-bit)
@@ -335,6 +366,7 @@ typedef struct {
 - **COPY_COUNT_L/H (0x0D-0x0E):** Byte count for block copy (16-bit)
 
 **Wrap-on-Limit Feature:**
+
 - Allows automatic reset to default address when limit is reached
 - Useful for circular buffers, bounded iteration, and memory region constraints
 - Enabled via FLAG_WRAP_ON_LIMIT (bit 2) in FLAGS register
@@ -342,6 +374,7 @@ typedef struct {
 - Minimal performance impact (~3-5 cycles when enabled, 0 cycles when disabled)
 
 **Command System:**
+
 - **Basic Commands:** RESET_INDEX, RESET_ALL, CLEAR_IRQ
 - **DMA Commands:** COPY_BLOCK with hardware DMA acceleration (supports 1-65535 bytes)
 - **System Commands:** PICO_REINIT, subsystem-specific operations
@@ -350,6 +383,7 @@ typedef struct {
 ### Wi-Fi Interface
 
 **Network Configuration:**
+
 - Local Wi-Fi network connection
 - UDP-based transmission for low latency
 - Client-server architecture with MIA as server
@@ -361,6 +395,7 @@ typedef struct {
 ### Indexed Memory Architecture
 
 **Index Structure (8 bytes per index):**
+
 ```c
 typedef struct {
     uint32_t current_addr;    // Bits 0-23: 24-bit current address, Bits 24-31: flags
@@ -373,16 +408,17 @@ typedef struct {
 ```
 
 **Index Table Memory Layout:**
-```
+
 Index Table: 2KB (256 × 8 bytes)
+
 - Located in MIA SRAM for fast access
 - Shared between both windows
 - Atomic updates to prevent corruption
 - Cache-aligned for optimal performance
-```
 
 **MIA Memory Organization (256KB allocated from 520KB SRAM):**
-```
+
+```text
 0x20000000 - 0x200007FF: Index Table (2KB)
 0x20000800 - 0x20004800: System Control Area (16KB)
 0x20004800 - 0x20013800: Video Data Area (60KB)
@@ -395,7 +431,8 @@ Remaining for Pico Runtime: 264KB (stack, heap, SDK buffers, Wi-Fi/USB stacks)
 ### Graphics Memory Architecture (Accessed via Indexes)
 
 **Character Tables (48KB total in Video Data Area):**
-```
+
+```text
 8 tables × 256 characters × 24 bytes = 48KB
 Structure per character:
 - 8×8 pixel grid with 3-bit color depth
@@ -405,7 +442,8 @@ Structure per character:
 ```
 
 **Palette Banks (256 bytes total):**
-```
+
+```text
 16 banks × 8 colors × 2 bytes = 256 bytes
 Structure per palette:
 - 8 colors with 16-bit RGB565 format
@@ -414,7 +452,8 @@ Structure per palette:
 ```
 
 **Nametables (4KB total):**
-```
+
+```text
 4 buffers × 40×25 bytes = 4KB
 Structure:
 - 4 nametables for double buffering and scrolling support
@@ -425,7 +464,8 @@ Structure:
 ```
 
 **Palette Tables (4KB total):**
-```
+
+```text
 4 buffers × 40×25 bytes = 4KB
 Structure:
 - 4 palette tables matching the 4 nametables for double buffering
@@ -436,7 +476,8 @@ Structure:
 ```
 
 **Object Attribute Memory (1KB):**
-```
+
+```text
 256 sprites × 4 bytes = 1KB
 Structure per sprite:
 - Y position, tile index (references Character_Table), attributes, X position
@@ -447,7 +488,8 @@ Structure per sprite:
 ```
 
 **Active Frame Control:**
-```
+
+```text
 Control register accessible via index 57 (video control area)
 - Selects active buffer set (0 or 1) for video transmission
 - MIA transmits from active buffer set
@@ -458,6 +500,7 @@ Control register accessible via index 57 (video control area)
 ### Boot Sequence Data Model
 
 **Boot Sequence Flow:**
+
 1. MIA configures internal systems and asserts Reset_Line for minimum 5 cycles
 2. MIA starts PWM generation at 100 kHz and releases Reset_Line
 3. 6502 CPU reads reset vector ($FFFC-$FFFD) from MIA ROM space
@@ -469,6 +512,7 @@ Control register accessible via index 57 (video control area)
 9. Kernel banks out MIA (asserts PICOHIRAM), increases clock to 1 MHz or higher, and activates indexed memory interface
 
 **Kernel Development Workflow:**
+
 1. Develop kernel code using 6502 assembler/compiler
 2. Generate `kernel.bin` binary file
 3. Place `kernel.bin` in MIA project root directory
@@ -476,6 +520,7 @@ Control register accessible via index 57 (video control area)
 5. Upload `mia.uf2` to Raspberry Pi Pico
 
 **Boot Loader Structure:**
+
 - Minimal 6502 assembly routine (~30 bytes) stored in MIA flash
 - Implements simple copying loop with two memory-mapped addresses:
   - Status address ($E100): Returns 1 if more data available, 0 when complete
@@ -483,6 +528,7 @@ Control register accessible via index 57 (video control area)
 - Transfers control to kernel entry point at $4000
 
 **Boot Loader Assembly Code:**
+
 ```assembly
 ; Clementina 6502 Kernel Loader
 ; This code will be stored in MIA flash and provided as ROM data
@@ -537,12 +583,14 @@ LOAD_COMPLETE:
 ```
 
 **MIA ROM Memory Map (256-byte space, mirrored):**
+
 - `$E000` (MIA $00): Kernel loader entry point
 - `$E080` (MIA $80): Status register (1 = more data available, 0 = transfer complete)
 - `$E081` (MIA $81): Data register (returns next kernel byte, advances pointer)
 - `$FFFC-$FFFD` (MIA $FC-$FD): Reset vector pointing to `$E000`
 
 **Kernel Storage:**
+
 - Complete kernel binary loaded from `kernel.bin` file at compile time
 - Binary data automatically converted to C array during build process
 - Sequential byte streaming via memory-mapped data address ($E101)
@@ -553,14 +601,16 @@ LOAD_COMPLETE:
 ### USB Interface Data Model (Accessed via Indexes)
 
 **Dual USB Mode Architecture:**
-```
+
+```text
 Build-time Configuration:
 - CONFIG_USB_HOST: Compile for USB Host Mode
 - CONFIG_USB_DEVICE: Compile for USB Device Mode
 ```
 
 **USB Host Mode:**
-```
+
+```text
 TinyUSB Host Stack Configuration:
 - Multiple device support via USB hub
 - Keyboard device class support
@@ -569,7 +619,8 @@ TinyUSB Host Stack Configuration:
 ```
 
 **USB Device Mode:**
-```
+
+```text
 TinyUSB Device Stack Configuration:
 - CDC (Communication Device Class) for console
 - Printf output redirection to USB console
@@ -578,7 +629,8 @@ TinyUSB Device Stack Configuration:
 ```
 
 **USB Data Structures (in USB and I/O Buffers Area):**
-```
+
+```text
 Keyboard Buffer: 64 bytes circular buffer
 - Buffer: 64 × 8-bit ASCII key codes
 - Head/tail pointers for circular access
@@ -595,7 +647,8 @@ USB Device Status: 16 bytes
 ```
 
 **Index-Based USB Access:**
-```
+
+```text
 Index 64: USB Keyboard Buffer
 - Default address: Start of keyboard circular buffer
 - Step size: 1 (sequential key access)
@@ -614,18 +667,21 @@ Index 66-67: Reserved for mouse and additional USB devices
 ### Indexed Memory Interface Errors
 
 **Index Access Errors:**
+
 - Invalid index selection (>255) - ignored, no operation performed
 - Address overflow/underflow detection with INDEX_OVERFLOW IRQ
 - Memory access outside valid ranges logged to Index 0 (error log)
 - Automatic error recovery through index reset commands
 
 **Bus Interface Errors:**
+
 - Timing violations detected by PIO state machines
 - Window conflict resolution (Window A priority, Window B ignored)
 - Invalid register access attempts logged and ignored
 - Hardware timeout detection for unresponsive 6502
 
 **DMA Operation Errors:**
+
 - Source/destination index validation before copy operations
 - Memory boundary checking for block copy operations
 - DMA_ERROR IRQ generated on invalid copy parameters
@@ -634,12 +690,14 @@ Index 66-67: Reserved for mouse and additional USB devices
 ### Hardware Error Recovery
 
 **Clock Generation Failures:**
+
 - Watchdog monitoring of clock output
 - Automatic fallback to safe frequency
 - Error reporting via STATUS register and Index 0
 - Manual recovery through clock control commands
 
 **Memory Interface Errors:**
+
 - PIO state machine error detection and recovery
 - Automatic retry mechanisms for transient failures
 - Error logging to Index 0 for debugging
@@ -648,12 +706,14 @@ Index 66-67: Reserved for mouse and additional USB devices
 ### Wi-Fi Communication Errors
 
 **Connection Management:**
+
 - Automatic reconnection on link failure
 - Client timeout detection and recovery
 - Bandwidth adaptation based on network conditions
 - Fallback to reduced frame rate on congestion
 
 **Data Transmission Errors:**
+
 - Frame sequence numbering for lost packet detection
 - Selective retransmission of critical updates
 - Compression for bandwidth optimization
@@ -662,12 +722,14 @@ Index 66-67: Reserved for mouse and additional USB devices
 ### Graphics System Errors
 
 **Index-Based Graphics Access Errors:**
+
 - Bounds checking on character table and palette access via indexes
 - Validation of sprite data accessed through Index 48
 - Atomic operations for double-buffer swapping via index commands
 - Recovery from invalid graphics configurations through index reset
 
 **Video Processing Errors:**
+
 - Frame transmission failure detection and retry
 - Character table corruption detection and recovery
 - Sprite collision detection with VIDEO_COLLISION IRQ
@@ -676,12 +738,14 @@ Index 66-67: Reserved for mouse and additional USB devices
 ### System-Wide Error Management
 
 **Error Logging (Index 0):**
+
 - Centralized error log accessible via Index 0
 - Error codes, timestamps, and context information
 - Circular buffer with automatic wraparound
 - Accessible to 6502 for diagnostic purposes
 
 **Interrupt-Driven Error Notification:**
+
 - IRQ line (GPIO 26) signals critical errors to 6502
 - 16-bit IRQ_CAUSE register identifies specific error types (0-15)
   - Low byte ($C006/$C00E): System and I/O interrupts (bits 0-7)
@@ -701,12 +765,14 @@ Index 66-67: Reserved for mouse and additional USB devices
 ### Unit Testing Approach
 
 **Core Functionality Tests:**
+
 - Clock generation accuracy and stability testing
 - ROM emulation timing verification
 - Memory-mapped I/O response time validation
 - Wi-Fi transmission throughput measurement
 
 **Graphics System Tests:**
+
 - Character table rendering verification
 - Palette switching accuracy testing
 - Sprite positioning and collision detection
@@ -715,12 +781,14 @@ Index 66-67: Reserved for mouse and additional USB devices
 ### Integration Testing
 
 **6502 Interface Testing:**
+
 - Boot sequence end-to-end verification
 - Memory timing compatibility testing
 - Reset sequence coordination validation
 - Real-world kernel loading scenarios
 
 **Video Client Integration:**
+
 - Frame data transmission accuracy
 - Resource update synchronization
 - Network latency impact assessment
@@ -729,12 +797,14 @@ Index 66-67: Reserved for mouse and additional USB devices
 ### Performance Testing
 
 **Timing Requirements Validation:**
+
 - 500ns memory access response verification
 - 33.33ms frame transmission timing
 - 1MHz clock stability measurement
 - Boot sequence timing optimization
 
 **Resource Utilization Testing:**
+
 - Memory usage profiling and optimization
 - CPU core load balancing verification
 - Wi-Fi bandwidth utilization measurement
@@ -743,12 +813,14 @@ Index 66-67: Reserved for mouse and additional USB devices
 ### Hardware-in-Loop Testing
 
 **Real Hardware Validation:**
+
 - Clementina computer integration testing
 - Video client display quality assessment
 - Network infrastructure compatibility
 - Environmental stress testing (temperature, interference)
 
 **Regression Testing:**
+
 - Automated test suite for core functionality
 - Performance benchmark tracking
 - Compatibility testing across Wi-Fi standards
@@ -771,6 +843,7 @@ The boot phase uses the Raspberry Pi PWM module to generate a slow 100 kHz clock
 The indexed memory interface uses a hybrid PIO + C architecture to meet stringent timing requirements:
 
 **Core 0 Real-Time Operations:**
+
 - **PIO State Machines**: Handle immediate 6502 bus protocol and register access
 - **Fast Path (80% of operations)**: Simple register access completed in PIO (~132ns)
 - **Slow Path (20% of operations)**: Complex operations handed to C code (~200ns)
@@ -778,6 +851,7 @@ The indexed memory interface uses a hybrid PIO + C architecture to meet stringen
 - **DMA Operations**: Hardware-accelerated memory copying between indexes
 
 **Core 1 Background Operations:**
+
 - **Complex Configuration**: Multi-byte address updates and field configuration
 - **Video Processing**: Graphics data management accessible via pre-configured indexes
 - **USB Processing**: Keyboard input handling through Index 64
@@ -787,6 +861,7 @@ The indexed memory interface uses a hybrid PIO + C architecture to meet stringen
 ### Timing Optimization Strategy
 
 **1 MHz Operation (785ns READ budget, 470ns WRITE budget):**
+
 - READ preparation: 785ns available (200ns to 985ns)
 - READ confirmed response: 455ns available (530ns to 985ns)
 - WRITE sampling: 470ns window (540ns to 1010ns)
@@ -795,6 +870,7 @@ The indexed memory interface uses a hybrid PIO + C architecture to meet stringen
 - Excellent timing margins with substantial room for optimization
 
 **2 MHz Operation (285ns READ budget, 235ns WRITE budget):**
+
 - READ preparation: 285ns available (200ns to 485ns)
 - READ confirmed response: 205ns available (280ns to 485ns)
 - WRITE sampling: 235ns window (270ns to 505ns)
@@ -803,6 +879,7 @@ The indexed memory interface uses a hybrid PIO + C architecture to meet stringen
 - Achievable with PIO-only fast path and careful implementation
 
 **Performance Optimization:**
+
 - No caching between PIO and C to avoid coherency issues
 - Atomic index updates to prevent corruption
 - Cache-aligned data structures for optimal memory access
@@ -813,16 +890,19 @@ The indexed memory interface uses a hybrid PIO + C architecture to meet stringen
 The video system leverages the indexed memory interface for efficient graphics data management:
 
 **Character Table Access (Indexes 16-31):**
+
 - Each index points to a different character table (8×8 pixels, 3-bit color)
 - Auto-stepping enables sequential character definition updates
 - Direct memory access eliminates register-based bottlenecks
 
 **Palette Management (Indexes 32-47):**
+
 - Each index points to a different palette bank (8 colors, 16-bit RGB565)
 - Dynamic color scheme updates through index-based access
 - Efficient palette switching without data copying
 
 **Sprite Processing (Index 48):**
+
 - Single index provides access to all 256 sprites (4 bytes each)
 - Auto-stepping enables sequential sprite attribute updates
 - Hardware-accelerated collision detection with interrupt notification
@@ -830,17 +910,20 @@ The video system leverages the indexed memory interface for efficient graphics d
 ### Memory Access Optimization
 
 **Multi-Window Efficiency:**
+
 - Four active windows (A-D) enable simultaneous access to different memory regions
 - Efficient copying: read from one window, write to another
 - No manual address management required for sequential operations
 - Future expansion to 8 windows (E-H) for even more parallelism
 
 **DMA Acceleration:**
+
 - Hardware block copy between any two indexes
 - Up to 65535 bytes transferred without CPU intervention
 - Background operation with completion interrupt notification
 
 **Index Pre-Configuration:**
+
 - System indexes pre-configured at startup for immediate use
 - No setup overhead for accessing common data structures
 - Consistent memory layout across system restarts

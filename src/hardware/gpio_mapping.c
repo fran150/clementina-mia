@@ -42,9 +42,8 @@ static const gpio_config_t gpio_configs[] = {
     // Control signals - inputs with pull-up (active low)
     {GPIO_WE, GPIO_IN, GPIO_PULL_NONE},
     {GPIO_OE, GPIO_IN, GPIO_PULL_NONE},
-    {GPIO_ROM_CS, GPIO_IN, GPIO_PULL_NONE},
-    {GPIO_VIDEO_CS, GPIO_IN, GPIO_PULL_NONE},
-    {GPIO_GEN_CS, GPIO_IN, GPIO_PULL_NONE},
+    {GPIO_HIRAM_CS, GPIO_IN, GPIO_PULL_NONE},
+    {GPIO_IO0_CS, GPIO_IN, GPIO_PULL_NONE},
     
     // Control outputs
     {GPIO_PICOHIRAM, GPIO_OUT, GPIO_PULL_NONE},
@@ -116,12 +115,10 @@ void gpio_set_data_bus_direction(bool output) {
   }
 }
 
-void gpio_read_control_signals(bool *we, bool *oe, bool *rom_cs, bool *video_cs,
-                               bool *gen_cs) {
+void gpio_read_control_signals(bool *we, bool *oe, bool *hiram_cs, bool *io0_cs) {
   *we = !gpio_get(GPIO_WE);         // Active low
   *oe = !gpio_get(GPIO_OE);         // Active low
-  *rom_cs = !gpio_get(GPIO_ROM_CS); // Active low
-  *video_cs = !gpio_get(GPIO_VIDEO_CS); // Active low
-  *gen_cs = !gpio_get(GPIO_GEN_CS); // Active low
+  *hiram_cs = !gpio_get(GPIO_HIRAM_CS); // Active low
+  *io0_cs = !gpio_get(GPIO_IO0_CS); // Active low
 }
 

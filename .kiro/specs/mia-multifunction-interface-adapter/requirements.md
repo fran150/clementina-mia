@@ -53,7 +53,7 @@ The MIA (Multifunction Interface Adapter) is a Raspberry Pi Pico 2 W-based syste
 
 **User Story:** As a 6502 system designer, I want the MIA to generate a controllable system clock, so that I can dynamically adjust the CPU speed for different operational phases.
 
-#### Acceptance Criteria
+**Acceptance Criteria:**
 
 1. THE MIA SHALL generate a PWM clock signal for Clementina
 2. WHEN Clementina is in boot phase, THE MIA SHALL output a clock frequency of 100 kHz or lower
@@ -65,7 +65,7 @@ The MIA (Multifunction Interface Adapter) is a Raspberry Pi Pico 2 W-based syste
 
 **User Story:** As a 6502 system designer, I want the MIA to emulate ROM functionality during boot, so that I can load the kernel without requiring physical ROM chips.
 
-#### Acceptance Criteria
+**Acceptance Criteria:**
 
 1. THE MIA SHALL respond to memory access in the $E000-$FFFF address range using 8 address lines (A0-A7 on GPIO 0-7) with 256-byte address space mirrored throughout the range
 2. THE MIA SHALL interface with Clementina using standard 6502 memory signals: WE (Write Enable) on GPIO 18 (active low), OE (Output Enable) on GPIO 19 (active low), HIRAM chip select on GPIO 20 (active low), IO0 chip select on GPIO 21 (active low), and 8 data lines on GPIO 8-15
@@ -83,7 +83,7 @@ The MIA (Multifunction Interface Adapter) is a Raspberry Pi Pico 2 W-based syste
 
 **User Story:** As a 6502 system designer, I want the MIA to provide video output capabilities, so that I can display graphics without dedicated video hardware.
 
-#### Acceptance Criteria
+**Acceptance Criteria:**
 
 1. THE MIA SHALL support 320x200 pixel resolution rendered from tile-based graphics data
 2. THE MIA SHALL implement 8 Character_Table banks, each containing 256 character definitions of 8x8 pixels with 3-bit color depth
@@ -99,7 +99,7 @@ The MIA (Multifunction Interface Adapter) is a Raspberry Pi Pico 2 W-based syste
 
 **User Story:** As a 6502 system designer, I want the MIA to communicate video data efficiently, so that I can achieve smooth graphics performance over Wi-Fi.
 
-#### Acceptance Criteria
+**Acceptance Criteria:**
 
 1. THE MIA SHALL transmit frame data every 33.33 milliseconds containing active Character_Table index, two Nametable buffers, two Palette_Table buffers, and OAM data from the active buffer set
 2. WHEN Palette_Bank definitions change, THE MIA SHALL transmit updated palette bank data to the Video_Client within 33.33 milliseconds
@@ -113,7 +113,7 @@ The MIA (Multifunction Interface Adapter) is a Raspberry Pi Pico 2 W-based syste
 
 **User Story:** As a 6502 system designer, I want the MIA to provide a unified indexed memory interface, so that I can efficiently access all MIA functionality through a consistent register-based system.
 
-#### Acceptance Criteria
+**Acceptance Criteria:**
 
 1. THE MIA SHALL respond to I/O operations in the $C000-$C3FF address range (1KB) using chip select line IO0 on GPIO 21 (active low)
 2. THE MIA SHALL use only 8 address lines (A0-A7 on GPIO 0-7) creating a 256-byte address space that mirrors 4 times throughout the 1KB range
@@ -124,19 +124,19 @@ The MIA (Multifunction Interface Adapter) is a Raspberry Pi Pico 2 W-based syste
 7. THE MIA SHALL reserve addresses $C040-$C07F (and mirrored) for future window expansion (Windows E-H)
 8. THE MIA SHALL provide Shared_Registers at addresses $C080-$C0FF (and mirrored) with 128 bytes total, active registers at $C0F0-$C0FF (16 registers, 8 active, 8 reserved)
 9. THE MIA SHALL maintain exactly 256 shared Memory_Index entries (0-255) accessible from all windows, each containing current address, default address, step size, and behavior flags
-9. THE MIA SHALL operate synchronously with the clock signal it generates, sampling address at 60 nanoseconds, CS at 200 nanoseconds, and R/W at 530 nanoseconds after PHI2 falling edge to avoid reacting to transient signals during settling periods
-10. THE MIA SHALL respond to Clementina READ operations by providing valid data within 785 nanoseconds from CS sampling (200ns) to data deadline (985ns) at 1 MHz operation
-11. THE MIA SHALL respond to Clementina READ operations by providing valid data within 455 nanoseconds from R/W signal sampling (530ns) to data deadline (985ns) at 1 MHz operation
-12. THE MIA SHALL hold READ data stable for 15 nanoseconds after PHI2 falling edge to meet W65C02S6TPG-14 data hold time requirements
-13. THE MIA SHALL latch WRITE data on PHI2 falling edge within the 470 nanosecond data valid window at 1 MHz operation
-14. THE MIA SHALL maintain data integrity during concurrent operations through atomic memory operations
-15. THE MIA SHALL NOT drive the data bus when OE signal is HIGH except during the 15 nanosecond data hold period after PHI2 falling edge for READ operations
+10. THE MIA SHALL operate synchronously with the clock signal it generates, sampling address at 60 nanoseconds, CS at 200 nanoseconds, and R/W at 530 nanoseconds after PHI2 falling edge to avoid reacting to transient signals during settling periods
+11. THE MIA SHALL respond to Clementina READ operations by providing valid data within 785 nanoseconds from CS sampling (200ns) to data deadline (985ns) at 1 MHz operation
+12. THE MIA SHALL respond to Clementina READ operations by providing valid data within 455 nanoseconds from R/W signal sampling (530ns) to data deadline (985ns) at 1 MHz operation
+13. THE MIA SHALL hold READ data stable for 15 nanoseconds after PHI2 falling edge to meet W65C02S6TPG-14 data hold time requirements
+14. THE MIA SHALL latch WRITE data on PHI2 falling edge within the 470 nanosecond data valid window at 1 MHz operation
+15. THE MIA SHALL maintain data integrity during concurrent operations through atomic memory operations
+16. THE MIA SHALL NOT drive the data bus when OE signal is HIGH except during the 15 nanosecond data hold period after PHI2 falling edge for READ operations
 
 ### Requirement 6
 
 **User Story:** As a 6502 system designer, I want the MIA to provide indexed memory access with automatic stepping, so that I can efficiently read and write sequential data without manual address management.
 
-#### Acceptance Criteria
+**Acceptance Criteria:**
 
 1. THE MIA SHALL provide an IDX_SELECT register at offset +0 in each window ($C000, $C010, $C020, $C030) to select the active Memory_Index (0-255) for that window from the shared pool of 256 indexes
 2. THE MIA SHALL provide a DATA_PORT register at offset +1 in each window ($C001, $C011, $C021, $C031) that reads or writes one byte at the current index address
@@ -153,21 +153,21 @@ The MIA (Multifunction Interface Adapter) is a Raspberry Pi Pico 2 W-based syste
 
 **User Story:** As a 6502 system designer, I want the MIA to provide command execution and DMA capabilities, so that I can perform complex operations efficiently without manual data movement.
 
-#### Acceptance Criteria
+**Acceptance Criteria:**
 
 1. THE MIA SHALL provide a COMMAND register at offset +4 in each window ($C004, $C014, $C024, $C034) for issuing control commands
 2. THE MIA SHALL support RESET_INDEX command to copy default address to current address for the active index
 3. THE MIA SHALL support RESET_ALL command to reset all 256 indexes to their default addresses
 4. THE MIA SHALL support COPY_BLOCK command to copy 1 to 65535 bytes between any two specified indexes
 5. THE MIA SHALL support PICO_REINIT command to reinitialize MIA internal state without asserting the 6502 Reset_Line
-7. THE MIA SHALL provide DEVICE_STATUS register at $C0F0 in shared space indicating command completion, errors, and system state
-8. THE MIA SHALL complete all commands deterministically with immediate effect or set DEVICE_STATUS.BUSY until completion
+6. THE MIA SHALL provide DEVICE_STATUS register at $C0F0 in shared space indicating command completion, errors, and system state
+7. THE MIA SHALL complete all commands deterministically with immediate effect or set DEVICE_STATUS.BUSY until completion
 
 ### Requirement 8
 
 **User Story:** As a 6502 system designer, I want the MIA to provide interrupt-driven error handling and event notification, so that I can respond to system events and errors efficiently.
 
-#### Acceptance Criteria
+**Acceptance Criteria:**
 
 1. THE MIA SHALL provide an IRQ_Line on GPIO 26 to signal interrupts to the 6502 CPU
 2. THE MIA SHALL provide a 16-bit IRQ_CAUSE register in shared space with low byte at $C0F1 and high byte at $C0F2 to identify the source of interrupts
@@ -188,7 +188,7 @@ The MIA (Multifunction Interface Adapter) is a Raspberry Pi Pico 2 W-based syste
 
 **User Story:** As a 6502 system designer, I want the MIA to provide pre-configured memory indexes for system functions, so that I can access video data, USB input, and system control without manual setup.
 
-#### Acceptance Criteria
+**Acceptance Criteria:**
 
 1. THE MIA SHALL pre-configure Memory_Index 0 to point to system error log and status information
 2. THE MIA SHALL pre-configure Memory_Index 16-23 to point to Character_Table data for video rendering (8 character tables)
@@ -206,7 +206,7 @@ The MIA (Multifunction Interface Adapter) is a Raspberry Pi Pico 2 W-based syste
 
 **User Story:** As a 6502 system designer, I want the MIA to support dual USB operation modes through the indexed interface, so that I can use either dedicated USB devices or development console input.
 
-#### Acceptance Criteria
+**Acceptance Criteria:**
 
 1. THE MIA SHALL determine USB operation mode using a build-time configuration constant
 2. WHEN configured for USB Host mode, THE MIA SHALL operate in USB Host mode using TinyUSB library

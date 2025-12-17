@@ -94,8 +94,8 @@ void __attribute__((optimize("O3"))) bus_sync_pio_irq_handler(void) {
     // At 133 MHz, this loop runs for ~100ns = ~13 cycles
     // OPTIMIZATION: Direct GPIO register access for minimum latency
     // Using gpio_get() is already optimized by the SDK, but we could
-    // use direct register access if needed: (sio_hw->gpio_in & (1u << BUS_PHI2_PIN))
-    while (!gpio_get(BUS_PHI2_PIN)) {
+    // use direct register access if needed: (sio_hw->gpio_in & (1u << GPIO_CLK_OUT))
+    while (!gpio_get(GPIO_CLK_OUT)) {
         // Busy wait for PHI2 = HIGH
         // This is acceptable because:
         // 1. We're in an IRQ handler (must be fast anyway)
@@ -126,8 +126,8 @@ void __attribute__((optimize("O3"))) bus_sync_pio_irq_handler(void) {
     // Read OE pin (GPIO 19) - active low
     // Read WE pin (GPIO 18) - active low
     // OPTIMIZATION: Read both pins in quick succession to minimize time
-    bool oe_active = !gpio_get(BUS_OE_PIN);
-    bool we_active = !gpio_get(BUS_WE_PIN);
+    bool oe_active = !gpio_get(GPIO_OE);
+    bool we_active = !gpio_get(GPIO_WE);
     
     // =========================================================================
     // PHASE 4: Determine operation type and push response (540-560ns)
@@ -141,14 +141,14 @@ void __attribute__((optimize("O3"))) bus_sync_pio_irq_handler(void) {
         // - CS was active but OE is not (unusual but possible)
         // - Timing glitch or invalid bus cycle
         // OPTIMIZATION: Inline loop unrolling for GPIO direction setting
-        gpio_set_dir(8, GPIO_IN);
-        gpio_set_dir(9, GPIO_IN);
-        gpio_set_dir(10, GPIO_IN);
-        gpio_set_dir(11, GPIO_IN);
-        gpio_set_dir(12, GPIO_IN);
-        gpio_set_dir(13, GPIO_IN);
-        gpio_set_dir(14, GPIO_IN);
-        gpio_set_dir(15, GPIO_IN);
+        gpio_set_dir(GPIO_DATA_D0, GPIO_IN);
+        gpio_set_dir(GPIO_DATA_D1, GPIO_IN);
+        gpio_set_dir(GPIO_DATA_D2, GPIO_IN);
+        gpio_set_dir(GPIO_DATA_D3, GPIO_IN);
+        gpio_set_dir(GPIO_DATA_D4, GPIO_IN);
+        gpio_set_dir(GPIO_DATA_D5, GPIO_IN);
+        gpio_set_dir(GPIO_DATA_D6, GPIO_IN);
+        gpio_set_dir(GPIO_DATA_D7, GPIO_IN);
         
         // Check if TX FIFO has space before pushing
         if (pio_sm_is_tx_fifo_full(pio_instance, sm)) {
@@ -173,14 +173,14 @@ void __attribute__((optimize("O3"))) bus_sync_pio_irq_handler(void) {
         
         // Configure data bus as outputs before PIO drives it
         // OPTIMIZATION: Inline loop unrolling for GPIO direction setting
-        gpio_set_dir(8, GPIO_OUT);
-        gpio_set_dir(9, GPIO_OUT);
-        gpio_set_dir(10, GPIO_OUT);
-        gpio_set_dir(11, GPIO_OUT);
-        gpio_set_dir(12, GPIO_OUT);
-        gpio_set_dir(13, GPIO_OUT);
-        gpio_set_dir(14, GPIO_OUT);
-        gpio_set_dir(15, GPIO_OUT);
+        gpio_set_dir(GPIO_DATA_D0, GPIO_OUT);
+        gpio_set_dir(GPIO_DATA_D1, GPIO_OUT);
+        gpio_set_dir(GPIO_DATA_D2, GPIO_OUT);
+        gpio_set_dir(GPIO_DATA_D3, GPIO_OUT);
+        gpio_set_dir(GPIO_DATA_D4, GPIO_OUT);
+        gpio_set_dir(GPIO_DATA_D5, GPIO_OUT);
+        gpio_set_dir(GPIO_DATA_D6, GPIO_OUT);
+        gpio_set_dir(GPIO_DATA_D7, GPIO_OUT);
         
         // Check if TX FIFO has space for control byte + data byte
         if (pio_sm_is_tx_fifo_full(pio_instance, sm)) {
@@ -218,14 +218,14 @@ void __attribute__((optimize("O3"))) bus_sync_pio_irq_handler(void) {
             irq_set_bits(IRQ_MEMORY_ERROR);
             
             // Tri-state bus and abort
-            gpio_set_dir(8, GPIO_IN);
-            gpio_set_dir(9, GPIO_IN);
-            gpio_set_dir(10, GPIO_IN);
-            gpio_set_dir(11, GPIO_IN);
-            gpio_set_dir(12, GPIO_IN);
-            gpio_set_dir(13, GPIO_IN);
-            gpio_set_dir(14, GPIO_IN);
-            gpio_set_dir(15, GPIO_IN);
+            gpio_set_dir(GPIO_DATA_D0, GPIO_IN);
+            gpio_set_dir(GPIO_DATA_D1, GPIO_IN);
+            gpio_set_dir(GPIO_DATA_D2, GPIO_IN);
+            gpio_set_dir(GPIO_DATA_D3, GPIO_IN);
+            gpio_set_dir(GPIO_DATA_D4, GPIO_IN);
+            gpio_set_dir(GPIO_DATA_D5, GPIO_IN);
+            gpio_set_dir(GPIO_DATA_D6, GPIO_IN);
+            gpio_set_dir(GPIO_DATA_D7, GPIO_IN);
             
             return;
         }
@@ -238,14 +238,14 @@ void __attribute__((optimize("O3"))) bus_sync_pio_irq_handler(void) {
         
         // Ensure data bus is configured as inputs
         // OPTIMIZATION: Inline loop unrolling for GPIO direction setting
-        gpio_set_dir(8, GPIO_IN);
-        gpio_set_dir(9, GPIO_IN);
-        gpio_set_dir(10, GPIO_IN);
-        gpio_set_dir(11, GPIO_IN);
-        gpio_set_dir(12, GPIO_IN);
-        gpio_set_dir(13, GPIO_IN);
-        gpio_set_dir(14, GPIO_IN);
-        gpio_set_dir(15, GPIO_IN);
+        gpio_set_dir(GPIO_DATA_D0, GPIO_IN);
+        gpio_set_dir(GPIO_DATA_D1, GPIO_IN);
+        gpio_set_dir(GPIO_DATA_D2, GPIO_IN);
+        gpio_set_dir(GPIO_DATA_D3, GPIO_IN);
+        gpio_set_dir(GPIO_DATA_D4, GPIO_IN);
+        gpio_set_dir(GPIO_DATA_D5, GPIO_IN);
+        gpio_set_dir(GPIO_DATA_D6, GPIO_IN);
+        gpio_set_dir(GPIO_DATA_D7, GPIO_IN);
         
         // Check if TX FIFO has space before pushing
         if (pio_sm_is_tx_fifo_full(pio_instance, sm)) {

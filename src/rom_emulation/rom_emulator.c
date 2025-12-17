@@ -107,7 +107,7 @@ void rom_emulator_start_boot_sequence(void) {
 }
 
 void rom_emulator_process(void) {
-    bool we, oe, rom_cs, video_cs, gen_cs;
+    bool we, oe;
     
     // Handle reset sequence timing
     if (current_state == ROM_STATE_RESET_SEQUENCE) {
@@ -130,10 +130,11 @@ void rom_emulator_process(void) {
     }
     
     // Read control signals
-    gpio_read_control_signals(&we, &oe, &rom_cs, &video_cs, &gen_cs);
+    bool hiram_cs, io0_cs;
+    gpio_read_control_signals(&we, &oe, &hiram_cs, &io0_cs);
     
     // Only process if ROM chip select is active and we're in boot phase
-    if (rom_cs && (current_state == ROM_STATE_BOOT_ACTIVE || current_state == ROM_STATE_KERNEL_LOADING)) {
+    if (hiram_cs && (current_state == ROM_STATE_BOOT_ACTIVE || current_state == ROM_STATE_KERNEL_LOADING)) {
         uint16_t address = gpio_read_address_bus();
         
         if (oe && !we) {  // Read operation
@@ -143,7 +144,7 @@ void rom_emulator_process(void) {
                 gpio_write_data_bus(data);
             }
         }
-    } else if ((current_state == ROM_STATE_BOOT_ACTIVE || current_state == ROM_STATE_KERNEL_LOADING) && !rom_cs) {
+    } else if ((current_state == ROM_STATE_BOOT_ACTIVE || current_state == ROM_STATE_KERNEL_LOADING) && !hiram_cs) {
         // ROM no longer selected, set data bus back to input
         gpio_set_data_bus_direction(false);
     }

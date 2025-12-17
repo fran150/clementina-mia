@@ -6,6 +6,7 @@
 #include "pico/stdlib.h"
 #include "pico/cyw43_arch.h"
 #include "hardware/gpio.h"
+#include "hardware/gpio_mapping.h"
 
 static led_status_t current_status = LED_STATUS_OFF;
 static uint32_t last_update = 0;
@@ -21,9 +22,9 @@ void led_status_init(void) {
     } else {
         // Fallback to GPIO 25 for regular Pico
         cyw43_available = false;
-        gpio_init(25);
-        gpio_set_dir(25, GPIO_OUT);
-        gpio_put(25, 0);
+        gpio_init(GPIO_LED);
+        gpio_set_dir(GPIO_LED, GPIO_OUT);
+        gpio_put(GPIO_LED, 0);
     }
     
     current_status = LED_STATUS_INIT;
@@ -48,7 +49,7 @@ static void set_led(bool state) {
     if (cyw43_available) {
         cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, state);
     } else {
-        gpio_put(25, state);
+        gpio_put(GPIO_LED, state);
     }
 }
 

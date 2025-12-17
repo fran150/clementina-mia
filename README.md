@@ -25,9 +25,8 @@ A Raspberry Pi Pico 2 W-based system that provides multiple critical functions f
 | 17   | Reset Out | Reset line to Clementina system (active low) |
 | 18   | WE | Write Enable input from 6502 (active low) |
 | 19   | OE | Output Enable input from 6502 (active low) |
-| 20   | ROM CS | ROM Emulation Chip Select (active low) |
-| 21   | Video CS | Video Chip Select (Device 4) (active low) |
-| 22   | Gen CS | General Interface Chip Select (Device 0) (active low) |
+| 20   | HIRAM CS | ROM Emulation Chip Select (active low) |
+| 21   | IO0 CS | Indexed Memory Interface Chip Select (active low) |
 | 26   | IRQ Out | Interrupt Request to 6502 CPU (active low) |
 | 28   | Clock Out | PWM clock output to Clementina |
 
