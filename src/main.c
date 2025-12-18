@@ -111,7 +111,6 @@ int main() {
     led_status_set(LED_STATUS_RUNNING);
 
     while (true) {
-        bus_sync_pio_process_write_data();
         led_status_update();
         tight_loop_contents();
     }

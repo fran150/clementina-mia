@@ -12,6 +12,7 @@
 #include "hardware/gpio.h"
 #include "hardware/irq.h"
 #include "pico/stdlib.h"
+#include "hardware/clocks.h"
 
 // Include the generated PIO header
 #include "bus_sync.pio.h"
@@ -27,6 +28,9 @@ static uint pio_offset = 0;
 static volatile uint8_t last_write_addr = 0;
 static volatile bool write_pending = false;
 
+// Forward declaration of IRQ1 handler
+void bus_sync_pio_write_irq_handler(void);
+
 /**
  * Initialize the synchronous bus interface PIO
  */
@@ -38,11 +42,41 @@ void bus_sync_pio_init(void) {
     // The PIO will trigger this when CS is sampled active at 200ns
     irq_set_exclusive_handler(PIO0_IRQ_0, bus_sync_pio_irq_handler);
     irq_set_enabled(PIO0_IRQ_0, true);
+    // Set up IRQ handler for PIO IRQ 1 (write-data notification)
+    irq_set_exclusive_handler(PIO0_IRQ_1, bus_sync_pio_write_irq_handler);
+    irq_set_enabled(PIO0_IRQ_1, true);
 
     // Initialize the PIO state machine
     bus_sync_program_init(pio_instance, sm, pio_offset);
         
     // Note: The PIO state machine is already started by bus_sync_program_init()
+
+    // Enable PIO IRQ1 source as well (used for write-data notification)
+    pio_set_irq1_source_enabled(pio_instance, pis_interrupt1, true);
+}
+
+/**
+ * PIO IRQ1 handler - called when PIO signals write data is available (irq 1)
+ * Reads the latched write data from the RX FIFO and processes it immediately.
+ */
+void __attribute__((optimize("O3"))) bus_sync_pio_write_irq_handler(void) {
+    // Clear IRQ1 flag
+    pio_interrupt_clear(pio_instance, 1);
+
+    // Read data from RX FIFO if available
+    if (!pio_sm_is_rx_fifo_empty(pio_instance, sm)) {
+        uint8_t data = pio_sm_get(pio_instance, sm);
+
+        // Consume pending write using stored address
+        if (write_pending) {
+            bus_interface_write(last_write_addr, data);
+            write_pending = false;
+        } else {
+            // Spurious write data - set error
+            indexed_memory_set_status(STATUS_MEMORY_ERROR);
+            irq_set_bits(IRQ_MEMORY_ERROR);
+        }
+    }
 }
 
 /**
@@ -86,48 +120,21 @@ void __attribute__((optimize("O3"))) bus_sync_pio_irq_handler(void) {
     uint8_t data = bus_interface_read(addr);
     
     // =========================================================================
-    // PHASE 2: Wait for PHI2 to rise (400-500ns)
+    // PHASE 2: Wait for PHI2 to rise and OE/WE to settle (400-530ns)
     // =========================================================================
     
-    // Busy-wait for PHI2 to rise (500ns mark)
-    // This is a tight loop that polls GPIO 28 (PHI2 clock)
-    // At 133 MHz, this loop runs for ~100ns = ~13 cycles
-    // OPTIMIZATION: Direct GPIO register access for minimum latency
-    // Using gpio_get() is already optimized by the SDK, but we could
-    // use direct register access if needed: (sio_hw->gpio_in & (1u << GPIO_CLK_OUT))
-    while (!gpio_get(GPIO_CLK_OUT)) {
-        // Busy wait for PHI2 = HIGH
-        // This is acceptable because:
-        // 1. We're in an IRQ handler (must be fast anyway)
-        // 2. Only ~100ns of waiting (~13 CPU cycles)
-        // 3. No other useful work can be done during this time
-        // 4. Speculative data preparation is already complete
+    // Wait for the OE/WE sample pushed by the PIO to arrive in RX FIFO.
+    // The PIO captured OE/WE after PHI2 rose and pushed a 20-bit sample
+    // (pins 0..19) into the RX FIFO. We read that sample and extract
+    // the OE/WE pin states instead of sampling GPIOs directly here.
+    while (pio_sm_is_rx_fifo_empty(pio_instance, sm)) {
+        tight_loop_contents();
     }
-    
-    // PHI2 is now HIGH (at 500ns mark)
-    
-    // =========================================================================
-    // PHASE 3: Wait 30ns for OE/WE to settle, then read them (530ns)
-    // =========================================================================
-    
-    // Wait 30ns for OE and WE to settle after PHI2 rises
-    // At 133 MHz: 30ns = ~4 CPU cycles
-    // Use inline assembly NOPs for precise timing
-    // OPTIMIZATION: Inline assembly ensures exact cycle count
-    __asm volatile(
-        "nop\n"
-        "nop\n"
-        "nop\n"
-        "nop\n"
-        ::: "memory"
-    );
-    
-    // Now at ~530ns - OE and WE are valid!
-    // Read OE pin (GPIO 19) - active low
-    // Read WE pin (GPIO 18) - active low
-    // OPTIMIZATION: Read both pins in quick succession to minimize time
-    bool oe_active = !gpio_get(GPIO_OE);
-    bool we_active = !gpio_get(GPIO_WE);
+    uint32_t sample = pio_sm_get(pio_instance, sm);
+
+    /* Extract OE/WE bits from the sampled pins word. */
+    bool oe_active = !((sample >> GPIO_OE) & 0x1);
+    bool we_active = !((sample >> GPIO_WE) & 0x1);
     
     // =========================================================================
     // PHASE 4: Determine operation type and push response (540-560ns)
@@ -140,121 +147,43 @@ void __attribute__((optimize("O3"))) bus_sync_pio_irq_handler(void) {
         // This could happen if:
         // - CS was active but OE is not (unusual but possible)
         // - Timing glitch or invalid bus cycle
-        // OPTIMIZATION: Inline loop unrolling for GPIO direction setting
-        gpio_set_dir(GPIO_DATA_D0, GPIO_IN);
-        gpio_set_dir(GPIO_DATA_D1, GPIO_IN);
-        gpio_set_dir(GPIO_DATA_D2, GPIO_IN);
-        gpio_set_dir(GPIO_DATA_D3, GPIO_IN);
-        gpio_set_dir(GPIO_DATA_D4, GPIO_IN);
-        gpio_set_dir(GPIO_DATA_D5, GPIO_IN);
-        gpio_set_dir(GPIO_DATA_D6, GPIO_IN);
-        gpio_set_dir(GPIO_DATA_D7, GPIO_IN);
+        // PIO ensures data bus remains tri-stated (inputs)
         
-        // Check if TX FIFO has space before pushing
-        if (pio_sm_is_tx_fifo_full(pio_instance, sm)) {
-            // TX FIFO overflow - this should never happen
-            // PIO should be blocking on pull, waiting for our response
-            // This indicates a serious timing problem
-            
-            // Set error status and trigger interrupt
-            indexed_memory_set_status(STATUS_MEMORY_ERROR);
-            irq_set_bits(IRQ_MEMORY_ERROR);
-            
-            return;  // Cannot push, abort
-        }
-        
-        // Push NOP control byte
-        pio_sm_put(pio_instance, sm, BUS_CTRL_NOP);
+        // Push NOP control byte (blocking put ensures PIO receives it)
+        pio_sm_put_blocking(pio_instance, sm, BUS_CTRL_NOP);
         
     } else if (!we_active) {
         // OE is active (LOW) and WE is inactive (HIGH)
         // This is a READ operation: R/W = HIGH (read)
         // MOST COMMON PATH - optimized for speed
         
-        // Configure data bus as outputs before PIO drives it
-        // OPTIMIZATION: Inline loop unrolling for GPIO direction setting
-        gpio_set_dir(GPIO_DATA_D0, GPIO_OUT);
-        gpio_set_dir(GPIO_DATA_D1, GPIO_OUT);
-        gpio_set_dir(GPIO_DATA_D2, GPIO_OUT);
-        gpio_set_dir(GPIO_DATA_D3, GPIO_OUT);
-        gpio_set_dir(GPIO_DATA_D4, GPIO_OUT);
-        gpio_set_dir(GPIO_DATA_D5, GPIO_OUT);
-        gpio_set_dir(GPIO_DATA_D6, GPIO_OUT);
-        gpio_set_dir(GPIO_DATA_D7, GPIO_OUT);
-        
-        // Check if TX FIFO has space for control byte + data byte
-        if (pio_sm_is_tx_fifo_full(pio_instance, sm)) {
-            // TX FIFO overflow - cannot push response
-            // This indicates a critical timing failure
-            
-            // Set error status and trigger interrupt
-            indexed_memory_set_status(STATUS_MEMORY_ERROR);
-            irq_set_bits(IRQ_MEMORY_ERROR);
-            
-            // Tri-state bus and abort
-            gpio_set_dir(8, GPIO_IN);
-            gpio_set_dir(9, GPIO_IN);
-            gpio_set_dir(10, GPIO_IN);
-            gpio_set_dir(11, GPIO_IN);
-            gpio_set_dir(12, GPIO_IN);
-            gpio_set_dir(13, GPIO_IN);
-            gpio_set_dir(14, GPIO_IN);
-            gpio_set_dir(15, GPIO_IN);
-            
-            return;
-        }
-        
+        // PIO will configure data bus as outputs before driving
         // Use our speculatively prepared data!
-        // OPTIMIZATION: Push both control and data in quick succession
-        pio_sm_put(pio_instance, sm, BUS_CTRL_READ);
-        
-        // Check again for data byte (FIFO should have space for 2 entries)
-        if (pio_sm_is_tx_fifo_full(pio_instance, sm)) {
-            // TX FIFO overflow after control byte
-            // This is a critical error - PIO is expecting data
-            
-            // Set error status and trigger interrupt
-            indexed_memory_set_status(STATUS_MEMORY_ERROR);
-            irq_set_bits(IRQ_MEMORY_ERROR);
-            
-            // Tri-state bus and abort
-            gpio_set_dir(GPIO_DATA_D0, GPIO_IN);
-            gpio_set_dir(GPIO_DATA_D1, GPIO_IN);
-            gpio_set_dir(GPIO_DATA_D2, GPIO_IN);
-            gpio_set_dir(GPIO_DATA_D3, GPIO_IN);
-            gpio_set_dir(GPIO_DATA_D4, GPIO_IN);
-            gpio_set_dir(GPIO_DATA_D5, GPIO_IN);
-            gpio_set_dir(GPIO_DATA_D6, GPIO_IN);
-            gpio_set_dir(GPIO_DATA_D7, GPIO_IN);
-            
-            return;
-        }
-        
-        pio_sm_put(pio_instance, sm, data);
+        // Blocking puts keep code simple and avoid unnecessary checks.
+        pio_sm_put_blocking(pio_instance, sm, BUS_CTRL_READ);
+        pio_sm_put_blocking(pio_instance, sm, data);
         
     } else {
         // OE is active (LOW) and WE is active (LOW)
         // This is a WRITE operation: R/W = LOW (write)
         
-        // Ensure data bus is configured as inputs
-        // OPTIMIZATION: Inline loop unrolling for GPIO direction setting
-        gpio_set_dir(GPIO_DATA_D0, GPIO_IN);
-        gpio_set_dir(GPIO_DATA_D1, GPIO_IN);
-        gpio_set_dir(GPIO_DATA_D2, GPIO_IN);
-        gpio_set_dir(GPIO_DATA_D3, GPIO_IN);
-        gpio_set_dir(GPIO_DATA_D4, GPIO_IN);
-        gpio_set_dir(GPIO_DATA_D5, GPIO_IN);
-        gpio_set_dir(GPIO_DATA_D6, GPIO_IN);
-        gpio_set_dir(GPIO_DATA_D7, GPIO_IN);
+        // PIO ensures data bus remains as inputs for WRITE operations
         
-        // Check if TX FIFO has space before pushing
-        if (pio_sm_is_tx_fifo_full(pio_instance, sm)) {
-            // TX FIFO overflow - cannot push response
+        // Push WRITE control (blocking put)
+        // If blocking put fails to make progress, it's an indication
+        // of a critical timing failure elsewhere (PIO not waiting).
+        
+        // Check for race condition: if a write is already pending, we can't handle another
+        if (write_pending) {
+            // This means the main loop hasn't processed the previous write in time.
+            // This is a "missed write" error.
             
             // Set error status and trigger interrupt
             indexed_memory_set_status(STATUS_MEMORY_ERROR);
             irq_set_bits(IRQ_MEMORY_ERROR);
             
+            // Push NOP to PIO to ignore this write cycle and prevent FIFO desync
+            pio_sm_put_blocking(pio_instance, sm, BUS_CTRL_NOP);
             return;
         }
         
@@ -264,7 +193,7 @@ void __attribute__((optimize("O3"))) bus_sync_pio_irq_handler(void) {
         
         // Discard the speculatively prepared data
         // PIO will latch the write data at 1000ns and push to RX FIFO
-        pio_sm_put(pio_instance, sm, BUS_CTRL_WRITE);
+        pio_sm_put_blocking(pio_instance, sm, BUS_CTRL_WRITE);
     }
     
     // IRQ handler complete
@@ -307,4 +236,3 @@ bool bus_sync_pio_process_write_data(void) {
     
     return true;
 }
-
