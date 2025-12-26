@@ -12,7 +12,7 @@
 // ROM memory map constants (MIA internal 256-byte address space with mirroring)
 #define ROM_BASE_ADDRESS    0x0000  // MIA internal address space start
 #define ROM_SIZE           0x0100   // 256-byte ROM space (8-bit addressing)
-#define ROM_RESET_VECTOR   0x00FC   // Reset vector location in MIA space ($FFFC-$FFFD)
+#define ROM_RESET_VECTOR   0xFC   // Reset vector location in MIA space ($FFFC-$FFFD)
 
 // Boot loader addresses within ROM space (maps to $E000-$FFFF on 6502)
 #define BOOTLOADER_START   0x0000   // Boot loader entry point (maps to $E000)

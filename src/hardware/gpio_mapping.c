@@ -5,6 +5,7 @@
 
 #include "gpio_mapping.h"
 #include "hardware/gpio.h"
+#include <stdio.h>
 
 // GPIO configuration table for batch initialization
 typedef struct {
@@ -75,42 +76,24 @@ void gpio_mapping_init(void) {
     gpio_put(GPIO_IRQ_OUT, 1);      // Start with IRQ deasserted (active low)
 }
 
-uint16_t gpio_read_address_bus(void) {
-  uint16_t address = 0;
-
-  // Read A0-A7 (GPIO 0-7) - 8-bit addressing
-  for (int i = 0; i < 8; i++) {
-    if (gpio_get(GPIO_ADDR_A0 + i)) {
-      address |= (1 << i);
-    }
-  }
-
-  return address & ADDR_BUS_MASK;
+uint8_t gpio_read_address_bus(void) {
+    return (uint8_t)((gpio_get_all() >> GPIO_ADDR_A0) & 0xFFu);
 }
 
 uint8_t gpio_read_data_bus(void) {
-  uint8_t data = 0;
-
-  for (int i = 0; i < 8; i++) {
-    if (gpio_get(GPIO_DATA_D0 + i)) {
-      data |= (1 << i);
-    }
-  }
-
-  return data;
+    return (uint8_t)((gpio_get_all() >> GPIO_DATA_D0) & 0xFFu);
 }
 
 void gpio_write_data_bus(uint8_t data) {
-  for (int i = 0; i < 8; i++) {
-    gpio_put(GPIO_DATA_D0 + i, (data >> i) & 1);
-  }
+    uint32_t mask  = 0xFFu << GPIO_DATA_D0;
+    uint32_t value = (uint32_t)data << GPIO_DATA_D0;
+
+    gpio_put_masked(mask, value);
 }
 
 void gpio_set_data_bus_direction(bool output) {
-  bool direction = output;
-
   for (int i = GPIO_DATA_D0; i <= GPIO_DATA_D7; i++) {
-    gpio_set_dir(i, direction ? GPIO_OUT : GPIO_IN);
+    gpio_set_dir(i, output);
     // No pull resistors needed - 6502 has push-pull outputs
   }
 }

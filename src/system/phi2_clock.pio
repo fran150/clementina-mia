@@ -1,0 +1,21 @@
+.program phi2_clock
+.side_set 1 opt   ; side-set controls Φ2 pin
+
+; Assumes:
+; - side-set pin is Φ2 output
+; - OSR contains half-period delay
+
+loop:
+    set pins, 1  side 1      ; Φ2 HIGH
+    mov x, osr
+high_delay:
+    nop        [0]
+    jmp x-- high_delay
+
+    set pins, 0  side 0      ; Φ2 LOW
+    mov x, osr
+low_delay:
+    nop        [0]
+    jmp x-- low_delay
+
+    jmp loop

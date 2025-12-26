@@ -8,10 +8,9 @@
 #include "pico/multicore.h"
 #include "hardware/gpio.h"
 #include "hardware/pwm.h"
-#include "hardware/clocks.h"
 
 #include "hardware/gpio_mapping.h"
-#include "system/clock_control.h"
+#include "system/phi2_clock.h"
 #include "system/reset_control.h"
 #include "system/led_status.h"
 #include "rom_emulation/rom_emulator.h"
@@ -21,26 +20,58 @@
 #include "video/video_controller.h"
 #include "usb/usb_controller.h"
 #include "network/wifi_controller.h"
+#include "pico/bootrom.h"
+
+bool debug_commnad = false;
+
+void eval_keyboard() {
+    int ch = getchar_timeout_us(0);  // Non-blocking check
+
+    if (ch == 'r') {
+        printf("Entering bootloader...\n");
+        sleep_ms(100);  // Optional delay for final USB print
+        reset_usb_boot(0, 0);  // Go to storage mode!
+    }
+
+    if (ch == 'd') {
+        debug_commnad = true;
+    }
+
+    if (debug_commnad && ch == '1') {
+        index_t idx = debug_indexed_memory_get().indexes[1];
+
+        printf("Index 1 State:\n");
+        printf("  Current Address: 0x%06lX\n", idx.current_addr);
+        printf("  Default Address: 0x%06lX\n", idx.default_addr);
+        printf("  Limit Address:   0x%06lX\n", idx.limit_addr);
+        printf("  Step Size:      %d\n", idx.step);
+        printf("  Flags:          0x%02X\n", idx.flags);
+        debug_commnad = false;
+    }
+
+}
 
 // Core 1 entry point for video processing
 void supporting_functions_loop() {
     // Initialize video controller (Core 0 portion)
-    video_controller_init();
-    printf("[Video] Controller Initialized.\n");
+    // video_controller_init();
+    // printf("[Video] Controller Initialized.\n");
     
     // Initialize USB controller (mode detection and setup)
-    usb_controller_init();
-    printf("[USB] Controller Initialized.\n");
+    // usb_controller_init();
+    // printf("[USB] Controller Initialized.\n");
 
-    wifi_controller_init();
-    printf("[Wi-Fi] Controller Initialized.\n");
+    // wifi_controller_init();
+    // printf("[Wi-Fi] Controller Initialized.\n");
 
     while (true) {
-        video_controller_process();
-        usb_controller_process();
-        wifi_controller_process();
-        indexed_memory_process_copy_command();
+        // video_controller_process();
+        // usb_controller_process();
+        // wifi_controller_process();
+       // indexed_memory_process_copy_command();
         
+        eval_keyboard();
+
         tight_loop_contents();
     }
 }
@@ -63,7 +94,7 @@ int main() {
     printf("GPIO mapping initialized\n");
     
     // Initialize clock control system
-    clock_control_init();
+    phi2_clock_init(100000);  // Example: 1 MHz PHI2 clock
     printf("Clock control initialized\n");
     
     // Initialize IRQ system first
@@ -92,6 +123,8 @@ int main() {
         
         // Update LED status
         led_status_update();
+
+        eval_keyboard();
     }
 
     printf("Boot sequence completed. Transitioning to normal operation...\n");

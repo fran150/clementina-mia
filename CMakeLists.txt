@@ -59,6 +59,7 @@ add_executable(mia
     src/main.c
     src/hardware/gpio_mapping.c
     src/system/clock_control.c
+    src/system/phi2_clock.c
     src/system/reset_control.c
     src/system/led_status.c
     src/rom_emulation/rom_emulator.c
@@ -75,6 +76,7 @@ add_executable(mia
 
 # Generate PIO header from bus_sync.pio
 pico_generate_pio_header(mia ${CMAKE_SOURCE_DIR}/src/bus_interface/bus_sync.pio)
+pico_generate_pio_header(mia ${CMAKE_SOURCE_DIR}/src/system/phi2_clock.pio)
 
 # Add include directories
 target_include_directories(mia PRIVATE

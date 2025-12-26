@@ -10,8 +10,8 @@
 #include <stdbool.h>
 
 // Clock frequencies
-#define CLOCK_FREQ_BOOT     100000   // 100 kHz for boot phase
-#define CLOCK_FREQ_NORMAL   1000000  // 1 MHz for normal operation
+#define CLOCK_FREQ_BOOT    10000 //100000   // 100 kHz for boot phase
+#define CLOCK_FREQ_NORMAL  10000 //1000000  // 1 MHz for normal operation
 
 typedef enum {
     CLOCK_PHASE_BOOT,

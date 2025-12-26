@@ -43,6 +43,10 @@ static indexed_memory_state_t g_state;
 // All index addresses are offsets into this array
 static uint8_t mia_memory[MIA_MEMORY_SIZE] __attribute__((aligned(4)));
 
+indexed_memory_state_t debug_indexed_memory_get(void) {
+    return g_state;
+}
+
 /**
  * DMA completion callback - called when DMA transfer completes
  */

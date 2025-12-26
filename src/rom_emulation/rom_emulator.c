@@ -6,19 +6,25 @@
 #include "rom_emulator.h"
 #include "kernel_data.h"
 #include "hardware/gpio_mapping.h"
-#include "system/clock_control.h"
+#include "system/phi2_clock.h"
 #include "system/reset_control.h"
 #include "pico/time.h"
 #include "hardware/gpio.h"
 #include <stdio.h>
 
+// TODO: Temp definition
+#define CLOCK_PHASE_BOOT   100000
+#define CLOCK_PHASE_NORMAL 100000
+
 static rom_state_t current_state = ROM_STATE_INACTIVE;
-static uint32_t kernel_data_pointer = 0;
+static uint32_t kernel_data_pointer = -1;
 static absolute_time_t reset_start_time;
 static uint32_t reset_cycle_count = 0;
 
+static bool kernel_pointer_block_move = false;
+
 // Forward declarations for internal functions
-static bool rom_emulator_handle_read(uint16_t address, uint8_t *data);
+static bool rom_emulator_handle_read(uint8_t address, uint8_t *data);
 
 // 6502 Boot Loader Assembly Code
 // This code runs on the 6502 CPU and copies the kernel from MIA to RAM
@@ -40,7 +46,7 @@ static const uint8_t bootloader_code[] = {
     // === Main Kernel Loading Loop ===
     // LOAD_LOOP: ($E00C)
     0xAD, 0x80, 0xE0,        // $E00C-$E00E: LDA $E080 - Read status address (mapped to MIA status register)
-    0xF0, 0x0C,              // $E00F-$E010: BEQ LOAD_COMPLETE - If 0, loading is complete (branch to $E01D)
+    0xF0, 0x0D,              // $E00F-$E010: BEQ LOAD_COMPLETE - If 0, loading is complete (branch to $E01D)
     
     // Read next kernel byte
     0xAD, 0x81, 0xE0,        // $E011-$E013: LDA $E081 - Read data address (mapped to MIA data register)
@@ -48,7 +54,7 @@ static const uint8_t bootloader_code[] = {
     
     // Advance destination pointer
     0xC8,                    // $E016: INY - Increment offset
-    0xD0, 0xF4,              // $E017-$E018: BNE LOAD_LOOP - If Y didn't wrap, continue (branch to $E00C)
+    0xD0, 0xF3,              // $E017-$E018: BNE LOAD_LOOP - If Y didn't wrap, continue (branch to $E00C)
     
     // Handle page boundary crossing
     0xE6, 0x01,              // $E019-$E01A: INC $01 - Increment high byte of destination
@@ -57,24 +63,6 @@ static const uint8_t bootloader_code[] = {
     // === Loading Complete ===
     // LOAD_COMPLETE: ($E01E)
     0x4C, 0x00, 0x40,        // $E01E-$E020: JMP $4000 - Jump directly to kernel entry point
-    
-    // Padding to ensure we don't exceed our space
-    0xEA, 0xEA, 0xEA, 0xEA,  // $E021-$E024: NOP padding
-    0xEA, 0xEA, 0xEA, 0xEA,  // $E025-$E028: NOP padding
-    0xEA, 0xEA, 0xEA, 0xEA,  // $E029-$E02C: NOP padding
-    0xEA, 0xEA, 0xEA, 0xEA,  // $E02D-$E030: NOP padding
-    0xEA, 0xEA, 0xEA, 0xEA,  // $E031-$E034: NOP padding
-    0xEA, 0xEA, 0xEA, 0xEA,  // $E035-$E038: NOP padding
-    0xEA, 0xEA, 0xEA, 0xEA,  // $E039-$E03C: NOP padding
-    0xEA, 0xEA, 0xEA, 0xEA,  // $E03D-$E040: NOP padding
-    0xEA, 0xEA, 0xEA, 0xEA,  // $E041-$E044: NOP padding
-    0xEA, 0xEA, 0xEA, 0xEA,  // $E045-$E048: NOP padding
-    0xEA, 0xEA, 0xEA, 0xEA,  // $E049-$E04C: NOP padding
-    0xEA, 0xEA, 0xEA, 0xEA,  // $E04D-$E050: NOP padding
-    0xEA, 0xEA, 0xEA, 0xEA,  // $E051-$E054: NOP padding
-    0xEA, 0xEA, 0xEA, 0xEA,  // $E055-$E058: NOP padding
-    0xEA, 0xEA, 0xEA, 0xEA,  // $E059-$E05C: NOP padding
-    0xEA, 0xEA, 0xEA, 0xEA   // $E05D-$E060: NOP padding
 };
 
 // Kernel data is now loaded from kernel.bin at build time
@@ -82,7 +70,7 @@ static const uint8_t bootloader_code[] = {
 
 void rom_emulator_init(void) {
     current_state = ROM_STATE_INACTIVE;
-    kernel_data_pointer = 0;
+    kernel_data_pointer = -1;
     reset_cycle_count = 0;
     
     printf("ROM Emulator initialized - Boot loader: %zu bytes, Kernel: %zu bytes\n", 
@@ -98,10 +86,7 @@ void rom_emulator_start_boot_sequence(void) {
         current_state = ROM_STATE_RESET_SEQUENCE;
         reset_start_time = get_absolute_time();
         reset_cycle_count = 0;
-        
-        // Ensure we're in boot phase with 100 kHz clock
-        clock_control_set_phase(CLOCK_PHASE_BOOT);
-        
+                
         printf("Reset asserted, waiting for 5+ clock cycles...\n");
     }
 }
@@ -113,7 +98,7 @@ void rom_emulator_process(void) {
     if (current_state == ROM_STATE_RESET_SEQUENCE) {
         // Calculate elapsed time and cycles
         int64_t elapsed_us = absolute_time_diff_us(reset_start_time, get_absolute_time());
-        uint32_t elapsed_cycles = (elapsed_us * CLOCK_FREQ_BOOT) / 1000000;
+        uint32_t elapsed_cycles = (elapsed_us * CLOCK_PHASE_BOOT) / 1000000;
         
         // Release reset after minimum 5 cycles (50us at 100kHz)
         if (elapsed_cycles >= 5 && elapsed_us >= 50) {
@@ -135,13 +120,20 @@ void rom_emulator_process(void) {
     
     // Only process if ROM chip select is active and we're in boot phase
     if (hiram_cs && (current_state == ROM_STATE_BOOT_ACTIVE || current_state == ROM_STATE_KERNEL_LOADING)) {
-        uint16_t address = gpio_read_address_bus();
-        
+        uint8_t address = gpio_read_address_bus();
+
         if (oe && !we) {  // Read operation
             uint8_t data;
             if (rom_emulator_handle_read(address, &data)) {
                 gpio_set_data_bus_direction(true);  // Set as output
                 gpio_write_data_bus(data);
+
+                uint16_t offset = address - BOOTLOADER_START;
+                if (offset == (sizeof(bootloader_code)) - 1) {
+                    sleep_ms(1000);
+                    current_state = ROM_STATE_COMPLETE;
+                    printf("All kernel data transferred\n");
+                }
             }
         }
     } else if ((current_state == ROM_STATE_BOOT_ACTIVE || current_state == ROM_STATE_KERNEL_LOADING) && !hiram_cs) {
@@ -154,7 +146,7 @@ void rom_emulator_process(void) {
         printf("Kernel loading complete, transitioning to normal operation\n");
         
         // Transition to normal operation
-        clock_control_set_phase(CLOCK_PHASE_NORMAL);
+        //phi2_clock_init(CLOCK_PHASE_NORMAL);
         gpio_put(GPIO_PICOHIRAM, 1);  // Bank out of high memory
                 
         current_state = ROM_STATE_INACTIVE;
@@ -163,7 +155,7 @@ void rom_emulator_process(void) {
     }
 }
 
-static bool rom_emulator_handle_read(uint16_t address, uint8_t *data) {
+static bool rom_emulator_handle_read(uint8_t address, uint8_t *data) {
     if (!data) return false;
     
     // Handle reset vector ($FFFC-$FFFD maps to $FC-$FD in MIA space)
@@ -194,6 +186,11 @@ static bool rom_emulator_handle_read(uint16_t address, uint8_t *data) {
             current_state = ROM_STATE_KERNEL_LOADING;
             printf("Kernel loading started by 6502 CPU\n");
         }
+
+        if (!kernel_pointer_block_move) {
+            kernel_pointer_block_move = true;
+            kernel_data_pointer++;
+        }
         
         // Return 1 if more data available, 0 if complete
         *data = (kernel_data_pointer < kernel_data_size) ? 0x01 : 0x00;
@@ -204,19 +201,13 @@ static bool rom_emulator_handle_read(uint16_t address, uint8_t *data) {
     else if (address == KERNEL_DATA_ADDR) {
         if (kernel_data_pointer < kernel_data_size) {
             *data = kernel_data[kernel_data_pointer];
-            kernel_data_pointer++;
-            
+            kernel_pointer_block_move = false;
+
             // Log progress periodically
             if (kernel_data_pointer % 64 == 0 || kernel_data_pointer >= kernel_data_size) {
                 printf("Kernel transfer progress: %lu/%zu bytes\n", 
                        kernel_data_pointer, kernel_data_size);
-            }
-            
-            // Mark complete when all data transferred
-            if (kernel_data_pointer >= kernel_data_size) {
-                current_state = ROM_STATE_COMPLETE;
-                printf("All kernel data transferred\n");
-            }
+            }            
         } else {
             *data = 0x00;  // No more data
         }

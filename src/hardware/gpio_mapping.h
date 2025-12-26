@@ -54,7 +54,7 @@
 
 // Function prototypes, these are mostly used on the boot phase for ROM emulation
 void gpio_mapping_init(void);
-uint16_t gpio_read_address_bus(void);
+uint8_t gpio_read_address_bus(void);
 uint8_t gpio_read_data_bus(void);
 void gpio_write_data_bus(uint8_t data);
 void gpio_set_data_bus_direction(bool output);

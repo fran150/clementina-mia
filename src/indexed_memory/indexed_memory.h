@@ -142,6 +142,9 @@ typedef struct {
 // Public API - functions used by other modules
 void indexed_memory_init(void);
 
+// TODO: Remove?
+indexed_memory_state_t debug_indexed_memory_get(void);
+
 // Memory access
 uint8_t indexed_memory_read(uint8_t idx);
 void indexed_memory_write(uint8_t idx, uint8_t data);
