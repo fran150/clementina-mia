@@ -7,6 +7,7 @@
 
 #include "indexed_memory.h"
 #include "indexed_memory_dma.h"
+#include "debug/debug_helper.h"
 #include "hardware/gpio_mapping.h"
 #include "pico/util/queue.h"
 #include <string.h>
@@ -42,10 +43,6 @@ static indexed_memory_state_t g_state;
 // MIA memory array - properly allocated by linker to avoid SDK conflicts
 // All index addresses are offsets into this array
 static uint8_t mia_memory[MIA_MEMORY_SIZE] __attribute__((aligned(4)));
-
-indexed_memory_state_t debug_indexed_memory_get(void) {
-    return g_state;
-}
 
 /**
  * DMA completion callback - called when DMA transfer completes
@@ -195,14 +192,13 @@ void indexed_memory_init(void) {
     }
     
     // Initialize DMA for memory copy operations
-    int dma_channel = indexed_memory_dma_init();
+    indexed_memory_dma_init();
     indexed_memory_dma_set_completion_callback(dma_completion_callback);
     
     // Initialize inter-core command queue
     queue_init(&command_queue, sizeof(copy_command_t), COMMAND_QUEUE_SIZE);
     
-    printf("Indexed memory system initialized with 256 indexes\n");
-    printf("DMA channel %d claimed for memory operations\n", dma_channel);
+    log_print(LOG_INFO, "Indexed memory system initialized\n");
 }
 
 /**

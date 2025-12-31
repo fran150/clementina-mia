@@ -5,6 +5,7 @@
 
 #include "rom_emulator.h"
 #include "kernel_data.h"
+#include "debug/debug_helper.h"
 #include "hardware/gpio_mapping.h"
 #include "system/phi2_clock.h"
 #include "system/reset_control.h"
@@ -73,13 +74,13 @@ void rom_emulator_init(void) {
     kernel_data_pointer = -1;
     reset_cycle_count = 0;
     
-    printf("ROM Emulator initialized - Boot loader: %zu bytes, Kernel: %zu bytes\n", 
+    log_print(LOG_INFO, "ROM Emulator initialized - Boot loader: %zu bytes, Kernel: %zu bytes\n", 
            sizeof(bootloader_code), kernel_data_size);
 }
 
 void rom_emulator_start_boot_sequence(void) {
     if (current_state == ROM_STATE_INACTIVE) {
-        printf("Starting boot sequence...\n");
+        log_print(LOG_INFO, "Starting boot sequence...\n");
         
         // Assert reset for minimum 5 cycles at 100 kHz
         reset_control_assert_reset();
@@ -87,7 +88,7 @@ void rom_emulator_start_boot_sequence(void) {
         reset_start_time = get_absolute_time();
         reset_cycle_count = 0;
                 
-        printf("Reset asserted, waiting for 5+ clock cycles...\n");
+        log_print(LOG_INFO, "Reset asserted, waiting for 5+ clock cycles...\n");
     }
 }
 
@@ -108,7 +109,7 @@ void rom_emulator_process(void) {
             reset_control_release_reset();
             current_state = ROM_STATE_BOOT_ACTIVE;
                         
-            printf("Reset released after %lld us (%lu cycles), MIA banked into high memory\n", 
+            log_print(LOG_INFO, "Reset released after %lld us (%lu cycles), MIA banked into high memory\n", 
                    elapsed_us, elapsed_cycles);
         }
         return;
@@ -132,7 +133,7 @@ void rom_emulator_process(void) {
                 if (offset == (sizeof(bootloader_code)) - 1) {
                     sleep_ms(1000);
                     current_state = ROM_STATE_COMPLETE;
-                    printf("All kernel data transferred\n");
+                    log_print(LOG_INFO, "All kernel data transferred\n");
                 }
             }
         }
@@ -143,7 +144,7 @@ void rom_emulator_process(void) {
     
     // Check for completion and phase transition
     if (current_state == ROM_STATE_COMPLETE) {
-        printf("Kernel loading complete, transitioning to normal operation\n");
+        log_print(LOG_INFO, "Kernel loading complete, transitioning to normal operation\n");
         
         // Transition to normal operation
         //phi2_clock_init(CLOCK_PHASE_NORMAL);
@@ -151,7 +152,7 @@ void rom_emulator_process(void) {
                 
         current_state = ROM_STATE_INACTIVE;
         
-        printf("MIA banked out, clock increased to 1 MHz, bus interface activated\n");
+        log_print(LOG_INFO, "MIA banked out, clock increased to 1 MHz, bus interface activated\n");
     }
 }
 
@@ -184,7 +185,7 @@ static bool rom_emulator_handle_read(uint8_t address, uint8_t *data) {
     else if (address == KERNEL_STATUS_ADDR) {
         if (current_state != ROM_STATE_KERNEL_LOADING) {
             current_state = ROM_STATE_KERNEL_LOADING;
-            printf("Kernel loading started by 6502 CPU\n");
+            log_print(LOG_INFO, "Kernel loading started by 6502 CPU\n");
         }
 
         if (!kernel_pointer_block_move) {
@@ -205,7 +206,7 @@ static bool rom_emulator_handle_read(uint8_t address, uint8_t *data) {
 
             // Log progress periodically
             if (kernel_data_pointer % 64 == 0 || kernel_data_pointer >= kernel_data_size) {
-                printf("Kernel transfer progress: %lu/%zu bytes\n", 
+                log_print(LOG_INFO, "Kernel transfer progress: %lu/%zu bytes\n", 
                        kernel_data_pointer, kernel_data_size);
             }            
         } else {

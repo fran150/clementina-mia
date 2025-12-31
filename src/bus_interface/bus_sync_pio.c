@@ -48,9 +48,11 @@ void bus_sync_pio_init(void) {
 
     // Initialize the PIO state machine
     bus_sync_program_init(pio_instance, sm, pio_offset);
-        
-    // Note: The PIO state machine is already started by bus_sync_program_init()
 
+    irq_set_priority(PIO0_IRQ_0, 0);  // Highest priority
+    irq_set_priority(PIO0_IRQ_1, 1);  // Highest priority
+        
+    pio_set_irq0_source_enabled(pio_instance, pis_interrupt0, true);
     // Enable PIO IRQ1 source as well (used for write-data notification)
     pio_set_irq1_source_enabled(pio_instance, pis_interrupt1, true);
 }

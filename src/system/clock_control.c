@@ -4,12 +4,12 @@
  */
 
 #include "clock_control.h"
+#include "debug/debug_helper.h"
 #include "hardware/gpio_mapping.h"
 #include "hardware/pwm.h"
 #include "hardware/clocks.h"
 #include "hardware/gpio.h"
 #include "pico/time.h"
-#include <stdio.h>
 #include <math.h>
 
 static clock_phase_t current_phase = CLOCK_PHASE_BOOT;
@@ -22,13 +22,13 @@ int clock_control_set_frequency(uint32_t freq) {
     // System clock (usually 125 MHz)
     uint32_t sys_clk_hz = clock_get_hz(clk_sys);
 
-    printf("Getting clock frequency: %li Hz\n", sys_clk_hz);
+    log_print(LOG_DEBUG, "Getting clock frequency: %li Hz\n", sys_clk_hz);
 
     // Try to find suitable wrap and clkdiv
     uint32_t top = MAX_PWM_BIT_COUNTER;  // Max 16-bit counter
     float clkdiv = (float)sys_clk_hz / (freq * (top + 1));
 
-    printf("CLock divider: %f \n", clkdiv);
+    log_print(LOG_DEBUG, "Clock divider: %f \n", clkdiv);
 
     // Ensure clkdiv is within valid range
     if (clkdiv < 1.0f) {
@@ -38,7 +38,7 @@ int clock_control_set_frequency(uint32_t freq) {
         return -1;
     }
 
-    printf("Setting clock configuration GPIO %d (PWM slice %d, channel %d, divider %f, top %li)\n", 
+    log_print(LOG_DEBUG, "Setting clock configuration GPIO %d (PWM slice %d, channel %d, divider %f, top %li)\n", 
         GPIO_CLK_OUT, slice_num, channel, clkdiv, top);
 
     // Set the PWM clock divdider, wrap counter and duty cycle
@@ -62,7 +62,7 @@ void clock_control_init(void) {
 
     pwm_set_enabled(slice_num, true);
     
-    printf("Clock control initialized on GPIO %d (PWM slice %d, channel %d)\n", 
+    log_print(LOG_INFO, "Clock control initialized on GPIO %d (PWM slice %d, channel %d)\n", 
            GPIO_CLK_OUT, slice_num, channel);
 }
 

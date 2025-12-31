@@ -57,6 +57,7 @@ add_custom_command(
 # Add executable
 add_executable(mia
     src/main.c
+    src/debug/debug_helper.c
     src/hardware/gpio_mapping.c
     src/system/clock_control.c
     src/system/phi2_clock.c
@@ -81,6 +82,7 @@ pico_generate_pio_header(mia ${CMAKE_SOURCE_DIR}/src/system/phi2_clock.pio)
 # Add include directories
 target_include_directories(mia PRIVATE
     src/
+    src/debug/
     src/hardware/
     src/system/
     src/rom_emulation/
