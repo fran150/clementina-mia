@@ -34,7 +34,7 @@ void wifi_controller_process(void) {
     absolute_time_t current_time = get_absolute_time();
     
     if (absolute_time_diff_us(last_frame_time, current_time) >= (WIFI_FRAME_INTERVAL_MS * 1000)) {
-        if (current_state == WIFI_STATE_CONNECTED && video_controller_is_frame_ready()) {
+        if (current_state == WIFI_STATE_CONNECTED) {
             wifi_controller_transmit_frame();
             last_frame_time = current_time;
         }

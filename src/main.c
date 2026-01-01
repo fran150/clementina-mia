@@ -23,23 +23,12 @@
 #include "pico/bootrom.h"
 
 // Core 1 entry point for video processing
-void supporting_functions_loop() {
-    // Initialize video controller (Core 0 portion)
-    // video_controller_init();
-    // log_print(LOG_INFO, "[Video] Controller Initialized.\n");
-    
-    // Initialize USB controller (mode detection and setup)
-    // usb_controller_init();
-    // log_print(LOG_INFO, "[USB] Controller Initialized.\n");
-
-    // wifi_controller_init();
-    // log_print(LOG_INFO, "[Wi-Fi] Controller Initialized.\n");
-    
+void supporting_functions_loop() {    
     while (true) {
-        // video_controller_process();
-        // usb_controller_process();
-        // wifi_controller_process();
-       // indexed_memory_process_copy_command();
+        video_controller_process();
+        usb_controller_process();
+        wifi_controller_process();
+        indexed_memory_process_copy_command();
         
         eval_keyboard();
 
@@ -53,6 +42,16 @@ int main() {
     
     // Initialize standard I/O
     stdio_init_all();
+
+    // Initialize video controller (Core 0 portion)
+    video_controller_init();
+    
+    // Initialize USB controller (mode detection and setup)
+    usb_controller_init();
+
+    // wifi_controller_init();
+    // log_print(LOG_INFO, "[Wi-Fi] Controller Initialized.\n");
+
     
     // Wait for USB enumeration
     sleep_ms(2000);
@@ -62,7 +61,7 @@ int main() {
     
     // Initialize GPIO pin mappings
     gpio_mapping_init();
-    log_print(LOG_INFO, "GPIO mapping initialized\n");
+    
     
     // Initialize clock control system
     phi2_clock_init(100000);  // Example: 1 MHz PHI2 clock

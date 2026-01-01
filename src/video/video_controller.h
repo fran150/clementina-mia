@@ -47,9 +47,5 @@
 // Function prototypes
 void video_controller_init(void);
 void video_controller_process(void);
-bool video_controller_handle_read(uint16_t address, uint8_t *data);
-bool video_controller_handle_write(uint16_t address, uint8_t data);
-void video_controller_prepare_frame_data(void);
-bool video_controller_is_frame_ready(void);
 
 #endif // VIDEO_CONTROLLER_H

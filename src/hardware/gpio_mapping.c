@@ -3,9 +3,9 @@
  * Hardware abstraction for 6502 bus interface
  */
 
+#include "debug/debug_helper.h"
 #include "gpio_mapping.h"
 #include "hardware/gpio.h"
-#include <stdio.h>
 
 // GPIO configuration table for batch initialization
 typedef struct {
@@ -54,6 +54,8 @@ static const gpio_config_t gpio_configs[] = {
 };
 
 void gpio_mapping_init(void) {
+    log_print(LOG_INFO, "GPIO mapping initializing\n");
+
     // Initialize all GPIOs from configuration table
     for (size_t i = 0; i < sizeof(gpio_configs) / sizeof(gpio_configs[0]); i++) {
         const gpio_config_t *cfg = &gpio_configs[i];

@@ -4,6 +4,7 @@
  * Implements the C side of the hybrid PIO + C synchronous bus protocol.
  */
 
+#include "pico.h"
 #include "bus_sync_pio.h"
 #include "bus_interface.h"
 #include "indexed_memory/indexed_memory.h"
@@ -61,7 +62,7 @@ void bus_sync_pio_init(void) {
  * PIO IRQ1 handler - called when PIO signals write data is available (irq 1)
  * Reads the latched write data from the RX FIFO and processes it immediately.
  */
-void __attribute__((optimize("O3"))) bus_sync_pio_write_irq_handler(void) {
+void __attribute__((optimize("O3"))) __not_in_flash_func(bus_sync_pio_write_irq_handler)(void) {
     // Clear IRQ1 flag
     pio_interrupt_clear(pio_instance, 1);
 
@@ -87,7 +88,7 @@ void __attribute__((optimize("O3"))) bus_sync_pio_write_irq_handler(void) {
  * This implements the speculative execution strategy to handle the timing
  * constraint that OE and WE are only valid 30ns after PHI2 rises (at 530ns).
  */
-void __attribute__((optimize("O3"))) bus_sync_pio_irq_handler(void) {
+void __attribute__((optimize("O3"))) __not_in_flash_func(bus_sync_pio_irq_handler)(void) {
     // Clear the IRQ flag
     pio_interrupt_clear(pio_instance, BUS_PIO_IRQ);
     
@@ -215,7 +216,7 @@ void __attribute__((optimize("O3"))) bus_sync_pio_irq_handler(void) {
  * 
  * @return true if data was processed, false if FIFO was empty
  */
-bool bus_sync_pio_process_write_data(void) {
+bool __attribute__((optimize("O3"))) __not_in_flash_func(bus_sync_pio_process_write_data)(void) {
     // Check if we have a pending write operation
     if (!write_pending) {
         return false;  // No pending write

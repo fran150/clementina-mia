@@ -8,6 +8,7 @@
  * The IO0_CS chip select line indicates we're in indexed interface mode
  */
 
+#include "pico.h"
 #include "bus_interface.h"
 #include "indexed_memory/indexed_memory.h"
 #include "irq/irq.h"
@@ -92,7 +93,7 @@ void bus_interface_init(void) {
 /**
  * Handle a READ operation from the 6502 bus 
  */
-uint8_t __attribute__((optimize("O3"))) __attribute__((hot)) bus_interface_read(uint8_t local_addr) {
+uint8_t __attribute__((optimize("O3"))) __attribute__((hot)) __not_in_flash_func(bus_interface_read)(uint8_t local_addr) {
     // Decode 8-bit local address
     bool is_shared = (local_addr & 0x80) != 0;
     uint8_t window_num = (local_addr >> 4) & 0x07;
@@ -135,7 +136,7 @@ uint8_t __attribute__((optimize("O3"))) __attribute__((hot)) bus_interface_read(
     }
 }
 
-void bus_interface_write(uint8_t local_addr, uint8_t data) {
+void __attribute__((optimize("O3"))) __attribute__((hot)) __not_in_flash_func(bus_interface_write)(uint8_t local_addr, uint8_t data) {
     // Decode 8-bit local address
     bool is_shared = (local_addr & 0x80) != 0;
     uint8_t window_num = (local_addr >> 4) & 0x07;
