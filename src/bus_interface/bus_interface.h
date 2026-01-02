@@ -35,6 +35,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "pico/platform.h" // Required for __not_in_flash_func
 
 // ============================================================================
 // Register Address Constants
@@ -125,30 +126,14 @@ extern window_state_t g_window_state[MAX_WINDOWS];
  * Initialize the bus interface module
  * Sets up GPIO pins, PIO state machines, and internal state
  */
+// Function pointer types for the LUT
+typedef uint8_t (*read_handler_t)(uint8_t addr);
+typedef void (*write_handler_t)(uint8_t addr, uint8_t data);
+
 void bus_interface_init(void);
 
-/**
- * Handle a READ operation from the 6502 bus
- * Called by PIO interrupt handler or main loop
- * 
- * NOTE: MIA only sees 8-bit addresses (A0-A7 on GPIO 0-7)
- * The IO0_CS chip select line indicates we're in indexed interface mode
- * 
- * @param local_addr 8-bit local address (what MIA sees on GPIO 0-7)
- * @return Data byte to return to 6502
- */
-uint8_t bus_interface_read(uint8_t local_addr);
-
-/**
- * Handle a WRITE operation from the 6502 bus
- * Called by PIO interrupt handler or main loop
- * 
- * NOTE: MIA only sees 8-bit addresses (A0-A7 on GPIO 0-7)
- * The IO0_CS chip select line indicates we're in indexed interface mode
- * 
- * @param local_addr 8-bit local address (what MIA sees on GPIO 0-7)
- * @param data Data byte from 6502
- */
-void bus_interface_write(uint8_t local_addr, uint8_t data);
+// These are now the lightning-fast LUT entry points
+uint8_t __not_in_flash_func(bus_interface_read)(uint8_t local_addr);
+void __not_in_flash_func(bus_interface_write)(uint8_t local_addr, uint8_t data);
 
 #endif // BUS_INTERFACE_H

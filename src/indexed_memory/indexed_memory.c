@@ -9,6 +9,7 @@
 #include "indexed_memory_dma.h"
 #include "debug/debug_helper.h"
 #include "hardware/gpio_mapping.h"
+#include "pico.h"
 #include "pico/util/queue.h"
 #include <string.h>
 #include <stdio.h>
@@ -234,7 +235,7 @@ void indexed_memory_reset_index(uint8_t idx) {
 /**
  * Read byte from index with auto-stepping - optimized critical path
  */
-uint8_t indexed_memory_read(uint8_t idx) {
+uint8_t __not_in_flash_func(indexed_memory_read)(uint8_t idx) {
     index_t *index = &g_state.indexes[idx];
     uint32_t addr = index->current_addr;
     
@@ -272,7 +273,7 @@ uint8_t indexed_memory_read(uint8_t idx) {
 /**
  * Write byte to index with auto-stepping
  */
-void indexed_memory_write(uint8_t idx, uint8_t data) {
+void __not_in_flash_func(indexed_memory_write)(uint8_t idx, uint8_t data) {
     index_t *index = &g_state.indexes[idx];
     uint32_t addr = index->current_addr;
     

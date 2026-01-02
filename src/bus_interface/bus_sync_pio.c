@@ -12,6 +12,7 @@
 #include "hardware/pio.h"
 #include "hardware/gpio.h"
 #include "hardware/irq.h"
+#include "pico/platform.h"
 #include "pico/stdlib.h"
 #include "hardware/clocks.h"
 

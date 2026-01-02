@@ -10,6 +10,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "pico.h"
 #include "irq/irq.h"
 
 // Inter-core command structure, used to queue DMA copy commands from Core 0 to Core 1
@@ -143,8 +144,8 @@ typedef struct {
 void indexed_memory_init(void);
 
 // Memory access
-uint8_t indexed_memory_read(uint8_t idx);
-void indexed_memory_write(uint8_t idx, uint8_t data);
+uint8_t __not_in_flash_func(indexed_memory_read)(uint8_t idx);
+void __not_in_flash_func(indexed_memory_write)(uint8_t idx, uint8_t data);
 
 // Configuration
 uint8_t indexed_memory_get_config_field(uint8_t idx, uint8_t field);
