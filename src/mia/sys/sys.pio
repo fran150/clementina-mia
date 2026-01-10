@@ -1,0 +1,88 @@
+; Action sends a FIFO message for every write.
+; It also sends a message for (addr&3)==0 reads and one variable.
+; Pushing new address to out FIFO changes variable read address.
+.program mia_action
+
+.wrap_target
+start:
+wait 0 gpio 21
+pull noblock
+mov x osr
+wait 1 gpio 21 [11] ; mid-late in good range 4-15
+mov osr pins
+out y 1
+jmp !y start
+out y 1
+mov isr osr
+jmp !y write
+out y 8
+out y 5
+jmp x!=y notvaraddr
+set y 0
+jmp read
+notvaraddr:
+mov osr y
+out y 2
+jmp !y read
+jmp start
+write:
+set y 1
+read:
+in isr 13
+in y 1
+in null 18
+.wrap
+
+
+; 6502 reading from RIA
+; Synced with PHI2
+.program mia_read
+
+.wrap_target
+wait 1 gpio 21
+out pins 8
+mov isr y ; cortex base address
+wait 0 gpio 21 [5] ; early-mid in good range 3-8
+in pins 5
+.wrap
+
+
+; Handle 6502 writing to RIA
+; This also generates PHI2 on the side set
+.program mia_write
+.side_set 1
+
+nowrite:
+nop             side 0 [10]
+.wrap_target
+nop             side 1 [15]
+mov x pins      side 0
+mov osr x       side 0 ; writing is select==1 and write==0
+out x 2         side 0
+jmp x-- jmpsub  side 0 ; subtract 1
+jmpsub:
+jmp x-- nowrite side 0
+out x 8         side 0
+mov isr y       side 0 ; cortex base address
+in osr 5        side 0 ; bus address
+push noblock    side 0
+mov isr x       side 0 ; bus data
+push noblock    side 0 [5]
+.wrap
+
+
+; Handle chip select and read/write logic
+.program mia_cs_rwb
+
+; TODO why doesn't `mov x !pins` work?
+
+.wrap_target
+mov pindirs y
+start:
+mov osr !pins
+out x 2
+jmp !x reading ; select==1 and rwb==1
+.wrap
+reading:
+mov pindirs !y
+jmp start

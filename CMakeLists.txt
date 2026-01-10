@@ -56,42 +56,25 @@ add_custom_command(
 
 # Add executable
 add_executable(mia
-    src/main.c
-    src/debug/debug_helper.c
-    src/hardware/gpio_mapping.c
-    src/system/clock_control.c
-    src/system/phi2_clock.c
-    src/system/reset_control.c
-    src/system/led_status.c
-    src/rom_emulation/rom_emulator.c
-    src/irq/irq.c
-    src/indexed_memory/indexed_memory.c
-    src/indexed_memory/indexed_memory_dma_hw.c
-    src/bus_interface/bus_interface.c
-    src/bus_interface/bus_sync_pio.c
-    src/video/video_controller.c
-    src/usb/usb_controller.c
-    src/network/wifi_controller.c
+    src/mia/main.c
+    src/mia/sys/mia.c
     ${KERNEL_DATA_FILE}  # Add generated kernel data
 )
 
-# Generate PIO header from bus_sync.pio
-pico_generate_pio_header(mia ${CMAKE_SOURCE_DIR}/src/bus_interface/bus_sync.pio)
-pico_generate_pio_header(mia ${CMAKE_SOURCE_DIR}/src/system/phi2_clock.pio)
+# Copy and execute program in RAM
+pico_set_binary_type(mia copy_to_ram)
+
+# Generate PIO headers
+pico_generate_pio_header(mia ${CMAKE_SOURCE_DIR}/src/mia/sys/sys.pio)
 
 # Add include directories
 target_include_directories(mia PRIVATE
     src/
-    src/debug/
-    src/hardware/
-    src/system/
-    src/rom_emulation/
-    src/irq/
-    src/indexed_memory/
-    src/bus_interface/
-    src/video/
-    src/usb/
-    src/network/
+    src/mia
+    src/mia/hardware
+    src/mia/mem
+    src/mia/rom
+    src/mia/sys
     ${CMAKE_BINARY_DIR}/generated  # Include generated files directory
 )
 
@@ -106,8 +89,6 @@ target_link_libraries(mia
     hardware_pio
     hardware_dma
     pico_cyw43_arch_lwip_poll
-    # tinyusb_device  # stdio USB provides its own TinyUSB integration
-    m  # Math library for floating point operations
 )
 
 # Enable USB output, disable UART output
@@ -121,8 +102,6 @@ pico_add_extra_outputs(mia)
 target_compile_options(mia PRIVATE
     -Wall
     -Wextra
-    -Werror
-    -O2
 )
 
 # Define preprocessor macros

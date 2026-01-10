@@ -43,9 +43,15 @@ cd build
 echo "Configuring build with CMake..."
 cmake .. -DCMAKE_BUILD_TYPE=Release
 
+if command -v nproc >/dev/null 2>&1; then
+    JOBS=$(nproc)
+else
+    JOBS=$(sysctl -n hw.ncpu)
+fi
+
 # Build the project
 echo "Building project..."
-make -j$(nproc)
+make -j"$JOBS"
 
 # Check if build was successful
 if [ $? -eq 0 ]; then
