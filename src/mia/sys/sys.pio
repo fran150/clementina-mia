@@ -1,3 +1,5 @@
+.define CPU_PHI2_PIN 21
+
 ; Action sends a FIFO message for every write.
 ; It also sends a message for (addr&3)==0 reads and one variable.
 ; Pushing new address to out FIFO changes variable read address.
@@ -5,32 +7,33 @@
 
 .wrap_target
 start:
-wait 0 gpio 21
-pull noblock
-mov x osr
-wait 1 gpio 21 [11] ; mid-late in good range 4-15
-mov osr pins
-out y 1
-jmp !y start
-out y 1
-mov isr osr
-jmp !y write
-out y 8
-out y 5
-jmp x!=y notvaraddr
-set y 0
-jmp read
+    wait 0 gpio CPU_PHI2_PIN                ; Wait for PHI2 to go low
+    pull noblock                            ; Pulls the watch address from the TX FIFO
+    mov x osr                               ; and stores it in X register
+    wait 1 gpio CPU_PHI2_PIN [11]           ; Waits for PHI2 to go high and waits for values to settle for 11 cycles (Mid-late in good range 4-15)
+    
+    mov osr pins                            ; Moves the pins value to the OSR
+    out y 1                                 ; Shifts one bit from OSR to Y (CS line)
+    jmp !y start                            ; If CS == 0, chip is not selected wrap to start
+    out y 1                                 ; Shifts another bit from OSR to Y (RWB line)
+    mov isr osr                             ; Copies the remining data in OSR to ISR
+    jmp !y write                            ; If RWB is 0 then is a write jump to that section
+    out y 8                                 ; If it's a read move the data bus value to Y (this value is discarded)
+    out y 5                                 ; Moves address bus to Y register
+    jmp x!=y notvaraddr                     ; If it's not the watch address stored in X jump
+    set y 0                                 ; If not, then set Y register to 0 (READ FLAG) and jump
+    jmp read
 notvaraddr:
-mov osr y
-out y 2
-jmp !y read
-jmp start
+    mov osr y                               ; If the address is not the watch address copy address bus to osr
+    out y 2                                 ; Shift 2 bits from the bottom of OSR
+    jmp !y read                             ; If they are 0 then notify C code by jumping to read if not jump back
+    jmp start                               ; This notifies the C code for reads in registers that are multiple of 4
 write:
-set y 1
+    set y 1                                 ; Set the flag to 1 (WRITE FLAG) and notify C code always
 read:
-in isr 13
-in y 1
-in null 18
+    in isr 13                               ; Moves 13 bits from the ISR, which contains all pins values backed up earlier to the RX FIFO
+    in y 1                                  ; Moves the R/W flag stored previously in Y register
+    in null 18                              ; Autopushes the register to C code notifying of the change
 .wrap
 
 
@@ -39,11 +42,11 @@ in null 18
 .program mia_read
 
 .wrap_target
-wait 1 gpio 21
-out pins 8
-mov isr y ; cortex base address
-wait 0 gpio 21 [5] ; early-mid in good range 3-8
-in pins 5
+    wait 1 gpio CPU_PHI2_PIN                    ; Waits for PHI2 high
+    out pins 8                                  ; Moves register value in OSR to data bus
+    mov isr y                                   ; Moves the Y register to the ISR. Y contains the base address of the MIA registers
+    wait 0 gpio CPU_PHI2_PIN [5]                ; Waits for PHI2 low (delays 5 cycles for address stabilization)
+    in pins 5                                   ; Shifts address bus into ISR. This combines with the bits in the Y register to form the base (Y register) + offset (Address bus)
 .wrap
 
 
@@ -53,36 +56,36 @@ in pins 5
 .side_set 1
 
 nowrite:
-nop             side 0 [10]
+    nop             side 0 [10]                 ; Drive PHI2 low for 11 cycles
 .wrap_target
-nop             side 1 [15]
-mov x pins      side 0
-mov osr x       side 0 ; writing is select==1 and write==0
-out x 2         side 0
-jmp x-- jmpsub  side 0 ; subtract 1
+    nop             side 1 [15]                 ; Drive PHI2 high for 16 cycles
+    mov x pins      side 0                      ; Copy GPIOs to X record
+    mov osr x       side 0                      ; Shifts X record to output shift register (OSR used as temporary store)
+
+    out x 2         side 0                      ; Moves 2 bits of OSR to X (These are the chip select and R/W flags)
+    jmp x-- jmpsub  side 0                      ; Substract 1 from X
 jmpsub:
-jmp x-- nowrite side 0
-out x 8         side 0
-mov isr y       side 0 ; cortex base address
-in osr 5        side 0 ; bus address
-push noblock    side 0
-mov isr x       side 0 ; bus data
-push noblock    side 0 [5]
+    jmp x-- nowrite side 0                      ; If control lines are not writing (CS == 1 && RW == 0). 
+                                                ; Jumps to nowrite (at this point PHI2 was low for 5 cycles it will complete 16 with the 11 cycles from nowrite.
+    out x 8         side 0                      ; If it is a write copies data bus to X
+    mov isr y       side 0                      ; Moves the Y register to the ISR. Y contains the base address of the MIA registers
+    in osr 5        side 0                      ; Moves 5 bits from OSR (address bus) to ISR. This combines with the bits in the Y register to form the base (Y register) + offset (Address bus)
+    push noblock    side 0                      ; Pushes the full address value to the core
+    mov isr x       side 0                      ; Moves data bus value (currently in X) to ISR
+    push noblock    side 0 [5]                  ; Pushes the data bus value to the core. Waits 5 cycle holding PHI2 and completes 16 cycles of PHI2 low before starting again.
 .wrap
 
 
 ; Handle chip select and read/write logic
 .program mia_cs_rwb
 
-; TODO why doesn't `mov x !pins` work?
-
 .wrap_target
-mov pindirs y
+    mov pindirs y                               ; Register Y contains 0. This sets data bus pins direction to read
 start:
-mov osr !pins
-out x 2
-jmp !x reading ; select==1 and rwb==1
+    mov osr !pins                               ; Moves the CS and RW pins to OSR and reverses (invert pin status)
+    out x 2                                     ; Moves OSR to X
+    jmp !x reading                              ; If CS == 1 and RWB == 1 then CPU is reading, if not is writing so PINs needs to stay as input
 .wrap
 reading:
-mov pindirs !y
-jmp start
+    mov pindirs !y                              ; If CPU is reading, move 1 to pin direction setting the pins for output.
+    jmp start                                   ; Cycles to evaluation

@@ -19,6 +19,8 @@
 uint32_t kernel_index = 0;
 uint16_t kernel_target_address = 0x4000;
 
+static bool can_update_kernel_pointer = false;
+
 // Used to compare against the (CS | R/W | addr) value. In case of reads
 // the value will be 1 | 0 | 5 bits address.
 #define CASE_READ(addr) (addr & 0x1F)
@@ -26,14 +28,18 @@ uint16_t kernel_target_address = 0x4000;
 // the value will be 1 | 1 | 5 bits address
 #define CASE_WRITE(addr) (0x20 | (addr & 0x1F))
 
-__attribute__((optimize("O1"))) static void __no_inline_not_in_flash_func(act_loop)(void)
-{
+// MIA will notify the action loop of all register writes.
+// Only every fourth register (0, 4, 8, ...) is watched for read access. This additional read address to be watched
+// is varied based on the state of the MIA.
+static void mia_set_watch_address(uint32_t addr) {
+    pio_sm_put(MIA_ACT_PIO, MIA_ACT_SM, addr & 0x1F);
+}
+
+__attribute__((optimize("O1"))) static void __no_inline_not_in_flash_func(act_loop)(void) {
     // In here we bypass the usual SDK calls as needed for performance.
-    while (true)
-    {
+    while (true) {
         // If PIO send and action in the RX FIFO
-        if (!(MIA_ACT_PIO->fstat & (1u << (PIO_FSTAT_RXEMPTY_LSB + MIA_ACT_SM))))
-        {
+        if (!(MIA_ACT_PIO->fstat & (1u << (PIO_FSTAT_RXEMPTY_LSB + MIA_ACT_SM)))) {
             // Get the pins data (CS | R/W | 5 Address bits | 8 Data bits)
             uint32_t rw_addr_data = MIA_ACT_PIO->rxf[MIA_ACT_SM];
             
@@ -41,26 +47,37 @@ __attribute__((optimize("O1"))) static void __no_inline_not_in_flash_func(act_lo
             //uint32_t data = rw_addr_data & 0xFF;
 
             // Remove the data bits leaving only the CS, R/W and address pins
-            switch (rw_addr_data >> 8)
-            {
-                // After reading the byte that contains the value for the destination address of
-                // the kernel
-                case CASE_READ(0xFFF6):
+            switch (rw_addr_data >> 8) {
+                // Reading the kernel value enables updating
+                case CASE_READ(0xFFE1):
+                    can_update_kernel_pointer = true;
+                    break;
+
+                // Writing to the address used to pull the kernel value updates the pointer
+                // to the next value. This can only be done if the address was read in the first place
+                case CASE_WRITE(0xFFF1):
+                    if (!can_update_kernel_pointer) {
+                        break;
+                    }
+
                     // If there are are values still on the kernel we set the new value
                     // and increment the destination address to the next byte
                     if (kernel_index < kernel_data_size) {
-                        REGS(0xFFF1) = kernel_data[kernel_index++];
-                        REGSW(0xFFF3) += 1;
+                        REGS(0xFFE1) = kernel_data[kernel_index++];
+                        REGSW(0xFFE3) += 1;
                     }
 
-                    // If we reached the end of the kernel we replace the instruction at 
-                    // $FFF0 (beginning of fast loader) with JMP to kernel target address.
-                    if (kernel_index < kernel_data_size) {
-                        REGS(0xFFF0) = 0x4C;
-                        REGS(0xFFF1) = kernel_target_address & 0xFF;
-                        REGS(0xFFF2) = kernel_target_address >> 8;
+                    // If we reached the end of the kernel we replace the BRA $FFF0 instruction with BRA #$00
+                    // so it won't branch. $FFF7 contains a jump to the first address of kernel.
+                    if (kernel_index >= kernel_data_size) {
+                        REGS(0xFFE9) = 0x00;
                     }
-                break;
+
+                    // Disable pointer update so consecutive writes can update it only once. 
+                    // It must be read to enable further reads
+                    can_update_kernel_pointer = false;
+
+                    break;
             }
         }
     }
@@ -90,9 +107,6 @@ static void mia_cs_rwb_pio_init(void)
     // Add and configure the PIO program
     uint offset = pio_add_program(MIA_CS_RWB_PIO, &mia_cs_rwb_program);
     pio_sm_config config = mia_cs_rwb_program_get_default_config(offset);
-
-    // TODO: Review set PIO speed
-   // configure_phi2_frequency(&config, TARGET_HZ);
 
     // Input pins configuration
     sm_config_set_in_pins(&config, MIA_PIN_BASE);
@@ -252,6 +266,7 @@ static void mia_read_pio_init(void)
         1,
         false);
 
+        
     // Configures DMA channel to move address from PIO into the data DMA config
     dma_channel_config addr_dma = dma_channel_get_default_config(addr_chan);
     channel_config_set_high_priority(&addr_dma, true);
@@ -274,6 +289,10 @@ static void mia_read_pio_init(void)
 
 // Initializes the PIO program that feeds the main action loop with events
 // This is used for MIA to take action based on reads or writes to the registers
+// MIA will notify the action loop of all register writes.
+// Only every fourth register (0, 4, 8, ...) is watched for read access.
+// Aditional address to be watched can be specified using the mia_set_watch_address
+// Initially address 0xFFE1 (kernel data port) is watched
 static void mia_act_pio_init(void)
 {
     // Add and configure the PIO program
@@ -287,6 +306,9 @@ static void mia_act_pio_init(void)
 
     // PIO SM reset and configuration
     pio_sm_init(MIA_ACT_PIO, MIA_ACT_SM, offset, &config);
+
+    // Sets the initial watch address for the act_loop function.
+    mia_set_watch_address(0xFFE1);
     
     // Start PIO program
     pio_sm_set_enabled(MIA_ACT_PIO, MIA_ACT_SM, true);
@@ -295,36 +317,28 @@ static void mia_act_pio_init(void)
 }
 
 void fast_loader_init(void) {
-    for (int i = 0xFFDF; i < 0xFFFF; i++) {
-        REGS(i) = 0xAA;
-    }
-
-    // // // Self-modifying fast load
-    // REGS(0xFFF0) = 0xA9;                            // FFF0  A9 00     LDA #<byte> ; The MIA will respond with the byte of the kernel
-    // REGS(0xFFF1) = kernel_data[kernel_index++];
+    // // Self-modifying fast load
+    REGS(0xFFE0) = 0xA9;                            // FFE0:  A9 xx     LDA #xx ; The MIA will respond with the byte of the kernel
+    REGS(0xFFE1) = kernel_data[kernel_index++];
     
-    // REGS(0xFFF2) = 0x8D;                            // FFF2  8D 00 00  STA $0000 ; The target address to write the kernel
-    // REGS(0xFFF3) = kernel_target_address & 0xFF;
-    // REGS(0xFFF4) = kernel_target_address >> 8;
+    REGS(0xFFE2) = 0x8D;                            // FFE2:  8D xx xx  STA $xxxx ; The target address to write the kernel
+    REGS(0xFFE3) = kernel_target_address & 0xFF;
+    REGS(0xFFE4) = kernel_target_address >> 8;
 
-    // REGS(0xFFF5) = 0x80;                            // FFF5  80 F9     BRA $FFF0
-    // REGS(0xFFF6) = 0xF9;
-    // REGS(0xFFF7) = 0x80;                            // FFF7  80 FE     BRA $FFF7
-    // REGS(0xFFF8) = 0xFE;
+    REGS(0xFFE5) = 0x8D;                            // FFE5:  8D F1 FF  STA $FFF1 ; Gets the next instruction in the kernel data port
+    REGS(0xFFE6) = 0xF1;
+    REGS(0xFFE7) = 0xFF;
 
-    // // Reset vector initialization to 0xFFF0
-    // REGS(0xFFFC) = 0xF0;
-    // REGS(0xFFFD) = 0xFF;
+    REGS(0xFFE8) = 0x80;                            // FFE5:  80 F6     BRA $F6 ; Loops to 0xFFE0 for the next instruction
+    REGS(0xFFE9) = 0xF6;
 
-    // regs[28] = 0xF0;
-    // regs[29] = 0xFF;
-    // regs[30] = 0xF0;
-    // regs[31] = 0xFF;
+    REGS(0xFFEA) = 0x4C;                            // FFE7:  4C xx xx  JMP $<kernel base>
+    REGS(0xFFEB) = kernel_target_address & 0xFF;
+    REGS(0xFFEC) = kernel_target_address >> 8;
 
-    for (int i = 0xFFDF; i < 0xFFFF; i++) {
-       printf("Value of %i: %i \n", i, REGS(i));
-    }
-
+    // Reset vector initialization to 0xFFF0
+    REGS(0xFFFC) = 0xF0;
+    REGS(0xFFFD) = 0xFF;
 }
 
 // Initializes the MIA
@@ -340,8 +354,7 @@ void mia_init(void)
     assert(!((uintptr_t)regs & 0x1F));
 
     // Adjustments for GPIO performance. Important!
-    for (int i = MIA_PIN_BASE; i < MIA_PIN_BASE + 15; i++)
-    {
+    for (int i = MIA_PIN_BASE; i < MIA_PIN_BASE + 15; i++) {
         // Hands control of pins to PIO
         pio_gpio_init(pio0, i); // Any pio
         
