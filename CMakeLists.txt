@@ -57,6 +57,11 @@ add_custom_command(
 # Add executable
 add_executable(mia
     src/mia/main.c
+    src/mia/cfg/cfg.c
+    src/mia/cmds/cmds.c
+    src/mia/mem/indexes.c
+    src/mia/mem/mem.c
+    src/mia/mem/regs.c
     src/mia/sys/mia.c
     ${KERNEL_DATA_FILE}  # Add generated kernel data
 )
@@ -71,6 +76,8 @@ pico_generate_pio_header(mia ${CMAKE_SOURCE_DIR}/src/mia/sys/sys.pio)
 target_include_directories(mia PRIVATE
     src/
     src/mia
+    src/mia/cfg
+    src/mia/cmds
     src/mia/hardware
     src/mia/mem
     src/mia/rom

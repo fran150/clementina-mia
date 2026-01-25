@@ -7,19 +7,31 @@
 #include "hardware/dma.h"
 #include "hardware/structs/bus_ctrl.h"
 
+#include "cfg/cfg.h"
+#include "cmds/cmds.h"
 #include "hardware/gpio_mapping.h"
 #include "hardware/pio_mapping.h"
 #include "hardware/clocks.h"
-#include "mem/mem.h"
-#include "sys.pio.h"
+#include "mem/indexes.h"
+#include "mem/regs.h"
 #include "rom/kernel_data.h"
+
+#include "sys.pio.h"
 
 #define TARGET_HZ 2000
 
-uint32_t kernel_index = 0;
-uint16_t kernel_target_address = 0x4000;
+// Configuration for the kernel loader
+uint32_t kernel_index = 0;                      // Index pointing to the next byte to be read from the kernel
+uint16_t kernel_target_address = 0x4000;        // Target address in where kernel is being written
 
-static bool can_update_kernel_pointer = false;
+static bool can_update_kernel_pointer = false;  // Flag to allow updating the kernel pointer only after the data is read at least once.
+
+// State of the MIA chip, it starts in loader mode.
+// After the kernel has been loaded in ram it switches to normal operation
+static enum mia_states {
+    mia_state_loader = 0,
+    mia_state_normal = 1
+} volatile mia_state = mia_state_loader;
 
 // Used to compare against the (CS | R/W | addr) value. In case of reads
 // the value will be 1 | 0 | 5 bits address.
@@ -35,6 +47,7 @@ static void mia_set_watch_address(uint32_t addr) {
     pio_sm_put(MIA_ACT_PIO, MIA_ACT_SM, addr & 0x1F);
 }
 
+// This is the main loop user to process the actions after reads or writes to MIA registers
 __attribute__((optimize("O1"))) static void __no_inline_not_in_flash_func(act_loop)(void) {
     // In here we bypass the usual SDK calls as needed for performance.
     while (true) {
@@ -44,40 +57,99 @@ __attribute__((optimize("O1"))) static void __no_inline_not_in_flash_func(act_lo
             uint32_t rw_addr_data = MIA_ACT_PIO->rxf[MIA_ACT_SM];
             
             // Parse data bits
-            //uint32_t data = rw_addr_data & 0xFF;
-
+            uint32_t data = rw_addr_data & 0xFF;
+            
             // Remove the data bits leaving only the CS, R/W and address pins
-            switch (rw_addr_data >> 8) {
-                // Reading the kernel value enables updating
-                case CASE_READ(0xFFE1):
-                    can_update_kernel_pointer = true;
+            uint32_t address = rw_addr_data >> 8;
+
+            switch (mia_state) {
+                case mia_state_loader:                    
+                    switch (address) {
+                        // Reading the kernel value enables updating
+                        case CASE_READ(0xFFE1):
+                            can_update_kernel_pointer = true;
+                            break;
+
+                        // Writing to the address used to pull the kernel value updates the pointer
+                        // to the next value. This can only be done if the address was read in the first place
+                        case CASE_WRITE(0xFFF1):
+                            if (!can_update_kernel_pointer) {
+                                break;
+                            }
+
+                            // If there are are values still on the kernel we set the new value
+                            // and increment the destination address to the next byte
+                            if (kernel_index < kernel_data_size) {
+                                REGS(0xFFE1) = kernel_data[kernel_index++];
+                                REGSW(0xFFE3) += 1;
+                            }
+
+                            // If we reached the end of the kernel we replace the BRA $FFF0 instruction with BRA #$00
+                            // so it won't branch. $FFF7 contains a jump to the first address of kernel.
+                            if (kernel_index >= kernel_data_size) {
+                                REGS(0xFFE9) = 0x00;
+                            }
+
+                            // Disable pointer update so consecutive writes can update it only once. 
+                            // It must be read to enable further reads
+                            can_update_kernel_pointer = false;
+
+                            break;                            
+                    }     
+
                     break;
 
-                // Writing to the address used to pull the kernel value updates the pointer
-                // to the next value. This can only be done if the address was read in the first place
-                case CASE_WRITE(0xFFF1):
-                    if (!can_update_kernel_pointer) {
-                        break;
+                case mia_state_normal:
+                    switch (address) {                        
+                        case CASE_READ(0xFFE0):
+                            // After reading port A value, step the index and set the new value
+                            mia_regs->idxa_port = step_index_and_read(mia_regs->idxa_selector);
+                            break;
+                            
+                        case CASE_WRITE(0xFFE0):
+                            // After writing to port A, copy the value to the actual memory and step the index
+                            write_index_and_step(mia_regs->idxa_selector, data);
+                            // Read the new value into the port
+                            mia_regs->idxa_port = read_index(mia_regs->idxa_selector);
+                            break;
+
+                        case CASE_WRITE(0xFFE1):
+                            // When changing the selected index A, read the memory where the index is pointing and set it on port A
+                            mia_regs->idxa_port = read_index(data);
+                            break;
+
+                        case CASE_WRITE(0xFFE2):
+                            // Writing to the CFG selector gets the current value of that config into the register
+                            mia_regs->cfg_port = get_cfg(data);
+                            break;
+
+                        case CASE_WRITE(0xFFE3):
+                            // Writing to the dataport updates the config value
+                            set_cfg(mia_regs->cfg_selector, data);
+                            break;
+
+
+                        case CASE_READ(0xFFE4):
+                            // After reading port B value, step the index and set the new value
+                            mia_regs->idxb_port = step_index_and_read(mia_regs->idxb_selector);
+                            break;
+                            
+                        case CASE_WRITE(0xFFE4):
+                            // After writing to port B, copy the value to the actual memory and step the index
+                            write_index_and_step(mia_regs->idxb_selector, data);
+                            // Read the new value into the port
+                            mia_regs->idxb_port = read_index(mia_regs->idxb_selector);
+                            break;
+
+                        case CASE_WRITE(0xFFE5):
+                            // When changing the selected index B, read the memory where the index is pointing and set it on port B
+                            mia_regs->idxb_port = read_index(data);
+                            break;
+
+                        case CASE_WRITE(0xFFE9):
+                            execute_command(mia_regs->cmd_trigger, mia_regs->cmd_param1, mia_regs->cmd_param2, mia_regs->cmd_param3);
+                            break;
                     }
-
-                    // If there are are values still on the kernel we set the new value
-                    // and increment the destination address to the next byte
-                    if (kernel_index < kernel_data_size) {
-                        REGS(0xFFE1) = kernel_data[kernel_index++];
-                        REGSW(0xFFE3) += 1;
-                    }
-
-                    // If we reached the end of the kernel we replace the BRA $FFF0 instruction with BRA #$00
-                    // so it won't branch. $FFF7 contains a jump to the first address of kernel.
-                    if (kernel_index >= kernel_data_size) {
-                        REGS(0xFFE9) = 0x00;
-                    }
-
-                    // Disable pointer update so consecutive writes can update it only once. 
-                    // It must be read to enable further reads
-                    can_update_kernel_pointer = false;
-
-                    break;
             }
         }
     }
@@ -154,7 +226,7 @@ static void mia_write_pio_init(void)
     // Puts the pointer of the regs variable in the TX FIFO, pulls it and moves
     // it to Y register in the PIO. The first 5 bits are removed as later it will create
     // the offset to a specific register by combining this value with the one in the 6502 address bus
-    pio_sm_put(MIA_WRITE_PIO, MIA_WRITE_SM, (uintptr_t)regs >> 5);
+    pio_sm_put(MIA_WRITE_PIO, MIA_WRITE_SM, (uintptr_t)mia_regs >> 5);
     pio_sm_exec_wait_blocking(MIA_WRITE_PIO, MIA_WRITE_SM, pio_encode_pull(false, true));
     pio_sm_exec_wait_blocking(MIA_WRITE_PIO, MIA_WRITE_SM, pio_encode_mov(pio_y, pio_osr));
 
@@ -182,7 +254,7 @@ static void mia_write_pio_init(void)
     dma_channel_configure(
         data_chan,
         &data_dma,
-        regs,                              // dst (this will get updated by the address DMA)
+        mia_regs,                          // dst (this will get updated by the address DMA)
         &MIA_WRITE_PIO->rxf[MIA_WRITE_SM], // src
         1,
         false);
@@ -233,7 +305,7 @@ static void mia_read_pio_init(void)
     // Puts the pointer of the regs variable in the TX FIFO, pulls it and moves
     // it to Y register in the PIO. The first 5 bits are removed as later it will create
     // the offset to a specific register by combining this value with the one in the 6502 address bus
-    pio_sm_put(MIA_READ_PIO, MIA_READ_SM, (uintptr_t)regs >> 5);
+    pio_sm_put(MIA_READ_PIO, MIA_READ_SM, (uintptr_t)mia_regs >> 5);
     pio_sm_exec_wait_blocking(MIA_READ_PIO, MIA_READ_SM, pio_encode_pull(false, true));
     pio_sm_exec_wait_blocking(MIA_READ_PIO, MIA_READ_SM, pio_encode_mov(pio_y, pio_osr));
 
@@ -262,7 +334,7 @@ static void mia_read_pio_init(void)
         data_chan,
         &data_dma,
         &MIA_READ_PIO->txf[MIA_READ_SM], // dst
-        regs,                            // src
+        mia_regs,                        // src
         1,
         false);
 
@@ -351,7 +423,7 @@ void mia_init(void)
     gpio_set_dir(CPU_IRQB_PIN, true);
 
     // Safety check for compiler alignment
-    assert(!((uintptr_t)regs & 0x1F));
+    assert(!((uintptr_t)mia_regs & 0x1F));
 
     // Adjustments for GPIO performance. Important!
     for (int i = MIA_PIN_BASE; i < MIA_PIN_BASE + 15; i++) {
