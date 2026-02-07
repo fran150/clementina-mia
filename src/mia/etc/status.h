@@ -1,0 +1,22 @@
+#ifndef _MIA_ETC_STATUS_H_
+#define _MIA_ETC_STATUS_H_
+
+#include "mem/regs.h"
+#include <stdint.h>
+
+#define MIA_STAT_MASTER_MODE         (1u << 0)  // MIA status: 0 = Bootloader, 1 = Normal
+#define MIA_STAT_ERRORS              (1u << 1)  // Defines if there are errors in the queue
+#define MIA_STAT_CMD_RUNNING         (1u << 2)  // Defines if a command is running
+#define MIA_STAT_DMA_RUNNING         (1u << 3)  // Determines if DMA is running
+
+// Sets the status flag
+static inline __force_inline void mia_status_set_flag(uint16_t flag) {
+    mia_regs->mia_status |= flag;
+}
+
+// Clears the status flag
+static inline __force_inline void mia_status_clear_flag(uint16_t flag) {
+    mia_regs->mia_status &= ~flag;
+}
+
+#endif

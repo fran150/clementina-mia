@@ -1,11 +1,12 @@
-#ifndef _REGS_H_
-#define _REGS_H_
+#ifndef _MIA_REGS_H_
+#define _MIA_REGS_H_
 
 #include <stddef.h>
 #include <stdbool.h>
 
 #include "pico/stdlib.h"
 
+// MIA Registers definition
 typedef union {
     struct {
         uint8_t idxa_port;      // 00 (FFE0)
@@ -18,8 +19,8 @@ typedef union {
         uint8_t cmd_param2;     // 07 (FFE7)
         uint8_t cmd_param3;     // 08 (FFE8)
         uint8_t cmd_trigger;    // 09 (FFE9)
-        uint16_t mia_error;     // 0A, 0B (FFEA, FFEB)
-        uint16_t mia_status;    // 0C, 0D (FFEC, FFED)
+        uint16_t mia_status;    // 0C, 0D (FFEA, FFEB)
+        uint16_t mia_error;     // 0A, 0B (FFEC, FFED)
         uint16_t irq_mask;      // 0E, 0F (FFEE, FFEF)
         uint16_t irq_status;    // 10, 11 (FFF0, FFF1)
         uint8_t reserved[8];    // 12 - 19 (FFF2 - FFF9)
@@ -30,6 +31,7 @@ typedef union {
     uint8_t bytes[32];
 } mia_regs_t;
 
+// MIA registers
 extern volatile mia_regs_t * const mia_regs;
 
 // Convenience macro to access a given register with a 5 bit address

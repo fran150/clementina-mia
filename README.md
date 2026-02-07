@@ -18,10 +18,10 @@ The MIA has 32 internal registers:
 | 07       | FFE7        | CMD parameter 2        |
 | 08       | FFE8        | CMD parameter 3        |
 | 09       | FFE9        | Trigger Specified CMD  |
-| 0A       | FFEA        | Error LSB              |
-| 0B       | FFEB        | Error MSB              |
-| 0C       | FFEC        | Status LSB             |
-| 0D       | FFED        | Status MSB             |
+| 0A       | FFEA        | Status LSB             |
+| 0B       | FFEB        | Status MSB             |
+| 0C       | FFEC        | Error LSB              |
+| 0D       | FFED        | Error MSB              |
 | 0E       | FFEE        | IRQ Mask LSB           |
 | 0F       | FFEF        | IRQ Mask MSB           |
 | 10       | FFF0        | IRQ Status LSB         |
@@ -85,3 +85,12 @@ The MIA has 32 internal registers:
 | 0   | IRQ_IDXA_WRAPPED | IDX A has wrapped                         |
 | 1   | IRQ_IDXB_WRAPPED | IDX B has wrapped                         |
 | 2   | IRQ_COMMAND      | COMMAND execution triggered interrupt     |
+
+## Status
+
+| Bit | Name                 | Description                               |
+|-----|----------------------|-------------------------------------------|
+| 0   | MIA_STAT_MASTER_MODE | 0 = Boot loader 1 = Normal                |
+| 0   | MIA_STAT_ERRORS      | 1 if there are errors in the queue        |
+| 1   | MIA_STAT_CMD_RUNNING | 1 if commands is running                  |
+| 1   | MIA_STAT_DMA_RUNNING | 1 if DMA is running                       |

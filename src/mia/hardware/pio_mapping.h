@@ -1,5 +1,5 @@
-#ifndef _PIO_MAPPING_H_
-#define _PIO_MAPPING_H_
+#ifndef _MIA_HARDWARE_PIO_MAPPING_H_
+#define _MIA_HARDWARE_PIO_MAPPING_H_
 
 // PIO used for CS and R/W signal detection and data pin direction handling program
 #define MIA_CS_RWB_PIO pio0

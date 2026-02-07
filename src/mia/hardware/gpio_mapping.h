@@ -1,5 +1,5 @@
-#ifndef _GPIO_MAPPING_H_
-#define _GPIO_MAPPING_H_
+#ifndef _MIA_HARDWARE_GPIO_MAPPING_H_
+#define _MIA_HARDWARE_GPIO_MAPPING_H_
 
 // These are pins that the MIA controls
 

@@ -6,12 +6,15 @@
 #include "pico/multicore.h"
 #include "hardware/dma.h"
 #include "hardware/structs/bus_ctrl.h"
+#include "hardware/clocks.h"
 
-#include "cfg/cfg.h"
+#include "etc/cfg.h"
+#include "etc/err.h"
 #include "cmds/cmds.h"
 #include "hardware/gpio_mapping.h"
 #include "hardware/pio_mapping.h"
-#include "hardware/clocks.h"
+#include "irq/irq.h"
+#include "mem/dma.h"
 #include "mem/indexes.h"
 #include "mem/regs.h"
 #include "rom/kernel_data.h"
@@ -103,19 +106,20 @@ __attribute__((optimize("O1"))) static void __no_inline_not_in_flash_func(act_lo
                     switch (address) {                        
                         case CASE_READ(0xFFE0):
                             // After reading port A value, step the index and set the new value
-                            mia_regs->idxa_port = step_index_and_read(mia_regs->idxa_selector);
+                            mia_regs->idxa_port = index_step_and_read(mia_regs->idxa_selector, IDXA);
                             break;
                             
                         case CASE_WRITE(0xFFE0):
                             // After writing to port A, copy the value to the actual memory and step the index
-                            write_index_and_step(mia_regs->idxa_selector, data);
+                            index_write_and_step(mia_regs->idxa_selector, data, IDXA);
+                            
                             // Read the new value into the port
-                            mia_regs->idxa_port = read_index(mia_regs->idxa_selector);
+                            mia_regs->idxa_port = index_read(mia_regs->idxa_selector);
                             break;
 
                         case CASE_WRITE(0xFFE1):
                             // When changing the selected index A, read the memory where the index is pointing and set it on port A
-                            mia_regs->idxa_port = read_index(data);
+                            mia_regs->idxa_port = index_read(data);
                             break;
 
                         case CASE_WRITE(0xFFE2):
@@ -131,24 +135,44 @@ __attribute__((optimize("O1"))) static void __no_inline_not_in_flash_func(act_lo
 
                         case CASE_READ(0xFFE4):
                             // After reading port B value, step the index and set the new value
-                            mia_regs->idxb_port = step_index_and_read(mia_regs->idxb_selector);
+                            mia_regs->idxb_port = index_step_and_read(mia_regs->idxb_selector, IDXB);
                             break;
                             
                         case CASE_WRITE(0xFFE4):
                             // After writing to port B, copy the value to the actual memory and step the index
-                            write_index_and_step(mia_regs->idxb_selector, data);
+                            index_write_and_step(mia_regs->idxb_selector, data, IDXB);
+
                             // Read the new value into the port
-                            mia_regs->idxb_port = read_index(mia_regs->idxb_selector);
+                            mia_regs->idxb_port = index_read(mia_regs->idxb_selector);
                             break;
 
                         case CASE_WRITE(0xFFE5):
                             // When changing the selected index B, read the memory where the index is pointing and set it on port B
-                            mia_regs->idxb_port = read_index(data);
+                            mia_regs->idxb_port = index_read(data);
                             break;
 
                         case CASE_WRITE(0xFFE9):
-                            execute_command(mia_regs->cmd_trigger, mia_regs->cmd_param1, mia_regs->cmd_param2, mia_regs->cmd_param3);
+                            // Pack: [ID (8 bits) | P1 (8 bits) | P2 (8 bits) | P3 (8 bits)]
+                            uint32_t msg = (mia_regs->cmd_trigger << 24) | 
+                                        (mia_regs->cmd_param1 << 16)  | 
+                                        (mia_regs->cmd_param2 << 8)   | 
+                                        mia_regs->cmd_param3;
+                            
+                            // Non-blocking push: If the queue is full, Core 1 keeps moving to stay time-critical
+                            if (multicore_fifo_wready()) {
+                                multicore_fifo_push_timeout_us(msg, 0);
+                            }
+
                             break;
+                        case CASE_READ(0xFFEC):
+                            mia_regs->mia_error = error_pull();
+                            break;
+
+                        case CASE_WRITE(0xFFEE):
+                        case CASE_WRITE(0xFFEF):
+                        case CASE_WRITE(0xFFF0):
+                        case CASE_WRITE(0xFFF1):
+                            mia_irq_eval();
                     }
             }
         }
@@ -416,11 +440,14 @@ void fast_loader_init(void) {
 // Initializes the MIA
 void mia_init(void)
 {
-    // Configures the IRQ pin as output for the MIA to drive
-    // Initializes the pin to high
-    gpio_init(CPU_IRQB_PIN);
-    gpio_put(CPU_IRQB_PIN, true);
-    gpio_set_dir(CPU_IRQB_PIN, true);
+    // Init IRQ handler
+    mia_irq_init();
+    // Init DMA system
+    mia_dma_init();
+    // Init the command system
+    mia_command_init();
+    // Init the mia memory
+    mia_mem_init();
 
     // Safety check for compiler alignment
     assert(!((uintptr_t)mia_regs & 0x1F));

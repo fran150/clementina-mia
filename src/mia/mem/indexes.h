@@ -1,11 +1,12 @@
-#ifndef _MEM_INDEXES_H_
-#define _MEM_INDEXES_H_
+#ifndef _MIA_MEM_INDEXES_H_
+#define _MIA_MEM_INDEXES_H_
 
 #include <stdint.h>
 
 #include "pico.h"
 
 #include "mem/mem.h"
+#include "irq/irq.h"
 
 // Memory index structure (16 bytes per index)
 typedef union {
@@ -22,36 +23,54 @@ typedef union {
 
 #define MASK_24BIT 0x00FFFFFF
 
-// 4kb index table
+// 4kb index table with 256 indexes
 extern volatile index_t idx[256];
 
-// Enums must be in the header so the caller knows the types
+// Parts of the 24 bit address
 typedef enum { 
-    ADDR24_L = 0, 
-    ADDR24_M = 1, 
-    ADDR24_H = 2 
+    ADDR24_L = 0,       // Low byte
+    ADDR24_M = 1,       // Medium byte
+    ADDR24_H = 2        // High byte
 } addr24_byte_t;
 
+// Parts of the 16 bit address
 typedef enum { 
-    ADDR16_L = 0, 
-    ADDR16_H = 1 
+    ADDR16_L = 0,       // LSB
+    ADDR16_H = 1        // MSB
 } addr16_byte_t;
 
-#define IDX_FLAG_R_STP_ENA          0
-#define IDX_FLAG_W_STP_ENA          1
-#define IDX_FLAG_STP_DIR            2
-#define IDX_FLAG_WRAP_DIS           3
-#define IDX_FLAG_WRAP_IRQ           4
+// MIA has 2 index windows
+typedef enum {
+    IDXA = 0,       // Index Window A
+    IDXB = 1        // Index Window B
+} index_win_t;
 
-static inline uint8_t __not_in_flash_func(read_index)(uint8_t index_id) {
+#define IDX_FLAG_R_STP_ENA          0       // Set if step on read is enabled
+#define IDX_FLAG_W_STP_ENA          1       // Set if step on write is enabled
+#define IDX_FLAG_STP_DIR            2       // Step direction: 0 is forward, 1 is backward
+#define IDX_FLAG_WRAP_ENA           3       // Set if address wrap is enabled
+#define IDX_FLAG_WRAP_IRQ           4       // Set if address wrap of this index triggers interrupt
+
+/***************************************************************************************************
+ * READ / WRITE from memory using index
+ ***************************************************************************************************/
+
+// Returns the value from the RAM memory to where the specified index is pointing to. 
+// This command does not affect the index state
+static inline __force_inline uint8_t __not_in_flash_func(index_read)(uint8_t index_id) {
     return mem[idx[index_id].current_addr];
 }
 
-static inline void __not_in_flash_func(write_index)(uint8_t index_id, uint8_t value) {
+// Writes the value to the RAM memory to where the specified index is pointing to. 
+// This command does not affect the index state
+static inline __force_inline void __not_in_flash_func(index_write)(uint8_t index_id, uint8_t value) {
     mem[idx[index_id].current_addr] = value;
 }
 
-static inline uint8_t __not_in_flash_func(step_index_and_read)(uint8_t index_id) {
+// Steps the index according to it's configuration and reads the value in RAM to where the index ends up pointing to.
+// Last value read should already be in the MIA register so this function is used to update to the new value after the
+// processor has read the register
+static inline __force_inline uint8_t __not_in_flash_func(index_step_and_read)(uint8_t index_id, index_win_t win) {
     volatile index_t *restrict entry = &idx[index_id];
     uint32_t flags = entry->flags;
     
@@ -65,15 +84,18 @@ static inline uint8_t __not_in_flash_func(step_index_and_read)(uint8_t index_id)
 
     entry->current_addr += actual_step;
 
-    if (entry->current_addr >= entry->limit_addr && !((flags >> IDX_FLAG_WRAP_DIS) & 1)) {
+    if (entry->current_addr >= entry->limit_addr && ((flags >> IDX_FLAG_WRAP_ENA) & 1)) {
         entry->current_addr = entry->default_addr;
-        // TODO: trigger IRQ
+
+        mia_irq_set_flag(win == IDXA ? IRQ_IDXA_WRAPPED : IRQ_IDXB_WRAPPED);
     }
 
     return mem[entry->current_addr];
 }
 
-static inline void __not_in_flash_func(write_index_and_step)(uint8_t index_id, uint8_t value) {
+// Writes the value in RAM to where the index is pointing to and steps the index according to it's configuration.
+// The processor should have written the value to the register so this function is used to move the value to the RAM.
+static inline __force_inline void __not_in_flash_func(index_write_and_step)(uint8_t index_id, uint8_t value, index_win_t win) {
     volatile index_t *restrict entry = &idx[index_id];
     uint32_t flags = entry->flags;
 
@@ -87,58 +109,127 @@ static inline void __not_in_flash_func(write_index_and_step)(uint8_t index_id, u
 
     entry->current_addr += actual_step;
     
-    if (entry->current_addr >= entry->limit_addr && !((flags >> IDX_FLAG_WRAP_DIS) & 1)) {
+    if (entry->current_addr >= entry->limit_addr && ((flags >> IDX_FLAG_WRAP_ENA) & 1)) {
         entry->current_addr = entry->default_addr;
-        // TODO: trigger IRQ
+
+        mia_irq_set_flag(win == IDXA ? IRQ_IDXA_WRAPPED : IRQ_IDXB_WRAPPED);
     }
 }
 
-static inline uint8_t __not_in_flash_func(get_index_current_address_byte)(uint8_t index_id, addr24_byte_t addr_byte) {
+// Resets the specified index. This moves the current address to the default address
+static inline __force_inline void __not_in_flash_func(reset_index)(uint8_t index_id) {
+    volatile index_t *restrict entry = &idx[index_id];
+    entry->current_addr = entry->default_addr; 
+}
+
+/***************************************************************************************************
+ * GET / SET current address
+ ***************************************************************************************************/
+
+// Gets the specified byte of the current address
+static inline __force_inline uint8_t __not_in_flash_func(index_get_current_addr_byte)(uint8_t index_id, addr24_byte_t addr_byte) {
     uint8_t *ptr = (uint8_t *)&idx[index_id].current_addr;
     return ptr[addr_byte];
 }
 
-static inline void __not_in_flash_func(set_index_current_address_byte)(uint8_t index_id, addr24_byte_t addr_byte, uint8_t value) {
+// Sets the specified byte of the current address
+static inline __force_inline void __not_in_flash_func(index_set_current_addr_byte)(uint8_t index_id, addr24_byte_t addr_byte, uint8_t value) {
     uint8_t *ptr = (uint8_t *)&idx[index_id].current_addr;
     ptr[addr_byte] = value;
 }
 
+// Gets the specified the current address (full 24 bits)
+static inline __force_inline uint32_t __not_in_flash_func(index_get_current_addr)(uint8_t index_id) {
+    return idx[index_id].current_addr & MASK_24BIT;
+}
 
-static inline uint8_t __not_in_flash_func(get_index_default_address_byte)(uint8_t index_id, addr24_byte_t addr_byte) {
+// Sets the specified value as the current address (full 24 bits)
+static inline __force_inline void __not_in_flash_func(index_set_current_addr)(uint8_t index_id, uint32_t value) {
+    idx[index_id].current_addr = value & MASK_24BIT;
+}
+
+
+/***************************************************************************************************
+ * GET / SET default address
+ ***************************************************************************************************/
+
+// Gets the specified byte of the default address
+static inline __force_inline uint8_t __not_in_flash_func(index_get_default_addr_byte)(uint8_t index_id, addr24_byte_t addr_byte) {
     uint8_t *ptr = (uint8_t *)&idx[index_id].default_addr;
     return ptr[addr_byte];
 }
 
-static inline void __not_in_flash_func(set_index_default_address_byte)(uint8_t index_id, addr24_byte_t addr_byte, uint8_t value) {
+// Sets the specified byte of the default address
+static inline __force_inline void __not_in_flash_func(index_set_default_addr_byte)(uint8_t index_id, addr24_byte_t addr_byte, uint8_t value) {
     uint8_t *ptr = (uint8_t *)&idx[index_id].default_addr;
     ptr[addr_byte] = value;
 }
 
-static inline uint8_t __not_in_flash_func(get_index_limit_address_byte)(uint8_t index_id, addr24_byte_t addr_byte) {
+// Gets the specified the default address (full 24 bits)
+static inline __force_inline uint32_t __not_in_flash_func(index_get_default_addr)(uint8_t index_id) {
+    return idx[index_id].default_addr & MASK_24BIT;
+}
+
+// Sets the specified value as the default address (full 24 bits)
+static inline __force_inline void __not_in_flash_func(index_set_default_addr)(uint8_t index_id, uint32_t value) {
+    idx[index_id].default_addr = value & MASK_24BIT;
+}
+
+/***************************************************************************************************
+ * GET / SET limit address
+ ***************************************************************************************************/
+
+// Gets the specified byte of the limit address
+static inline __force_inline uint8_t __not_in_flash_func(index_get_limit_addr_byte)(uint8_t index_id, addr24_byte_t addr_byte) {
     uint8_t *ptr = (uint8_t *)&idx[index_id].limit_addr;
     return ptr[addr_byte];
 }
 
-static inline void __not_in_flash_func(set_index_limit_address_byte)(uint8_t index_id, addr24_byte_t addr_byte, uint8_t value) {
+// Sets the specified byte of the limit address
+static inline __force_inline void __not_in_flash_func(index_set_limit_addr_byte)(uint8_t index_id, addr24_byte_t addr_byte, uint8_t value) {
     uint8_t *ptr = (uint8_t *)&idx[index_id].limit_addr;
     ptr[addr_byte] = value;
 }
 
-static inline uint8_t __not_in_flash_func(get_index_step_byte)(uint8_t index_id, addr16_byte_t addr_byte) {
+// Gets the specified the limit address (full 24 bits)
+static inline __force_inline uint32_t __not_in_flash_func(index_get_limit_addr)(uint8_t index_id) {
+    return idx[index_id].limit_addr & MASK_24BIT;
+}
+
+// Sets the specified value as the limit address (full 24 bits)
+static inline __force_inline void __not_in_flash_func(index_set_limit_addr)(uint8_t index_id, uint32_t value) {
+    idx[index_id].limit_addr = value & MASK_24BIT;
+}
+
+
+/***************************************************************************************************
+ * GET / SET step
+ ***************************************************************************************************/
+
+// Get the specified index step size
+static inline __force_inline uint8_t __not_in_flash_func(index_get_step_byte)(uint8_t index_id, addr16_byte_t addr_byte) {
     uint8_t *ptr = (uint8_t *)&idx[index_id].step;
     return ptr[addr_byte];
 }
 
-static inline void __not_in_flash_func(set_index_step_byte)(uint8_t index_id, addr16_byte_t addr_byte, uint8_t value) {
+// Sets the step size of the specified index
+static inline __force_inline void __not_in_flash_func(index_set_step_byte)(uint8_t index_id, addr16_byte_t addr_byte, uint8_t value) {
     uint8_t *ptr = (uint8_t *)&idx[index_id].step;
     ptr[addr_byte] = value;
 }
 
-static inline uint8_t __not_in_flash_func(get_index_flag)(uint8_t index_id) {
+
+/***************************************************************************************************
+ * GET / SET flag
+ ***************************************************************************************************/
+
+ // Get the specified index configuration flag 
+static inline __force_inline uint8_t __not_in_flash_func(index_get_flag)(uint8_t index_id) {
     return idx[index_id].flags;
 }
 
-static inline void __not_in_flash_func(set_index_flag)(uint8_t index_id, uint8_t value) {
+// Sets the configuration flag of the specified index
+static inline __force_inline void __not_in_flash_func(index_set_flag)(uint8_t index_id, uint8_t value) {
     idx[index_id].flags = value;
 }
 

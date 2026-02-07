@@ -3,8 +3,12 @@
 
 all: build
 
-build:
+release:
 	cmake -B build -DCMAKE_BUILD_TYPE=Release
+	cmake --build build -j$(shell nproc 2>/dev/null || sysctl -n hw.ncpu)
+
+build:
+	cmake -B build
 	cmake --build build -j$(shell nproc 2>/dev/null || sysctl -n hw.ncpu)
 
 flash: build
