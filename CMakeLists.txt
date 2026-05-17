@@ -64,6 +64,8 @@ add_executable(mia
     src/mia/mem/mem.c
     src/mia/mem/regs.c
     src/mia/sys/mia.c
+    src/mia/sys/reset.c
+    src/mia/sys/speed.c
     ${KERNEL_DATA_FILE}  # Add generated kernel data
 )
 

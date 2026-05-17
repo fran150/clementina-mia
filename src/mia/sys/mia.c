@@ -1,15 +1,16 @@
 #include "sys/mia.h"
 
 #include <stdio.h>
+#include <string.h>
 #include "hardware/pio.h"
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
 #include "hardware/dma.h"
 #include "hardware/structs/bus_ctrl.h"
-#include "hardware/clocks.h"
 
 #include "etc/cfg.h"
 #include "etc/err.h"
+#include "etc/status.h"
 #include "cmds/cmds.h"
 #include "hardware/gpio_mapping.h"
 #include "hardware/pio_mapping.h"
@@ -18,10 +19,10 @@
 #include "mem/indexes.h"
 #include "mem/regs.h"
 #include "rom/kernel_data.h"
+#include "sys/reset.h"
+#include "sys/speed.h"
 
 #include "sys.pio.h"
-
-#define TARGET_HZ 2000
 
 // Configuration for the kernel loader
 uint32_t kernel_index = 0;                      // Index pointing to the next byte to be read from the kernel
@@ -36,6 +37,8 @@ static enum mia_states {
     mia_state_normal = 1
 } volatile mia_state = mia_state_loader;
 
+static void fast_loader_init(void);
+
 // Used to compare against the (CS | R/W | addr) value. In case of reads
 // the value will be 1 | 0 | 5 bits address.
 #define CASE_READ(addr) (addr & 0x1F)
@@ -48,6 +51,30 @@ static enum mia_states {
 // is varied based on the state of the MIA.
 static void mia_set_watch_address(uint32_t addr) {
     pio_sm_put(MIA_ACT_PIO, MIA_ACT_SM, addr & 0x1F);
+}
+
+static void mia_drain_action_fifo(void) {
+    while (!(MIA_ACT_PIO->fstat & (1u << (PIO_FSTAT_RXEMPTY_LSB + MIA_ACT_SM)))) {
+        (void)MIA_ACT_PIO->rxf[MIA_ACT_SM];
+    }
+}
+
+void mia_reset_runtime_state(void) {
+    memset((void *)mia_regs, 0, sizeof(*mia_regs));
+    memset((void *)idx, 0, sizeof(idx));
+
+    _err_first = 0;
+    _err_last = 0;
+    kernel_index = 0;
+    can_update_kernel_pointer = false;
+    mia_state = mia_state_loader;
+
+    mia_irq_init();
+    mia_status_clear_flag(MIA_STAT_MASTER_MODE);
+    mia_speed_reset_runtime_state();
+    fast_loader_init();
+    mia_set_watch_address(0xFFE1);
+    mia_drain_action_fifo();
 }
 
 // This is the main loop user to process the actions after reads or writes to MIA registers
@@ -85,12 +112,11 @@ __attribute__((optimize("O1"))) static void __no_inline_not_in_flash_func(act_lo
                             if (kernel_index < kernel_data_size) {
                                 REGS(0xFFE1) = kernel_data[kernel_index++];
                                 REGSW(0xFFE3) += 1;
-                            }
-
-                            // If we reached the end of the kernel we replace the BRA $FFF0 instruction with BRA #$00
-                            // so it won't branch. $FFF7 contains a jump to the first address of kernel.
-                            if (kernel_index >= kernel_data_size) {
+                            } else {
+                                // The final queued byte has now been consumed, so the loader can fall through.
                                 REGS(0xFFE9) = 0x00;
+                                mia_state = mia_state_normal;
+                                mia_status_set_flag(MIA_STAT_MASTER_MODE);
                             }
 
                             // Disable pointer update so consecutive writes can update it only once. 
@@ -179,21 +205,8 @@ __attribute__((optimize("O1"))) static void __no_inline_not_in_flash_func(act_lo
     }
 }
 
-// Updates the PIO configuration to run at a speed to generate the PHI2 signal
-// at the specified frequency (min 2 Khz)
-void configure_phi2_frequency(pio_sm_config *config, float target_hz) {
-    // The PIO needs to run 32 times faster than the PHI2 wave
-    float pio_freq = target_hz * 32.0f;
-    float system_freq = (float)clock_get_hz(clk_sys);
-
-    // Calculate the divider
-    float div = system_freq / pio_freq;
-
-    // Safety check: PIO divider must be between 1.0 and 65536.0
-    if (div < 1.0f) div = 1.0f;
-
-    // Apply the divider to the config
-    sm_config_set_clkdiv(config, div);
+void mia_service(void) {
+    mia_speed_service();
 }
 
 // Initializes the PIO program that monitors the CS and R/W enable pins and adjusts
@@ -213,12 +226,13 @@ static void mia_cs_rwb_pio_init(void)
     sm_config_set_out_pins(&config, MIA_DATA_PIN_BASE, 8);
     sm_config_set_out_shift(&config, true, false, 0);
     sm_config_set_out_pin_count(&config, 8);
+    sm_config_set_jmp_pin(&config, CPU_PHI2_PIN);
 
     // PIO SM reset and configuration
     pio_sm_init(MIA_CS_RWB_PIO, MIA_CS_RWB_SM, offset, &config);
 
     // Sets Y record in the PIO to zero
-    pio_sm_exec_wait_blocking(MIA_READ_PIO, MIA_READ_SM, pio_encode_set(pio_y, 0));
+    pio_sm_exec_wait_blocking(MIA_CS_RWB_PIO, MIA_CS_RWB_SM, pio_encode_set(pio_y, 0));
 
     // Start PIO program
     pio_sm_set_enabled(MIA_CS_RWB_PIO, MIA_CS_RWB_SM, true);
@@ -231,6 +245,7 @@ static void mia_write_pio_init(void)
     // Add and configure the PIO program
     uint offset = pio_add_program(MIA_WRITE_PIO, &mia_write_program);
     pio_sm_config config = mia_write_program_get_default_config(offset);
+    mia_speed_configure_phi2(&config, mia_applied_phi2_hz);
 
     // Input pins configuration
     sm_config_set_in_pins(&config, MIA_PIN_BASE);
@@ -412,7 +427,7 @@ static void mia_act_pio_init(void)
     multicore_launch_core1(act_loop);
 }
 
-void fast_loader_init(void) {
+static void fast_loader_init(void) {
     // // Self-modifying fast load
     REGS(0xFFE0) = 0xA9;                            // FFE0:  A9 xx     LDA #xx ; The MIA will respond with the byte of the kernel
     REGS(0xFFE1) = kernel_data[kernel_index++];
@@ -432,14 +447,16 @@ void fast_loader_init(void) {
     REGS(0xFFEB) = kernel_target_address & 0xFF;
     REGS(0xFFEC) = kernel_target_address >> 8;
 
-    // Reset vector initialization to 0xFFF0
-    REGS(0xFFFC) = 0xF0;
+    // Reset vector initialization to 0xFFE0
+    REGS(0xFFFC) = 0xE0;
     REGS(0xFFFD) = 0xFF;
 }
 
 // Initializes the MIA
 void mia_init(void)
 {
+    mia_prepare_reset_lines();
+
     // Init IRQ handler
     mia_irq_init();
     // Init DMA system
@@ -474,7 +491,7 @@ void mia_init(void)
 
     // It might be tempting to raise DMA_R/W here, but this causes problems with mia_write_buf
 
-    // Setup the fast loader program for the 6502 in the first 9 recors of the MIA and set the
+    // Setup the fast loader program for the 6502 in the first 9 records of the MIA and set the
     // reset vector pointing to the start of this program.
     fast_loader_init();
 
@@ -483,4 +500,7 @@ void mia_init(void)
     mia_write_pio_init();
     mia_read_pio_init();
     mia_act_pio_init();
+    mia_speed_apply_current();
+
+    mia_pulse_cpu_reset();
 }

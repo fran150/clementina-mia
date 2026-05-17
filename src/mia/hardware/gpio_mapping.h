@@ -10,6 +10,9 @@
 // // PHI2 (clock) pin
 #define CPU_PHI2_PIN 21         
 
+// Active-low input that asks MIA to reset itself and the 6502
+#define MIA_RESETB_PIN 27
+
 // Usually these pins are handled in a group
 
 // Pin mapping start

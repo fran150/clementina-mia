@@ -4,5 +4,6 @@
 #include <stdbool.h>
 
 void mia_init(void);
+void mia_service(void);
 
 #endif

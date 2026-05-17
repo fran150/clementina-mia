@@ -2,6 +2,7 @@
 #define _MIA_MEM_INDEXES_H_
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #include "pico.h"
 
@@ -58,13 +59,13 @@ typedef enum {
 // Returns the value from the RAM memory to where the specified index is pointing to. 
 // This command does not affect the index state
 static inline __force_inline uint8_t __not_in_flash_func(index_read)(uint8_t index_id) {
-    return mem[idx[index_id].current_addr];
+    return mem[idx[index_id].current_addr & MIA_RAM_MASK];
 }
 
 // Writes the value to the RAM memory to where the specified index is pointing to. 
 // This command does not affect the index state
 static inline __force_inline void __not_in_flash_func(index_write)(uint8_t index_id, uint8_t value) {
-    mem[idx[index_id].current_addr] = value;
+    mem[idx[index_id].current_addr & MIA_RAM_MASK] = value;
 }
 
 // Steps the index according to it's configuration and reads the value in RAM to where the index ends up pointing to.
@@ -76,21 +77,32 @@ static inline __force_inline uint8_t __not_in_flash_func(index_step_and_read)(ui
     
     // Extract bits once using masks to allow the compiler to use bit-test instructions
     uint32_t is_enabled = (flags >> IDX_FLAG_R_STP_ENA) & 1;
-    uint32_t is_forward = (flags >> IDX_FLAG_STP_DIR) & 1;
+    uint32_t is_backward = (flags >> IDX_FLAG_STP_DIR) & 1;
     
-    // Convert 0/1 to -1/1 without a branch
-    int32_t modifier = (is_forward << 1) - 1; 
+    // Convert 0/1 to 1/-1 without a branch.
+    int32_t modifier = 1 - (int32_t)(is_backward << 1);
     int32_t actual_step = (int32_t)(entry->step * is_enabled) * modifier;
 
     entry->current_addr += actual_step;
 
-    if (entry->current_addr >= entry->limit_addr && ((flags >> IDX_FLAG_WRAP_ENA) & 1)) {
-        entry->current_addr = entry->default_addr;
+    if ((flags >> IDX_FLAG_WRAP_ENA) & 1) {
+        bool wrapped = false;
+        if (is_backward) {
+            if (entry->current_addr < entry->default_addr) {
+                entry->current_addr = entry->limit_addr - 1;
+                wrapped = true;
+            }
+        } else if (entry->current_addr >= entry->limit_addr) {
+            entry->current_addr = entry->default_addr;
+            wrapped = true;
+        }
 
-        mia_irq_set_flag(win == IDXA ? IRQ_IDXA_WRAPPED : IRQ_IDXB_WRAPPED);
+        if (wrapped && ((flags >> IDX_FLAG_WRAP_IRQ) & 1)) {
+            mia_irq_set_flag(win == IDXA ? IRQ_IDXA_WRAPPED : IRQ_IDXB_WRAPPED);
+        }
     }
 
-    return mem[entry->current_addr];
+    return mem[entry->current_addr & MIA_RAM_MASK];
 }
 
 // Writes the value in RAM to where the index is pointing to and steps the index according to it's configuration.
@@ -99,20 +111,31 @@ static inline __force_inline void __not_in_flash_func(index_write_and_step)(uint
     volatile index_t *restrict entry = &idx[index_id];
     uint32_t flags = entry->flags;
 
-    mem[entry->current_addr] = value;
+    mem[entry->current_addr & MIA_RAM_MASK] = value;
 
     uint32_t is_enabled = (flags >> IDX_FLAG_W_STP_ENA) & 1;
-    uint32_t is_forward = (flags >> IDX_FLAG_STP_DIR) & 1;
+    uint32_t is_backward = (flags >> IDX_FLAG_STP_DIR) & 1;
 
-    int32_t modifier = (int32_t)(is_forward << 1) - 1;
+    int32_t modifier = 1 - (int32_t)(is_backward << 1);
     int32_t actual_step = (int32_t)(entry->step * is_enabled) * modifier;
 
     entry->current_addr += actual_step;
     
-    if (entry->current_addr >= entry->limit_addr && ((flags >> IDX_FLAG_WRAP_ENA) & 1)) {
-        entry->current_addr = entry->default_addr;
+    if ((flags >> IDX_FLAG_WRAP_ENA) & 1) {
+        bool wrapped = false;
+        if (is_backward) {
+            if (entry->current_addr < entry->default_addr) {
+                entry->current_addr = entry->limit_addr - 1;
+                wrapped = true;
+            }
+        } else if (entry->current_addr >= entry->limit_addr) {
+            entry->current_addr = entry->default_addr;
+            wrapped = true;
+        }
 
-        mia_irq_set_flag(win == IDXA ? IRQ_IDXA_WRAPPED : IRQ_IDXB_WRAPPED);
+        if (wrapped && ((flags >> IDX_FLAG_WRAP_IRQ) & 1)) {
+            mia_irq_set_flag(win == IDXA ? IRQ_IDXA_WRAPPED : IRQ_IDXB_WRAPPED);
+        }
     }
 }
 

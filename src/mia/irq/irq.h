@@ -11,6 +11,7 @@
 #define IRQ_IDXA_WRAPPED         (1u << 1)
 #define IRQ_IDXB_WRAPPED         (1u << 2)
 #define IRQ_COMMAND              (1u << 3)
+#define IRQ_SPEED_CHANGED        (1u << 4)
 #define IRQ_TRIGGERED            (1u << 15)
 
 // Configures the IRQ pin as output for the MIA to drive

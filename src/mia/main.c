@@ -5,6 +5,7 @@
 #include <stdio.h>
 
 #include "sys/mia.h"
+#include "sys/reset.h"
 #include "hardware/gpio_mapping.h"
 
 void configure_debug_leds() {
@@ -79,8 +80,24 @@ void scan_address_bus_and_lines(void) {
     printf("---\n");
 }
 
+static void update_onboard_led_blink(void) {
+    const uint32_t blink_interval_us = 500 * 1000;
+    static uint32_t last_toggle_us = 0;
+    static bool led_on = false;
+
+    uint32_t now_us = time_us_32();
+    if ((uint32_t)(now_us - last_toggle_us) < blink_interval_us) {
+        return;
+    }
+
+    led_on = !led_on;
+    turn_onboard_led(led_on);
+    last_toggle_us = now_us;
+}
+
 int main(void) {
     stdio_init_all();
+    mia_prepare_reset_lines();
 
     sleep_ms(2000);
 
@@ -110,11 +127,9 @@ int main(void) {
     mia_init();
 
     while (true) {
-        turn_onboard_led(1);
-        sleep_ms(500);
-
-        turn_onboard_led(0);
-        sleep_ms(500);
+        mia_handle_reset_request();
+        mia_service();
+        update_onboard_led_blink();
 
         option = read_character_from_console();
         eval_reboot_to_bootsel(option);

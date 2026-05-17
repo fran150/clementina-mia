@@ -1,19 +1,10 @@
 #include "mem.h"
 
-#include <stdlib.h>
-#include <malloc.h>
+static uint8_t mia_ram[MIA_RAM_SIZE] __attribute__((aligned(4096)));
 
-#include "mia/etc/err.h"
+// The actual pointer definition.
+uint8_t *mem = mia_ram;
 
-// The actual pointer definition
-uint8_t *mem = NULL;
-
-// Initializes MIA memory. This should succeed always. If it fails it will push ERROR_MIA_CANNOT_ALLOCATE_RAM in the error queue and 
-// MIA is not expected to work correctly.
 void mia_mem_init(void) {
-    mem = (uint8_t *)memalign(4096, MIA_RAM_SIZE);
-    
-    if (mem == NULL) {
-        error_push(ERROR_MIA_CANNOT_ALLOCATE_RAM);
-    }
+    // RAM is statically reserved so the linker fails if the target cannot fit it.
 }

@@ -8,6 +8,7 @@
 #define MIA_STAT_ERRORS              (1u << 1)  // Defines if there are errors in the queue
 #define MIA_STAT_CMD_RUNNING         (1u << 2)  // Defines if a command is running
 #define MIA_STAT_DMA_RUNNING         (1u << 3)  // Determines if DMA is running
+#define MIA_STAT_SPEED_CHANGING      (1u << 4)  // PHI2 speed change is pending
 
 // Sets the status flag
 static inline __force_inline void mia_status_set_flag(uint16_t flag) {

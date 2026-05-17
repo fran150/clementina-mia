@@ -36,6 +36,11 @@ static inline __force_inline uint8_t error_pull(void) {
    
     uint8_t val = _err_buf[head];
     _err_first = (head + 1) & 15;
+
+    if (_err_first == _err_last) {
+        mia_status_clear_flag(MIA_STAT_ERRORS);
+    }
+
     return val;
 }
 

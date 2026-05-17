@@ -29,7 +29,7 @@ void command_empty(uint8_t param[]) {
 void command_reset_index_a(uint8_t param[]) {
     UNUSED(param);
 
-    uint8_t id = mia_regs->idxb_selector;
+    uint8_t id = mia_regs->idxa_selector;
     reset_index(id);
 }
 
@@ -37,14 +37,13 @@ void command_reset_index_a(uint8_t param[]) {
 void command_reset_index_b(uint8_t param[]) {
     UNUSED(param);
 
-    uint8_t id = mia_regs->idxa_selector;
+    uint8_t id = mia_regs->idxb_selector;
     reset_index(id);
 }
 
 // Resets the index specified in param 0
 void command_reset_index(uint8_t param[]) {
-    uint32_t value = index_get_limit_addr(param[0]);
-    index_set_current_addr(param[0], value);
+    reset_index(param[0]);
 }
 
 // Sets the specified index default to current address
@@ -63,9 +62,8 @@ void command_set_index_limit_to_current_addr(uint8_t param[]) {
 void command_reset_all_index(uint8_t param[]) {
     UNUSED(param);
 
-    for (uint8_t i = 0; i < 255; i++) {
-        uint32_t value = index_get_limit_addr(i);
-        index_set_current_addr(i, value);    
+    for (uint16_t i = 0; i < 256; i++) {
+        reset_index((uint8_t)i);
     }
 }
 
