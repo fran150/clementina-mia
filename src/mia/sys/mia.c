@@ -7,6 +7,7 @@
 #include "pico/multicore.h"
 #include "hardware/dma.h"
 #include "hardware/structs/bus_ctrl.h"
+#include "hardware/structs/sio.h"
 
 #include "etc/cfg.h"
 #include "etc/err.h"
@@ -34,10 +35,11 @@ static bool can_update_kernel_pointer = false;  // Flag to allow updating the ke
 // After the kernel has been loaded in ram it switches to normal operation
 static enum mia_states {
     mia_state_loader = 0,
-    mia_state_normal = 1
+    mia_state_normal
 } volatile mia_state = mia_state_loader;
 
 static void fast_loader_init(void);
+static void mia_enter_normal_mode(void);
 
 // Used to compare against the (CS | R/W | addr) value. In case of reads
 // the value will be 1 | 0 | 5 bits address.
@@ -53,24 +55,31 @@ static void mia_set_watch_address(uint32_t addr) {
     pio_sm_put(MIA_ACT_PIO, MIA_ACT_SM, addr & 0x1F);
 }
 
+// Empties pending action events from the PIO RX FIFO.
+// This is used after mode change so old loader events are not processed in the new state.
 static void mia_drain_action_fifo(void) {
     while (!(MIA_ACT_PIO->fstat & (1u << (PIO_FSTAT_RXEMPTY_LSB + MIA_ACT_SM)))) {
         (void)MIA_ACT_PIO->rxf[MIA_ACT_SM];
     }
 }
 
+// Resets MIA runtime state back into loader mode.
+// This is used when the external reset request asks MIA and the 6502 to restart from the loader.
 void mia_reset_runtime_state(void) {
+    // Clear all CPU-visible registers and index descriptors so a new loader run
+    // starts from the same state as power-on.
     memset((void *)mia_regs, 0, sizeof(*mia_regs));
     memset((void *)idx, 0, sizeof(idx));
 
-    _err_first = 0;
-    _err_last = 0;
+    // Reset loader bookkeeping and runtime status managed outside the register block.
+    error_reset();
     kernel_index = 0;
     can_update_kernel_pointer = false;
     mia_state = mia_state_loader;
 
+    // Rebuild the loader program and watch the byte that the 6502 reads as kernel data.
     mia_irq_init();
-    mia_status_clear_flag(MIA_STAT_MASTER_MODE);
+    mia_status_clear_flag(MIA_STAT_MASTER_MODE); // 0 - Bootloader mode
     mia_speed_reset_runtime_state();
     fast_loader_init();
     mia_set_watch_address(0xFFE1);
@@ -85,6 +94,11 @@ __attribute__((optimize("O1"))) static void __no_inline_not_in_flash_func(act_lo
         if (!(MIA_ACT_PIO->fstat & (1u << (PIO_FSTAT_RXEMPTY_LSB + MIA_ACT_SM)))) {
             // Get the pins data (CS | R/W | 5 Address bits | 8 Data bits)
             uint32_t rw_addr_data = MIA_ACT_PIO->rxf[MIA_ACT_SM];
+
+            // Ignore stale or late action events while the 6502 is held in reset.
+            if (!((1u << CPU_RESB_PIN) & sio_hw->gpio_in)) {
+                continue;
+            }
             
             // Parse data bits
             uint32_t data = rw_addr_data & 0xFF;
@@ -113,10 +127,10 @@ __attribute__((optimize("O1"))) static void __no_inline_not_in_flash_func(act_lo
                                 REGS(0xFFE1) = kernel_data[kernel_index++];
                                 REGSW(0xFFE3) += 1;
                             } else {
-                                // The final queued byte has now been consumed, so the loader can fall through.
+                                // The final queued byte has now been consumed. Change BRA $FFE0
+                                // into BRA $FFEA so the CPU has a safe parking loop until reset asserts.
                                 REGS(0xFFE9) = 0x00;
-                                mia_state = mia_state_normal;
-                                mia_status_set_flag(MIA_STAT_MASTER_MODE);
+                                mia_enter_normal_mode();
                             }
 
                             // Disable pointer update so consecutive writes can update it only once. 
@@ -427,6 +441,36 @@ static void mia_act_pio_init(void)
     multicore_launch_core1(act_loop);
 }
 
+// Switches from loader mode to normal mode after the last kernel byte has been consumed.
+// This holds the 6502 in reset while the CPU-visible register block is reused for normal MIA registers.
+static void mia_enter_normal_mode(void) {
+    // Hold the 6502 in reset while the loader program is cleared out of the
+    // register block and replaced with the normal runtime register state.
+    mia_set_cpu_reset(true);
+
+    memset((void *)mia_regs, 0, sizeof(*mia_regs));
+    error_reset();
+
+    // Restore runtime-managed registers after clearing the loader bytes.
+    mia_irq_init();
+    mia_speed_reset_runtime_state();
+
+    // Reset will now start the 6502 at the kernel that was copied into RAM.
+    REGS(0xFFFC) = kernel_target_address & 0xFF;
+    REGS(0xFFFD) = kernel_target_address >> 8;
+
+    // Enter normal mode and watch index A's data port again for read-side effects.
+    mia_state = mia_state_normal;
+    mia_status_set_flag(MIA_STAT_MASTER_MODE);
+    mia_set_watch_address(0xFFE1);
+    mia_drain_action_fifo();
+
+    // Keep reset low for the configured number of PHI2 cycles, then release it
+    // from the main loop.
+    mia_schedule_cpu_reset_release();
+}
+
+// Builds the 6502 loader program in the MIA register block and points the reset vector at it.
 static void fast_loader_init(void) {
     // // Self-modifying fast load
     REGS(0xFFE0) = 0xA9;                            // FFE0:  A9 xx     LDA #xx ; The MIA will respond with the byte of the kernel
@@ -443,9 +487,11 @@ static void fast_loader_init(void) {
     REGS(0xFFE8) = 0x80;                            // FFE5:  80 F6     BRA $F6 ; Loops to 0xFFE0 for the next instruction
     REGS(0xFFE9) = 0xF6;
 
-    REGS(0xFFEA) = 0x4C;                            // FFE7:  4C xx xx  JMP $<kernel base>
-    REGS(0xFFEB) = kernel_target_address & 0xFF;
-    REGS(0xFFEC) = kernel_target_address >> 8;
+    // Parking loop used after the loader has copied the last byte. If reset does
+    // not assert before the CPU gets here, it will spin safely until reset lands.
+    REGS(0xFFEA) = 0x4C;                            // FFEA:  4C EA FF  JMP $FFEA
+    REGS(0xFFEB) = 0xEA;
+    REGS(0xFFEC) = 0xFF;
 
     // Reset vector initialization to 0xFFE0
     REGS(0xFFFC) = 0xE0;

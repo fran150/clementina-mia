@@ -14,6 +14,13 @@ extern volatile uint8_t _err_first;
 extern volatile uint8_t _err_last;
 extern volatile uint8_t _err_buf[16];
 
+// Clears the error queue and its visible status bit.
+static inline __force_inline void error_reset(void) {
+    _err_first = 0;
+    _err_last = 0;
+    mia_status_clear_flag(MIA_STAT_ERRORS);
+}
+
 // Pushes the error to the queue
 static inline __force_inline void error_push(uint8_t error) {
     uint8_t next = (_err_last + 1) & 15;
