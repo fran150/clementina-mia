@@ -240,7 +240,6 @@ static void mia_cs_rwb_pio_init(void)
     sm_config_set_out_pins(&config, MIA_DATA_PIN_BASE, 8);
     sm_config_set_out_shift(&config, true, false, 0);
     sm_config_set_out_pin_count(&config, 8);
-    sm_config_set_jmp_pin(&config, CPU_PHI2_PIN);
 
     // PIO SM reset and configuration
     pio_sm_init(MIA_CS_RWB_PIO, MIA_CS_RWB_SM, offset, &config);

@@ -22,7 +22,7 @@ static inline __force_inline void mia_irq_init(void) {
     gpio_set_dir(CPU_IRQB_PIN, true);
 
     mia_regs->irq_mask = 0x0000;
-    mia_regs->irq_status = 0x8000;
+    mia_regs->irq_status = 0x0000;
 }
 
 // Evaluates the current value of the irq register and irq masks

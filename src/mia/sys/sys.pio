@@ -87,8 +87,5 @@ start:
     jmp !x reading                              ; If CS == 1 and RWB == 1 then CPU is reading, if not is writing so PINs needs to stay as input
 .wrap
 reading:
-    jmp pin pindirs_set                         ; Only drive the data bus while PHI2 is high.
-    jmp start
-pindirs_set:
     mov pindirs !y                              ; If CPU is reading, move 1 to pin direction setting the pins for output.
     jmp start                                   ; Cycles to evaluation
