@@ -11,8 +11,8 @@ typedef union {
     struct {
         uint8_t idxa_port;      // 00 (FFE0)
         uint8_t idxa_selector;  // 01 (FFE1)
-        uint8_t cfg_port;       // 02 (FFE2)
-        uint8_t cfg_selector;  // 03 (FFE3)
+        uint8_t cfg_selector;   // 02 (FFE2)
+        uint8_t cfg_port;       // 03 (FFE3)
         uint8_t idxb_port;      // 04 (FFE4)
         uint8_t idxb_selector;  // 05 (FFE5)
         uint8_t cmd_param1;     // 06 (FFE6)

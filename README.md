@@ -27,8 +27,8 @@ MIA exposes 32 internal registers. The 6502 sees them at `$FFE0-$FFFF`; internal
 |----------|------------|------|-------------|
 | `00` | `$FFE0` | `IDXA_PORT` | Data port for the index selected by `IDXA_SELECT`. Reads return the current RAM byte, then optionally step index A and preload the next byte. Writes store the byte to RAM, then optionally step index A and refresh the port. |
 | `01` | `$FFE1` | `IDXA_SELECT` | Selects which of the 256 index descriptors is attached to index window A. Writing a selector also preloads `IDXA_PORT` from that index's current address. |
-| `02` | `$FFE2` | `CFG_PORT` | Configuration data port. After selecting a config id, this register contains the current config value. Writes to this register update the selected config entry. |
-| `03` | `$FFE3` | `CFG_SELECT` | Selects a configuration register. Writing this register loads the selected config value into `CFG_PORT`. |
+| `02` | `$FFE2` | `CFG_SELECT` | Selects a configuration register. Writing this register loads the selected config value into `CFG_PORT`. |
+| `03` | `$FFE3` | `CFG_PORT` | Configuration data port. After selecting a config id, this register contains the current config value. Writes to this register update the selected config entry. |
 | `04` | `$FFE4` | `IDXB_PORT` | Data port for the index selected by `IDXB_SELECT`. Behaves like `IDXA_PORT`, but uses index window B and B-specific wrap IRQs. |
 | `05` | `$FFE5` | `IDXB_SELECT` | Selects which index descriptor is attached to index window B. Writing a selector also preloads `IDXB_PORT` from that index's current address. |
 | `06` | `$FFE6` | `CMD_PARAM1` | First command parameter. Latched into the command FIFO message when `CMD_TRIGGER` is written. |
@@ -68,7 +68,7 @@ Only two index descriptors are active on the CPU bus at a time: window A selecte
 
 ## Configuration Registers
 
-The config interface uses `CFG_SELECT` and `CFG_PORT`. Write a config id to `CFG_SELECT` to load its current value into `CFG_PORT`; write `CFG_PORT` to update the selected config id.
+The config interface uses `CFG_SELECT` and `CFG_PORT`. Write a config id to `$FFE2` (`CFG_SELECT`) to load its current value into `$FFE3` (`CFG_PORT`); read or write `$FFE3` to access the selected config id.
 
 Config ids `$00-$1F` configure index descriptors 0 and 1 directly. The high nibble selects the index id (`0` for index 0, `1` for index 1) and the low nibble selects the field. Higher index descriptors are still usable by the index windows and commands, but this config window currently only maps indexes 0 and 1.
 

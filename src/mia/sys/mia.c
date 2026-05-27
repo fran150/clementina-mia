@@ -163,12 +163,12 @@ __attribute__((optimize("O1"))) static void __no_inline_not_in_flash_func(act_lo
                             break;
 
                         case CASE_WRITE(0xFFE2):
-                            // Writing to the CFG selector gets the current value of that config into the register
+                            // Writing to the CFG selector gets the current value of that config into the port.
                             mia_regs->cfg_port = get_cfg(data);
                             break;
 
                         case CASE_WRITE(0xFFE3):
-                            // Writing to the dataport updates the config value
+                            // Writing to the data port updates the selected config value.
                             set_cfg(mia_regs->cfg_selector, data);
                             break;
 
