@@ -7,7 +7,7 @@ The firmware is built as a `copy_to_ram` Pico application so the time-critical P
 ## Hardware role
 
 - Emulates the top 32 bytes of the 6502 address space as MIA registers.
-- Drives `PHI2` from PIO. The default rate is 2 kHz and can be changed through configuration registers.
+- Drives `PHI2` from PIO. The MIA default rate is `1 MHz` and can be changed through configuration registers.
 - Drives active-low `IRQB` when enabled interrupt flags are pending.
 - Drives active-low `RESB` during startup and while the external MIA reset request line is asserted.
 - Uses PIO state machines and DMA to read and write register bytes fast enough for bus cycles.
@@ -24,7 +24,7 @@ In normal mode, register reads and writes operate as the interface described bel
 MIA exposes 32 internal registers. The 6502 sees them at `$FFE0-$FFFF`; internally only the low 5 address bits are used.
 
 | Register | Clementina | Name | Description |
-|----------|------------|------|-------------|
+| -------- | ---------- | ---- | ----------- |
 | `00` | `$FFE0` | `IDXA_PORT` | Data port for the index selected by `IDXA_SELECT`. Reads return the current RAM byte, then optionally step index A and preload the next byte. Writes store the byte to RAM, then optionally step index A and refresh the port. |
 | `01` | `$FFE1` | `IDXA_SELECT` | Selects which of the 256 index descriptors is attached to index window A. Writing a selector also preloads `IDXA_PORT` from that index's current address. |
 | `02` | `$FFE2` | `CFG_SELECT` | Selects a configuration register. Writing this register loads the selected config value into `CFG_PORT`. |
@@ -56,7 +56,7 @@ MIA exposes 32 internal registers. The 6502 sees them at `$FFE0-$FFFF`; internal
 MIA reserves 128 KiB of RAM. It is accessed through 256 index descriptors, each 16 bytes wide:
 
 | Field | Size | Description |
-|-------|------|-------------|
+| ----- | ---- | ----------- |
 | `current_addr` | 24 bits used | Current MIA RAM address for the index. Actual RAM access is masked to 128 KiB. |
 | `default_addr` | 24 bits used | Address restored by reset-index commands and used as the forward wrap target. |
 | `limit_addr` | 24 bits used | Exclusive upper limit for forward wrapping; backward wrapping jumps to `limit_addr - 1`. |
@@ -73,7 +73,7 @@ The config interface uses `CFG_SELECT` and `CFG_PORT`. Write a config id to `$FF
 Config ids `$00-$1F` configure index descriptors 0 and 1 directly. The high nibble selects the index id (`0` for index 0, `1` for index 1) and the low nibble selects the field. Higher index descriptors are still usable by the index windows and commands, but this config window currently only maps indexes 0 and 1.
 
 | # | CFG Index | Description |
-|---|-----------|-------------|
+| - | --------- | ----------- |
 | `00` | `IDX0_ADDR_L` | Low byte of index 0 current address. |
 | `01` | `IDX0_ADDR_M` | Middle byte of index 0 current address. |
 | `02` | `IDX0_ADDR_H` | High byte of index 0 current address. |
@@ -107,7 +107,7 @@ Config ids `$00-$1F` configure index descriptors 0 and 1 directly. The high nibb
 ## Index Flags
 
 | Bit | Name | Description |
-|-----|------|-------------|
+| --- | ---- | ----------- |
 | 0 | `R_STP_ENA` | Step the active index after `IDX*_PORT` is read. |
 | 1 | `W_STP_ENA` | Step the active index after `IDX*_PORT` is written. |
 | 2 | `STP_DIR` | Step direction: `0` = forward, `1` = backward. |
@@ -121,7 +121,7 @@ Forward wrapping occurs when `current_addr >= limit_addr` and resets `current_ad
 Commands are requested by writing parameters to `CMD_PARAM1-3`, then writing the command id to `CMD_TRIGGER`. The command handler runs from the multicore FIFO path and sets `MIA_STAT_CMD_RUNNING` while draining queued commands.
 
 | Command | Parameters | Description |
-|---------|------------|-------------|
+| ------- | ---------- | ----------- |
 | `00` | none | Reset the index selected in window A to its default address. |
 | `01` | none | Reset the index selected in window B to its default address. |
 | `02` | `p1 = index id` | Reset the specified index to its default address. |
@@ -139,7 +139,7 @@ Unassigned command ids are no-ops.
 `IRQ_STATUS & IRQ_MASK` controls the physical active-low `IRQB` line. If any enabled flag is set, MIA also sets bit 15 (`IRQ_TRIGGERED`) and drives `IRQB` low. If no enabled flags are pending, bit 15 is cleared and `IRQB` is released high.
 
 | Bit | Name | Description |
-|-----|------|-------------|
+| --- | ---- | ----------- |
 | 0 | `IRQ_ERROR` | An error was pushed into the error queue. |
 | 1 | `IRQ_IDXA_WRAPPED` | The active index in window A wrapped and its `WRAP_IRQ` flag was enabled. |
 | 2 | `IRQ_IDXB_WRAPPED` | The active index in window B wrapped and its `WRAP_IRQ` flag was enabled. |
@@ -150,7 +150,7 @@ Unassigned command ids are no-ops.
 ## Status
 
 | Bit | Name | Description |
-|-----|------|-------------|
+| --- | ---- | ----------- |
 | 0 | `MIA_STAT_MASTER_MODE` | `0` = loader mode, `1` = normal mode. |
 | 1 | `MIA_STAT_ERRORS` | Error queue contains at least one error. |
 | 2 | `MIA_STAT_CMD_RUNNING` | Command handler is executing queued commands. |
@@ -162,7 +162,7 @@ Unassigned command ids are no-ops.
 Errors are stored in a 16-entry ring buffer. Reading `$FFEC` pulls one error into `ERROR_L`; when the queue becomes empty, `MIA_STAT_ERRORS` is cleared.
 
 | Code | Name | Description |
-|------|------|-------------|
+| ---- | ---- | ----------- |
 | `01` | `ERROR_MIA_CANNOT_ALLOCATE_RAM` | Reserved/startup RAM allocation failure code. Current RAM is statically allocated, so this should not normally occur. |
 | `10` | `ERROR_DMA_SIZE_ZERO` | DMA copy requested with a byte count of zero. |
 | `11` | `ERROR_DMA_SRC_WILL_OVERFLOW` | DMA source range would exceed the 128 KiB MIA RAM region. |
@@ -170,12 +170,18 @@ Errors are stored in a 16-entry ring buffer. Reading `$FFEC` pulls one error int
 
 ## PHI2 Speed Control
 
-The `SPEED_L/M/H` config registers hold a 24-bit `PHI2` frequency in Hz. Writes are staged byte by byte; writing `SPEED_H` commits the request. `mia_service()` later clamps the requested value to the achievable PIO divider range, applies the new divider to the write/read/action state machines, clears `MIA_STAT_SPEED_CHANGING`, and raises `IRQ_SPEED_CHANGED`.
+The `SPEED_L/M/H` config registers hold the desired 24-bit `PHI2` frequency in Hz. Writes are staged byte by byte; writing `SPEED_H` commits the request. `mia_service()` later clamps the requested value to the supported range, chooses the required Pico system clock, applies the PIO divider to the write/read/action state machines, clears `MIA_STAT_SPEED_CHANGING`, and raises `IRQ_SPEED_CHANGED`. Reading `SPEED_L/M/H` returns the applied frequency after clamping.
+
+The MIA default `PHI2` speed is `1 MHz`.
+
+Supported requests are currently clamped to `1 Hz` through `8 MHz`.
+
+On Pico 2 W, the default Pico system clock is `150 MHz`. With that normal `clk_sys`, the unchanged PIO timing program can generate about `72 Hz` through `4.6875 MHz` by changing only the PIO divider. Requests below `72 Hz` slow `clk_sys`, which also slows the CPU, DMA scheduling, timers, USB/debug behavior, and any non-bus MIA work; this may affect operations outside the bus timing path. Requests above `4.6875 MHz` overclock `clk_sys` to `256 MHz` so the same 32-cycle PIO period can reach up to `8 MHz`; this may increase heat, power use, or timing instability on the Pico.
 
 ## GPIO Mapping
 
 | GPIO | Signal | Direction | Description |
-|------|--------|-----------|-------------|
+| ---- | ------ | --------- | ----------- |
 | 6 | `MIA_CS` | Input | Chip select sampled by PIO. |
 | 7 | `MIA_RWB` | Input | 6502 read/write line sampled by PIO. |
 | 8-15 | `D0-D7` | Bidirectional | 6502 data bus. Direction is controlled by the CS/RWB PIO program. |
