@@ -72,11 +72,15 @@ void scan_address_bus_and_lines(void) {
 
     // Extract GPIO 16–20 into bits 0–4
     uint8_t address_value = (gpio_state >> 16) & 0x1F;
+    uint8_t data_value = (gpio_state >> MIA_DATA_PIN_BASE) & 0xFF;
 
     printf("---\n");
     printf("CS line enabled: %ld\n", ((gpio_state >> MIA_CS_PIN) & 1));
-    printf("R/W line enabled: %i\n", !((gpio_state >> MIA_RWB_PIN) & 1));
+    printf("R/W line: %ld (%s)\n",
+           ((gpio_state >> MIA_RWB_PIN) & 1),
+           ((gpio_state >> MIA_RWB_PIN) & 1) ? "READ" : "WRITE");
     printf("Address bus is: %02X\n", address_value);
+    printf("Data bus is: %02X\n", data_value);
     printf("---\n");
 }
 

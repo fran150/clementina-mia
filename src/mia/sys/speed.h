@@ -9,7 +9,9 @@
 
 #include "etc/status.h"
 
-#define MIA_DEFAULT_PHI2_HZ 2000u
+#ifndef MIA_DEFAULT_PHI2_HZ
+#define MIA_DEFAULT_PHI2_HZ 1u
+#endif
 
 extern volatile uint32_t mia_staged_phi2_hz;
 extern volatile uint32_t mia_requested_phi2_hz;

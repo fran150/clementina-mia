@@ -5,7 +5,7 @@
 #include "hardware/pio_mapping.h"
 #include "irq/irq.h"
 
-#define MIA_PHI2_CYCLES_PER_PERIOD 32u
+#define MIA_PHI2_CYCLES_PER_PERIOD 1590u
 
 volatile uint32_t mia_staged_phi2_hz = MIA_DEFAULT_PHI2_HZ;
 volatile uint32_t mia_requested_phi2_hz = MIA_DEFAULT_PHI2_HZ;

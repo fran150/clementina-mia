@@ -26,10 +26,13 @@
 #include "sys.pio.h"
 
 // Configuration for the kernel loader
-uint32_t kernel_index = 0;                      // Index pointing to the next byte to be read from the kernel
+static volatile uint32_t kernel_index = 0;      // Index pointing to the next byte to be read from the kernel
 uint16_t kernel_target_address = 0x4000;        // Target address in where kernel is being written
 
-static bool can_update_kernel_pointer = false;  // Flag to allow updating the kernel pointer only after the data is read at least once.
+static volatile bool can_update_kernel_pointer = false;  // Flag to allow updating the kernel pointer only after the data is read at least once.
+
+#define MIA_LOADER_POLL_BUS 1
+#define MIA_LOADER_POLL_SETTLE_US 1000u
 
 // State of the MIA chip, it starts in loader mode.
 // After the kernel has been loaded in ram it switches to normal operation
@@ -39,7 +42,26 @@ static enum mia_states {
 } volatile mia_state = mia_state_loader;
 
 static void fast_loader_init(void);
+static void fast_loader_refresh_program(void);
+static void fast_loader_reset_poll_state(void);
+static void fast_loader_poll_bus(void);
+static void fast_loader_advance(void);
 static void mia_enter_normal_mode(void);
+
+static bool loader_poll_high_processed = false;
+static uint32_t loader_poll_high_since_us = 0;
+
+static uint mia_add_pio_program_checked(PIO pio, const pio_program_t *program, const char *name) {
+    int offset = pio_add_program(pio, program);
+    if (offset < 0) {
+        printf("Failed to load PIO program %s: %d\n", name, offset);
+        while (true) {
+            tight_loop_contents();
+        }
+    }
+
+    return (uint)offset;
+}
 
 // Used to compare against the (CS | R/W | addr) value. In case of reads
 // the value will be 1 | 0 | 5 bits address.
@@ -81,6 +103,7 @@ void mia_reset_runtime_state(void) {
     mia_irq_init();
     mia_status_clear_flag(MIA_STAT_MASTER_MODE); // 0 - Bootloader mode
     mia_speed_reset_runtime_state();
+    fast_loader_reset_poll_state();
     fast_loader_init();
     mia_set_watch_address(0xFFE1);
     mia_drain_action_fifo();
@@ -109,6 +132,7 @@ __attribute__((optimize("O1"))) static void __no_inline_not_in_flash_func(act_lo
             switch (mia_state) {
                 case mia_state_loader:                    
                     switch (address) {
+#if !MIA_LOADER_POLL_BUS
                         // Reading the kernel value enables updating
                         case CASE_READ(0xFFE1):
                             can_update_kernel_pointer = true;
@@ -117,27 +141,9 @@ __attribute__((optimize("O1"))) static void __no_inline_not_in_flash_func(act_lo
                         // Writing to the address used to pull the kernel value updates the pointer
                         // to the next value. This can only be done if the address was read in the first place
                         case CASE_WRITE(0xFFF1):
-                            if (!can_update_kernel_pointer) {
-                                break;
-                            }
-
-                            // If there are are values still on the kernel we set the new value
-                            // and increment the destination address to the next byte
-                            if (kernel_index < kernel_data_size) {
-                                REGS(0xFFE1) = kernel_data[kernel_index++];
-                                REGSW(0xFFE3) += 1;
-                            } else {
-                                // The final queued byte has now been consumed. Change BRA $FFE0
-                                // into BRA $FFEA so the CPU has a safe parking loop until reset asserts.
-                                REGS(0xFFE9) = 0x00;
-                                mia_enter_normal_mode();
-                            }
-
-                            // Disable pointer update so consecutive writes can update it only once. 
-                            // It must be read to enable further reads
-                            can_update_kernel_pointer = false;
-
+                            fast_loader_advance();
                             break;                            
+#endif
                     }     
 
                     break;
@@ -220,6 +226,13 @@ __attribute__((optimize("O1"))) static void __no_inline_not_in_flash_func(act_lo
 }
 
 void mia_service(void) {
+    if (mia_state == mia_state_loader) {
+        fast_loader_refresh_program();
+#if MIA_LOADER_POLL_BUS
+        fast_loader_poll_bus();
+#endif
+    }
+
     mia_speed_service();
 }
 
@@ -228,7 +241,7 @@ void mia_service(void) {
 static void mia_cs_rwb_pio_init(void)
 {
     // Add and configure the PIO program
-    uint offset = pio_add_program(MIA_CS_RWB_PIO, &mia_cs_rwb_program);
+    uint offset = mia_add_pio_program_checked(MIA_CS_RWB_PIO, &mia_cs_rwb_program, "mia_cs_rwb");
     pio_sm_config config = mia_cs_rwb_program_get_default_config(offset);
 
     // Input pins configuration
@@ -256,7 +269,7 @@ static void mia_cs_rwb_pio_init(void)
 static void mia_write_pio_init(void)
 {
     // Add and configure the PIO program
-    uint offset = pio_add_program(MIA_WRITE_PIO, &mia_write_program);
+    uint offset = mia_add_pio_program_checked(MIA_WRITE_PIO, &mia_write_program, "mia_write");
     pio_sm_config config = mia_write_program_get_default_config(offset);
     mia_speed_configure_phi2(&config, mia_applied_phi2_hz);
 
@@ -267,8 +280,10 @@ static void mia_write_pio_init(void)
     // Output pins configuration
     sm_config_set_out_pins(&config, MIA_DATA_PIN_BASE, 8);
 
-    // PHI2 generation with sideset configuration (generates a square pulse with 50% duty cycle and 32 PIO cycles width)
+    // PHI2 generation with sideset configuration. The write PIO program includes
+    // long delay loops so bring-up can run at human-observable speeds.
     sm_config_set_sideset_pins(&config, CPU_PHI2_PIN);
+    sm_config_set_jmp_pin(&config, CPU_RESB_PIN);
     pio_gpio_init(MIA_WRITE_PIO, CPU_PHI2_PIN);
     pio_sm_set_consecutive_pindirs(MIA_WRITE_PIO, MIA_WRITE_SM, CPU_PHI2_PIN, 1, true);
 
@@ -336,7 +351,7 @@ static void mia_write_pio_init(void)
 static void mia_read_pio_init(void)
 {
     // Add and configure the PIO program
-    uint offset = pio_add_program(MIA_READ_PIO, &mia_read_program);
+    uint offset = mia_add_pio_program_checked(MIA_READ_PIO, &mia_read_program, "mia_read");
     pio_sm_config config = mia_read_program_get_default_config(offset);
 
     // Input pins configuration
@@ -420,7 +435,7 @@ static void mia_read_pio_init(void)
 static void mia_act_pio_init(void)
 {
     // Add and configure the PIO program
-    uint offset = pio_add_program(MIA_ACT_PIO, &mia_action_program);
+    uint offset = mia_add_pio_program_checked(MIA_ACT_PIO, &mia_action_program, "mia_action");
     pio_sm_config config = mia_action_program_get_default_config(offset);
 
     // Configure input pins to the base pin. This will read all pins starting
@@ -463,6 +478,7 @@ static void mia_enter_normal_mode(void) {
     mia_status_set_flag(MIA_STAT_MASTER_MODE);
     mia_set_watch_address(0xFFE1);
     mia_drain_action_fifo();
+    fast_loader_reset_poll_state();
 
     // Keep reset low for the configured number of PHI2 cycles, then release it
     // from the main loop.
@@ -471,6 +487,8 @@ static void mia_enter_normal_mode(void) {
 
 // Builds the 6502 loader program in the MIA register block and points the reset vector at it.
 static void fast_loader_init(void) {
+    fast_loader_reset_poll_state();
+
     // // Self-modifying fast load
     REGS(0xFFE0) = 0xA9;                            // FFE0:  A9 xx     LDA #xx ; The MIA will respond with the byte of the kernel
     REGS(0xFFE1) = kernel_data[kernel_index++];
@@ -495,6 +513,115 @@ static void fast_loader_init(void) {
     // Reset vector initialization to 0xFFE0
     REGS(0xFFFC) = 0xE0;
     REGS(0xFFFD) = 0xFF;
+
+    // Keep BRK/IRQ safe during loader bring-up. If a bad branch reaches empty
+    // registers, park instead of jumping through an all-zero vector.
+    REGS(0xFFFE) = 0xEA;
+    REGS(0xFFFF) = 0xFF;
+}
+
+static void fast_loader_reset_poll_state(void) {
+    loader_poll_high_processed = false;
+    loader_poll_high_since_us = 0;
+}
+
+// Restores the loader bytes that must never be changed by CPU-visible writes.
+// During GPIO bring-up, stale write cycles can briefly appear around reset release;
+// the loader lives in the same register block, so keep its template coherent until
+// normal mode takes over.
+static void fast_loader_refresh_program(void) {
+    uint32_t current_kernel_index = kernel_index == 0 ? 0 : kernel_index - 1;
+    if (current_kernel_index < kernel_data_size) {
+        uint16_t target_address = kernel_target_address + current_kernel_index;
+        REGS(0xFFE1) = kernel_data[current_kernel_index];
+        REGS(0xFFE3) = target_address & 0xFF;
+        REGS(0xFFE4) = target_address >> 8;
+    }
+
+    REGS(0xFFE0) = 0xA9;
+    REGS(0xFFE2) = 0x8D;
+    REGS(0xFFE5) = 0x8D;
+    REGS(0xFFE6) = 0xF1;
+    REGS(0xFFE7) = 0xFF;
+    REGS(0xFFE8) = 0x80;
+    REGS(0xFFE9) = 0xF6;
+
+    REGS(0xFFEA) = 0x4C;
+    REGS(0xFFEB) = 0xEA;
+    REGS(0xFFEC) = 0xFF;
+
+    REGS(0xFFFC) = 0xE0;
+    REGS(0xFFFD) = 0xFF;
+    REGS(0xFFFE) = 0xEA;
+    REGS(0xFFFF) = 0xFF;
+}
+
+static void fast_loader_advance(void) {
+    if (!can_update_kernel_pointer) {
+        return;
+    }
+
+    // If there are are values still on the kernel we set the new value
+    // and increment the destination address to the next byte.
+    if (kernel_index < kernel_data_size) {
+        uint32_t loaded_index = kernel_index;
+        uint8_t next_byte = kernel_data[loaded_index];
+        REGS(0xFFE1) = next_byte;
+        kernel_index = loaded_index + 1;
+        REGSW(0xFFE3) += 1;
+    } else {
+        // The final queued byte has now been consumed. Change BRA $FFE0
+        // into BRA $FFEA so the CPU has a safe parking loop until reset asserts.
+        REGS(0xFFE9) = 0x00;
+        mia_enter_normal_mode();
+    }
+
+    // Disable pointer update so consecutive writes can update it only once.
+    // It must be read to enable further reads.
+    can_update_kernel_pointer = false;
+}
+
+// Temporary 1 Hz loader bring-up path. The Pi/Pico GPIO traces show the emulator
+// drives the $FFF1 write correctly, but the action PIO is missing it. Poll once
+// per PHI2-high phase so the loader can advance while we keep the known PIO code.
+static void fast_loader_poll_bus(void) {
+    uint32_t gpio_state = sio_hw->gpio_in;
+    bool phi2 = (gpio_state >> CPU_PHI2_PIN) & 1u;
+    bool resb = (gpio_state >> CPU_RESB_PIN) & 1u;
+
+    if (!phi2 || !resb) {
+        fast_loader_reset_poll_state();
+        return;
+    }
+
+    uint32_t now_us = time_us_32();
+    if (loader_poll_high_since_us == 0) {
+        loader_poll_high_since_us = now_us;
+        return;
+    }
+
+    if (loader_poll_high_processed ||
+        (uint32_t)(now_us - loader_poll_high_since_us) < MIA_LOADER_POLL_SETTLE_US) {
+        return;
+    }
+    loader_poll_high_processed = true;
+
+    bool cs = (gpio_state >> MIA_CS_PIN) & 1u;
+    bool rwb = (gpio_state >> MIA_RWB_PIN) & 1u;
+    uint8_t address = (gpio_state >> MIA_ADDR_PIN_BASE) & 0x1F;
+
+    if (!cs) {
+        return;
+    }
+
+    if (rwb && address == (0xFFE1 & 0x1F)) {
+        can_update_kernel_pointer = true;
+        return;
+    }
+
+    if (!rwb && address == (0xFFF1 & 0x1F)) {
+        fast_loader_advance();
+    }
 }
 
 // Initializes the MIA
