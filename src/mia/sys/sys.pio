@@ -45,7 +45,7 @@ read:
     wait 1 gpio CPU_PHI2_PIN                    ; Waits for PHI2 high
     out pins 8                                  ; Moves register value in OSR to data bus
     mov isr y                                   ; Moves the Y register to the ISR. Y contains the base address of the MIA registers
-    wait 0 gpio CPU_PHI2_PIN [31]               ; Waits for PHI2 low; give the GPIO emulator time to drive the next address
+    wait 0 gpio CPU_PHI2_PIN [5]                ; Waits for PHI2 low (delays 5 cycles for address stabilization)
     in pins 5                                   ; Shifts address bus into ISR. This combines with the bits in the Y register to form the base (Y register) + offset (Address bus)
 .wrap
 
@@ -56,24 +56,20 @@ read:
 .side_set 1
 
 nowrite:
-    set x 31        side 0 [15]                 ; Drive PHI2 low long enough for human-speed GPIO debugging
-low_delay_a:
-    jmp x-- low_delay_a side 0 [15]
-    set x 31        side 0 [15]
-low_delay_b:
-    jmp x-- low_delay_b side 0 [15]
+    nop             side 0 [10]                 ; Drive PHI2 low for 11 cycles
 .wrap_target
-    set x 31        side 1 [15]                 ; Drive PHI2 high long enough for human-speed GPIO debugging
-high_delay_a:
-    jmp x-- high_delay_a side 1 [15]
-    jmp pin reset_released side 1              ; Ignore writes while the 6502 reset line is asserted
+    nop             side 1 [13]                 ; Begin PHI2 high; reset guard and sampling complete 16 cycles
+    jmp pin reset_released side 1               ; Ignore writes while the 6502 reset line is asserted
+    jmp reset_pad  side 0
+reset_pad:
+    nop             side 0 [2]
     jmp nowrite    side 0
 reset_released:
     mov x pins      side 1                      ; Copy GPIOs to X record while PHI2 is still high
     mov osr x       side 0                      ; Shifts X record to output shift register (OSR used as temporary store)
 
     out x 2         side 0                      ; Moves 2 bits of OSR to X (These are the chip select and R/W flags)
-    jmp !x nowrite  side 0                      ; Ignore unselected writes (CS == 0 && R/W == 0)
+    jmp !x nowrite_pad side 0                   ; Ignore unselected writes (CS == 0 && R/W == 0)
     jmp x-- jmpsub  side 0                      ; Substract 1 from X
 jmpsub:
     jmp x-- nowrite side 0                      ; If control lines are not writing (CS == 1 && RW == 0). 
@@ -84,6 +80,9 @@ jmpsub:
     push noblock    side 0                      ; Pushes the full address value to the core
     mov isr x       side 0                      ; Moves data bus value (currently in X) to ISR
     push noblock    side 0 [5]                  ; Pushes the data bus value to the core. Waits 5 cycle holding PHI2 and completes 16 cycles of PHI2 low before starting again.
+nowrite_pad:
+    nop             side 0
+    jmp nowrite    side 0
 .wrap
 
 

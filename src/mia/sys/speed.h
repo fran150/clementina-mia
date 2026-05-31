@@ -9,9 +9,8 @@
 
 #include "etc/status.h"
 
-#ifndef MIA_DEFAULT_PHI2_HZ
+// Requested default; clamped at runtime to the slowest PHI2 this PIO timing can generate.
 #define MIA_DEFAULT_PHI2_HZ 1u
-#endif
 
 extern volatile uint32_t mia_staged_phi2_hz;
 extern volatile uint32_t mia_requested_phi2_hz;
