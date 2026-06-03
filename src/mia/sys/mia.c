@@ -6,6 +6,7 @@
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
 #include "hardware/dma.h"
+#include "hardware/sync.h"
 #include "hardware/structs/bus_ctrl.h"
 #include "hardware/structs/sio.h"
 
@@ -38,6 +39,8 @@ static enum mia_states {
     mia_state_normal
 } volatile mia_state = mia_state_loader;
 
+static volatile bool normal_mode_transition_requested = false;
+
 static void fast_loader_init(void);
 static void mia_enter_normal_mode(void);
 
@@ -63,6 +66,17 @@ static void mia_drain_action_fifo(void) {
     }
 }
 
+static inline __force_inline void __not_in_flash_func(mia_core1_try_push_command)(uint32_t msg) {
+    if (sio_hw->fifo_st & SIO_FIFO_ST_RDY_BITS) {
+        sio_hw->fifo_wr = msg;
+        __sev();
+    }
+}
+
+static inline __force_inline void __not_in_flash_func(mia_core1_assert_cpu_reset)(void) {
+    sio_hw->gpio_clr = 1u << CPU_RESB_PIN;
+}
+
 // Resets MIA runtime state back into loader mode.
 // This is used when the external reset request asks MIA and the 6502 to restart from the loader.
 void mia_reset_runtime_state(void) {
@@ -75,6 +89,7 @@ void mia_reset_runtime_state(void) {
     error_reset();
     kernel_index = 0;
     can_update_kernel_pointer = false;
+    normal_mode_transition_requested = false;
     mia_state = mia_state_loader;
 
     // Rebuild the loader program and watch the byte that the 6502 reads as kernel data.
@@ -130,7 +145,9 @@ __attribute__((optimize("O1"))) static void __no_inline_not_in_flash_func(act_lo
                                 // The final queued byte has now been consumed. Change BRA $FFE0
                                 // into BRA $FFEA so the CPU has a safe parking loop until reset asserts.
                                 REGS(0xFFE9) = 0x00;
-                                mia_enter_normal_mode();
+                                mia_core1_assert_cpu_reset();
+                                __dmb();
+                                normal_mode_transition_requested = true;
                             }
 
                             // Disable pointer update so consecutive writes can update it only once. 
@@ -198,10 +215,8 @@ __attribute__((optimize("O1"))) static void __no_inline_not_in_flash_func(act_lo
                                         (mia_regs->cmd_param2 << 8)   | 
                                         mia_regs->cmd_param3;
                             
-                            // Non-blocking push: If the queue is full, Core 1 keeps moving to stay time-critical
-                            if (multicore_fifo_wready()) {
-                                multicore_fifo_push_timeout_us(msg, 0);
-                            }
+                            // Non-blocking push: if the queue is full, core 1 keeps moving.
+                            mia_core1_try_push_command(msg);
 
                             break;
                         case CASE_READ(0xFFEC):
@@ -220,6 +235,11 @@ __attribute__((optimize("O1"))) static void __no_inline_not_in_flash_func(act_lo
 }
 
 void mia_service(void) {
+    if (normal_mode_transition_requested) {
+        normal_mode_transition_requested = false;
+        mia_enter_normal_mode();
+    }
+
     mia_speed_service();
 }
 

@@ -1,995 +1,500 @@
-# MIA Video Output Capability
+# MIA Video Output
 
-This document describes the planned video output capability for MIA on the
-current `experimental` firmware line. The design assumes:
+This document defines MIA's Wi-Fi video-output architecture. The wire protocol
+is defined in [video-protocol.md](video-protocol.md), and the 6502 programming
+model is defined in [video-programmer-guide.md](video-programmer-guide.md).
 
-- MIA appears to Clementina as a 32-byte register block at `$FFE0-$FFFF`.
-- MIA owns 128 KiB of internal RAM.
-- Clementina accesses MIA RAM through two CPU-facing indexed windows, `IDX A`
-  and `IDX B`.
-- The Pico 2 W already links the CYW43/lwIP polling Wi-Fi stack, but no video
-  network service exists yet.
+MIA video uses the `docs/video-poc` model:
 
-The central idea is not to stream pixels. MIA should expose a compact
-tile/sprite graphics state, send that state and its updates over Wi-Fi, and let
-the desktop client render the final pixels.
+- The client keeps a complete mirror of MIA video state.
+- The client receives one full snapshot when it connects.
+- After the snapshot, MIA sends absolute byte updates for changed video state.
+- The client requests frames at the pace its display and network can sustain.
+- MIA exposes backpressure so the 6502 program can run either free-running or
+  video-paced.
+
+MIA does not stream raw pixels and does not run a video codec. The 6502 writes a
+compact tile/sprite state. The client renders the final pixels locally.
 
 ## Goals
 
-- Provide a practical "video output" path without VGA hardware.
-- Keep the 6502 programming model small and retro-friendly.
-- Use MIA RAM as a PPU-like graphics memory space.
-- Send graphics state updates over Wi-Fi, not raw framebuffers.
-- Support a useful first target of 320x200 at 25 FPS.
-- Keep 30 FPS feasible if the Wi-Fi link is healthy.
-- Allow a client on a computer to connect to MIA and render Clementina's screen.
-- Leave enough MIA RAM for control data, dirty tracking, and future extensions.
+- Render a 320x200 display on a host client over Wi-Fi.
+- Keep the 6502 programming model close to classic tile/sprite machines.
+- Avoid sending full pixel frames during normal rendering.
+- Stay useful at 25 FPS on ordinary Wi-Fi.
+- Recover from packet loss without permanent client desync.
+- Allow one active client to tune transport parameters such as requested FPS and
+  maximum in-flight frame responses.
+- Let the 6502 program choose local/free-running or video-paced timing.
 
 ## Non-Goals
 
-- MIA will not initially generate VGA, HDMI, composite, or other physical video.
-- MIA will not initially stream full RGB pixel frames.
-- MIA will not initially perform full raster composition on the Pico.
-- The network stream is not intended to be a general video codec.
-- The first protocol does not need multiple simultaneous viewers.
+- Physical VGA, HDMI, or composite output.
+- Full-frame image compression on the Pico.
+- Multiple simultaneous video clients.
+- Guaranteed delivery of every locally generated frame when the 6502 program
+  runs free-running.
 
-## Current Firmware Constraints
+## Firmware Context
 
-The current firmware shape sets the first implementation boundaries.
+MIA appears to Clementina as a 32-byte register block at `$FFE0-$FFFF`. It owns
+128 KiB of internal RAM and exposes that RAM through indexed windows.
 
-| Area | Current firmware | Impact on video design |
-| - | - | - |
-| CPU-visible interface | 32 registers at `$FFE0-$FFFF` | Video must be reached through the existing indexed RAM windows and commands. |
-| MIA RAM | 128 KiB | The tile/sprite model fits comfortably while leaving room for other MIA features. |
-| Indexed windows | `IDX A` and `IDX B` only | Two active windows are enough for streaming writes and control updates. |
-| Index descriptors | 256 descriptors | Video can reserve a stable range of preconfigured indexes. |
-| Config interface | Currently configures indexes 0 and 1 directly | Video indexes should be preconfigured by firmware first; arbitrary index configuration can come later. |
-| Wi-Fi stack | `pico_cyw43_arch_lwip_poll` | Wi-Fi work must be serviced from the main loop with `cyw43_arch_poll()`. |
-| Core split | Core 1 handles the time-critical bus action loop | Network and video publishing must stay off the bus fast path. |
+Core split:
 
-The most important rule is that Wi-Fi must never wait inside the bus service
-path. CPU writes to MIA RAM may mark tiny dirty flags, but packet construction
-and transmission must be background work.
+- Core 1 services the time-critical 6502 bus action loop.
+- Core 0 runs the firmware service loop, Wi-Fi polling, packet construction,
+  repair, and video publishing.
 
-## Architecture
+The firmware executes most code from flash/XIP. The bus-critical path remains
+RAM-resident:
 
-MIA video should be treated as a remote PPU:
+- `act_loop()` is in RAM.
+- The indexed memory helpers are in RAM or inlined into `act_loop()`.
+- IRQ status evaluation used by the indexed write path is inlined into
+  `act_loop()`.
+- Generated `kernel_data` used by the loader is in RAM.
+- The command trigger path writes the SIO FIFO directly from `act_loop()`.
+
+The action loop does not build packets, poll Wi-Fi, allocate buffers, or wait
+for core 0. It only services bus events, updates MIA RAM/registers, marks video
+dirty state, and pushes compact command notifications to core 0.
+
+## Video Memory Map
+
+The video state occupies the first 68,944 bytes of MIA RAM. All offsets are byte
+offsets from the start of MIA RAM.
+
+| Offset | Size | Region | Purpose |
+| ---: | ---: | --- | --- |
+| `$00000` | 256 B | `CONTROL` | mode, status, frame id, scroll, active banks, flags |
+| `$00100` | 256 B | `PALETTE` | 16 palette banks, 8 RGB565 colors each |
+| `$00200` | 49,152 B | `CHR` | 8 banks, 256 characters per bank, 24 bytes per character |
+| `$0C200` | 8,000 B | `BG_NT` | 8 background nametables, 40x25 bytes each |
+| `$0E140` | 8,000 B | `BG_ATTR` | 8 background attribute tables, 40x25 bytes each |
+| `$10080` | 1,000 B | `OV_NT` | fixed screen-space overlay nametable |
+| `$10468` | 1,000 B | `OV_ATTR` | fixed screen-space overlay attributes |
+| `$10850` | 1,280 B | `OAM` | 256 sprite records, 5 bytes each |
+| `$10D50` | - | end | first byte after video state |
+
+The full client mirror is 68,944 bytes, or 67.3 KiB. This is small enough for a
+startup snapshot and too large for every-frame transmission at 25 FPS.
+
+## Control Block
+
+The control block is little-endian. Fields marked read-only are written by MIA
+and read by the 6502 program.
+
+| Offset | Size | Field | Access | Meaning |
+| ---: | ---: | --- | --- | --- |
+| `$00` | 1 | `VIDEO_VERSION` | read-only | video state layout version |
+| `$01` | 1 | `VIDEO_MODE` | read/write | video enable and renderer mode bits |
+| `$02` | 1 | `VIDEO_STATUS` | read-only | connection and backpressure bits |
+| `$03` | 1 | `LAYER_ENABLE` | read/write | background, overlay, and sprite enables |
+| `$04` | 4 | `FRAME_ID` | read-only | accepted frame commit counter |
+| `$08` | 2 | `SCROLL_X` | read/write | background scroll X in pixels |
+| `$0A` | 2 | `SCROLL_Y` | read/write | background scroll Y in pixels |
+| `$0C` | 1 | `BG_ACTIVE_SET` | read/write | active 2x2 background set `0-1` |
+| `$0D` | 1 | `BG_SCROLL_MODE` | read/write | background plane mode `0-3` |
+| `$0E` | 1 | `BG_CHR_BANK` | read/write | primary background CHR bank `0-7` |
+| `$0F` | 1 | `BG_ALT_CHR_BANK` | read/write | alternate background CHR bank `0-7` |
+| `$10` | 1 | `OVERLAY_CHR_BANK` | read/write | primary overlay CHR bank `0-7` |
+| `$11` | 1 | `OVERLAY_ALT_CHR_BANK` | read/write | alternate overlay CHR bank `0-7` |
+| `$12` | 1 | `SPRITE_CHR_BANK` | read/write | sprite CHR bank `0-7` |
+| `$13` | 1 | `BACKDROP_PALETTE` | read/write | backdrop palette/color selection |
+| `$14` | 2 | `OAM_ACTIVE_COUNT` | read/write | active sprite record count; `0` means none |
+| `$16` | 1 | `FRAME_FLAGS` | read/write | per-frame render flags |
+| `$17` | 1 | `COMMIT_FLAGS` | read/write | flags consumed by `VIDEO_COMMIT_FRAME` |
+| `$18` | 1 | `VIDEO_IRQ_ENABLE` | read/write | enabled video event IRQ sources |
+| `$19` | 1 | `VIDEO_EVENT_STATUS` | read/write-1-clear | pending video event bits |
+| `$1A` | 6 | reserved | - | zero |
+| `$20` | 224 | reserved | - | zero |
+
+`VIDEO_MODE` bits:
+
+| Bit | Name | Meaning |
+| ---: | --- | --- |
+| 0 | `VIDEO_MODE_ENABLE` | video service enabled |
+| 1 | `VIDEO_MODE_ALT_BANKS` | background and overlay alt-bank selection enabled |
+
+`VIDEO_STATUS` bits:
+
+| Bit | Name | Meaning |
+| ---: | --- | --- |
+| 0 | `VIDEO_CLIENT_CONNECTED` | a client owns the video session |
+| 1 | `VIDEO_CAN_COMMIT` | MIA can accept another non-coalesced frame commit |
+| 2 | `VIDEO_SNAPSHOT_ACTIVE` | a snapshot response is being generated |
+| 3 | `VIDEO_REPAIR_ACTIVE` | a repair response is being generated |
+| 4 | `VIDEO_FRAME_QUEUE_FULL` | pending frame storage is full |
+
+`LAYER_ENABLE` bits:
+
+| Bit | Name |
+| ---: | --- |
+| 0 | background enabled |
+| 1 | overlay enabled |
+| 2 | sprites enabled |
+
+## Graphics Model
+
+The logical display is 320x200 pixels. Tiles are 8x8 pixels, so the visible
+screen is 40x25 cells.
+
+CHR data is planar:
 
 ```text
-Clementina 6502
-    writes palettes, tiles, nametables, sprites, and control bytes
-    through MIA's indexed RAM windows
-
-MIA firmware
-    stores the PPU state in MIA RAM
-    tracks changed regions
-    publishes snapshots and updates over Wi-Fi
-
-Video client
-    keeps a mirror of the PPU state
-    renders 320x200 pixels locally
-    presents frames on the host computer
+one character = 8 rows * 3 planes = 24 bytes
+one bank      = 256 characters * 24 bytes = 6,144 bytes
+eight banks   = 49,152 bytes
 ```
 
-This is much more efficient than raw frame streaming. Most frames only change a
-few nametable entries, sprite records, scroll registers, or palette values.
-Character graphics change less often and can be synced as resources.
+Each 3bpp character pixel selects color index `0-7` in the selected palette.
+Sprites and overlay treat color index `0` as transparent. Background treats
+color index `0` as visible.
 
-## Display Model
+The renderer has five active CHR selectors: background, background alternate,
+overlay, overlay alternate, and sprite. Programs that do not use alternate
+banks leave the alternate selectors equal to their primary selectors or clear
+`VIDEO_MODE_ALT_BANKS`.
 
-The first video mode should be a tile/sprite display:
+## Display Terms
 
-| Property | Value | Notes |
-| - | - | - |
-| Logical resolution | 320x200 pixels | The image size the client renders before scaling. |
-| Tile size | 8x8 pixels | The basic reusable graphics block. |
-| Tile grid | 40x25 cells | `320 / 8 = 40` columns and `200 / 8 = 25` rows. |
-| Tile graphics | 3 bits per pixel by default, optional 1 bit per pixel per bank | Each decoded tile pixel selects a color index from the chosen palette. Transparency depends on the layer. |
-| Tile size in memory | 24 bytes | Three 8-byte bitplanes per 8x8 character. In 1bpp mode, each plane acts as an independent monochrome character table. |
-| Character banks | 8 banks | Groups of reusable tile graphics. A bank is selected by control state and can be flagged as 3bpp or 1bpp. |
-| Characters per bank | 256 | Each character is one 8x8 tile definition. |
-| Palette banks | 16 banks | Groups of actual RGB colors used by background, overlay, and sprites. |
-| Colors per palette | 8 | Tile pixel values `0-7` select one of these colors. |
-| Color format | RGB565, little-endian | 16-bit color, suitable for compact storage and easy client rendering. |
-| Nametables | 8 background tables, 40x25 bytes each | Background tile maps. Two 2x2 sets support four-way scrolling plus optional staging or page flips. |
-| Attribute tables | 8 background tables, 40x25 bytes each | Background cell attribute maps: palette, flip, priority, and alternate character bank selection. |
-| Fixed overlay | 1 nametable and 1 attribute table, 40x25 bytes each | Screen-space HUD/menu layer. It uses the same cell format as the background but ignores scroll. |
-| Sprites | 256 objects | Movable objects drawn over or behind the background. |
-| Sprite size | 8x8 pixels for v1 | Sprites reuse character graphics. 8x16 can be added later. |
-| OAM size | 256 sprites * 5 bytes = 1280 bytes | OAM stores the sprite list: tile id, position, attributes, and extended coordinates. |
+- **Tile:** an 8x8 pixel graphic.
+- **Character:** one tile definition stored in a CHR bank.
+- **CHR bank:** 256 character definitions.
+- **Palette bank:** 8 RGB565 colors addressed by decoded color index `0-7`.
+- **Nametable:** a 40x25 grid of character indexes.
+- **Attribute table:** a 40x25 grid of per-cell palette and render attributes.
+- **Overlay:** a fixed screen-space nametable and attribute table for HUDs,
+  menus, dialog, and debug text.
+- **Sprite:** a movable 8x8 object drawn from the sprite CHR bank.
+- **OAM:** Object Attribute Memory, the 256-entry sprite table.
 
-### Display Terms
+## CHR Layout
 
-- **Tile:** An 8x8 pixel graphic. Tiles are the small reusable pieces that make up
-backgrounds and sprites.
-
-- **Character:** A tile definition stored in a character bank. The word
-"character" comes from classic text/tile hardware, but it can represent letters,
-terrain, icons, UI pieces, or sprite artwork.
-
-- **Character bank:** A collection of 256 character definitions. Having 8 banks
-allows software to keep multiple graphic sets resident, such as font tiles, UI
-tiles, background tiles, and sprite tiles.
-
-- **Character plane:** One bitplane inside a character bank. In 3bpp mode,
-plane 0 stores the low bit for every pixel, plane 1 stores the middle bit, and
-plane 2 stores the high bit. In 1bpp mode, each plane is an independent
-monochrome character table.
-
-- **Palette bank:** A collection of 8 actual RGB565 colors. A tile pixel stores a
-small number from `0` to `7`; the selected palette bank converts that number
-into a real color.
-
-- **Nametable:** A background map. Each nametable cell stores a character index,
-which tells the renderer which 8x8 tile to draw at that position.
-
-- **Attribute table:** A cell-attribute map paired with a nametable. Each
-attribute table cell selects the palette bank and render attributes for the
-matching background or overlay tile.
-
-- **Overlay:** A fixed screen-space nametable and attribute table used for HUDs,
-scores, menus, dialog boxes, and other elements that should not move with the
-scrolling viewport.
-
-- **Sprite:** A movable 8x8 object, such as a cursor, player, projectile, or icon.
-Sprites use character graphics too, but their position and attributes come from
-OAM instead of from the nametable.
-
-- **OAM:** Object Attribute Memory. This is the sprite table. Each sprite record
-stores the sprite's character index, X/Y position, attributes, and extended
-coordinate bits.
-
-The client composes the final image from the mirrored state. MIA only needs to
-transmit state changes and frame boundaries.
-
-## Graphics Resources
-
-### Character Banks
-
-Each character bank contains 256 8x8 characters. A bank normally decodes each
-pixel as a 3-bit palette index from 0 to 7. A bank can also be flagged as 1bpp,
-where each plane acts as an independent monochrome character table.
+Each CHR bank contains three 2 KiB bitplanes:
 
 ```text
-1 character = 8 * 8 * 3 bits = 192 bits = 24 bytes
-1 bank      = 256 * 24 bytes = 6144 bytes
-8 banks     = 49152 bytes
+bank + $0000: plane 0, low bit of every pixel
+bank + $0800: plane 1, middle bit of every pixel
+bank + $1000: plane 2, high bit of every pixel
 ```
 
-Character data is planar within each bank. A bank contains three planes:
+Each plane stores 256 characters times 8 rows:
 
 ```text
-bank + 0x0000: plane 0, low bit of every pixel
-bank + 0x0800: plane 1, middle bit of every pixel
-bank + 0x1000: plane 2, high bit of every pixel
+plane_offset = plane * $0800
+row_offset   = character * 8 + row
+byte_addr    = bank_base + plane_offset + row_offset
 ```
 
-Each plane is 2048 bytes:
+Within a row byte, pixel `0` uses bit `0` and pixel `7` uses bit `7`.
+The renderer reconstructs a 3-bit color index from the same row in all three
+planes:
 
 ```text
-256 characters * 8 rows = 2048 bytes
+color = ((plane0_row >> x) & 1)
+      | (((plane1_row >> x) & 1) << 1)
+      | (((plane2_row >> x) & 1) << 2)
 ```
 
-Within a plane, character rows are stored sequentially. Character `N`, row `Y`,
-and plane `P` are addressed as:
+## Palette Layout
+
+There are 16 palette banks. Each bank contains 8 little-endian RGB565 colors:
 
 ```text
-bank_base + P * 0x0800 + N * 8 + Y
+palette_base + palette_id * 16 + color_index * 2
 ```
 
-Each row byte uses little bit order: pixel `0` is bit `0`, and pixel `7` is bit
-`7`. A client reconstructs the 3-bit color index for pixel `X` by reading the
-matching row byte from all three planes:
+Background pixels use all decoded color indexes as visible colors. Overlay and
+sprite pixels treat decoded color `0` as transparent and use decoded colors
+`1-7` as visible colors.
+
+## Background Nametables
+
+Each background nametable is a 40x25 grid:
 
 ```text
-color = ((plane0_row >> X) & 1)
-      | (((plane1_row >> X) & 1) << 1)
-      | (((plane2_row >> X) & 1) << 2)
+table_offset = table_id * 1000
+cell_offset  = y * 40 + x
 ```
 
-This layout uses 24 bytes per character and keeps single-pixel updates simple:
-changing one pixel means setting or clearing the same bit position in three row
-bytes.
-
-If a bank is flagged as 1bpp through `chr_1bpp_mask`, the renderer reads only
-one selected plane for that layer:
+The 8 background tables are arranged as two 2x2 sets:
 
 ```text
-color = (selected_plane_row >> X) & 1
-```
-
-That gives each flagged bank three independent 256-character monochrome tile
-sets. The selected plane comes from `chr_1bpp_planes`. A decoded 1bpp pixel
-always produces color index `0` or `1`; the layer decides whether color index
-`0` is visible or transparent.
-
-### Palette Banks
-
-There are 16 palette banks. Each bank has 8 RGB565 colors.
-
-```text
-1 palette bank = 8 colors * 2 bytes = 16 bytes
-16 banks       = 256 bytes
-```
-
-For background and overlay tiles, each cell in the attribute table selects one
-of these 16 palette banks and controls per-cell tile attributes. For sprites,
-each sprite attribute byte selects one palette bank.
-
-Color index `0` is a normal color for the scrolling background. Color index `0`
-is transparent for sprites and overlay tiles. This rule applies after character
-pixels have been decoded, whether the selected character bank is 3bpp or 1bpp:
-
-| Layer | Decoded color `0` | Decoded color `1` |
-| - | - | - |
-| Background | Palette color `0` | Palette color `1` |
-| Sprite | Transparent | Palette color `1` |
-| Overlay | Transparent | Palette color `1` |
-
-### Nametables
-
-Each nametable is a 40x25 grid of character indexes.
-
-```text
-1 nametable = 40 * 25 = 1000 bytes
-4 tables    = 4000 bytes per scrolling set
-8 tables    = 8000 bytes total
-```
-
-Nametables are arranged as two 2x2 sets. `active_set` selects which set the
-renderer uses:
-
-```text
-active_set 0:
+BG_ACTIVE_SET 0:
   table 0  table 1
   table 2  table 3
 
-active_set 1:
+BG_ACTIVE_SET 1:
   table 4  table 5
   table 6  table 7
 ```
 
-The simplest mode uses one active nametable. Pair modes use two nametables as a
-larger scrolling surface. Mode `3` uses all four nametables in the active set,
-giving an 80x50-cell surface, or 640x400 pixels, behind the 320x200 viewport:
+`BG_SCROLL_MODE` controls how much of the active set is used:
 
-| Mode | Meaning |
-| - | - |
-| `0` | Single 40x25 nametable using the active set's top-left table. |
-| `1` | Horizontal 80x25 plane using the active set's top row. |
-| `2` | Vertical 40x50 plane using the active set's left column. |
-| `3` | Four-way 80x50 plane using the full 2x2 active set. |
+| Mode | Plane | Tables Used |
+| ---: | --- | --- |
+| `0` | 40x25 cells | top-left table |
+| `1` | 80x25 cells | top row |
+| `2` | 40x50 cells | left column |
+| `3` | 80x50 cells | full 2x2 set |
 
-For scrolling games, software normally updates offscreen rows or columns in the
-active set while the viewport moves. The inactive set is optional staging space:
-software can use it to prepare a new screen, menu, room, transition, or scratch
-background and then switch `active_set` at the next frame boundary. Software
-does not need to keep both sets synchronized during normal scrolling.
+The attribute tables use the same table id and cell layout as the nametables.
 
-### Attribute Tables
+## Attribute Bytes
 
-Each background attribute table matches a background nametable cell-for-cell.
-The overlay attribute table uses the same byte format and also matches its
-overlay nametable cell-for-cell:
+Background and overlay attribute bytes share the same layout:
 
-```text
-1 attribute table   = 40 * 25 = 1000 bytes
-4 background tables = 4000 bytes per scrolling set
-8 background tables = 8000 bytes total
-1 overlay table     = 1000 bytes
-```
+| Bits | Name | Meaning |
+| ---: | --- | --- |
+| `0-3` | `PAL` | palette bank `0-15` |
+| `4` | `FLIP_X` | mirror character horizontally |
+| `5` | `FLIP_Y` | mirror character vertically |
+| `6` | `PRIORITY` | nonzero pixels are foreground pixels above sprites |
+| `7` | `CHR_ALT` | use the layer's alternate CHR bank |
 
-Recommended v1 attribute byte layout:
+For background cells, `CHR_ALT` selects between `BG_CHR_BANK` and
+`BG_ALT_CHR_BANK`. For overlay cells, it selects between `OVERLAY_CHR_BANK` and
+`OVERLAY_ALT_CHR_BANK`.
 
-| Bits | Name | Description |
-| - | - | - |
-| `0-3` | `PAL` | Palette bank id, 0 to 15. |
-| `4` | `FLIP_X` | Draw the character mirrored horizontally. |
-| `5` | `FLIP_Y` | Draw the character mirrored vertically. |
-| `6` | `PRIORITY` | Nonzero pixels of this cell are foreground pixels above sprites. |
-| `7` | `CHR_ALT` | `0` = use the layer's primary character bank, `1` = use the layer's alternate character bank. |
+## Overlay
 
-`FLIP_X` and `FLIP_Y` reduce duplicate character art for mirrored slopes,
-corners, borders, decorations, and UI pieces.
+The overlay is a fixed 40x25 screen-space layer. Overlay cell `(0, 0)` always
+maps to the top-left 8x8 pixels of the final 320x200 screen. Overlay rendering
+ignores `SCROLL_X`, `SCROLL_Y`, `BG_ACTIVE_SET`, and `BG_SCROLL_MODE`.
 
-`PRIORITY` lets a background or overlay cell act like a foreground object. The
-renderer still draws the cell as part of its tile layer, but its nonzero pixels
-hide sprite pixels at the same screen positions. This is useful for scenery that
-should appear in front of sprites, such as pillars, trees, door frames,
-railings, UI frames, score bars, or dialog boxes. This is separate from sprite
-priority: sprite priority moves a whole sprite behind all nonzero background
-pixels, while cell priority marks specific cells as foreground.
+Overlay color `0` is transparent. Nonzero overlay pixels are drawn with the
+selected palette. Overlay priority cells also hide sprite pixels at the same
+screen positions.
 
-`CHR_ALT` gives each background or overlay cell one extra character-bank
-selection bit. The nametable byte still selects a character index from `0` to
-`255`; `CHR_ALT` chooses whether that index is read from the layer's primary or
-alternate character bank. For the scrolling background, those banks are
-`bg_chr_bank` and `bg_chr_bank_alt`. For the fixed overlay, they are
-`overlay_chr_bank` and `overlay_chr_bank_alt`. This allows a layer to mix two
-256-character sets without widening the nametable.
+## OAM
 
-### Fixed Overlay
+OAM stores 256 sprite records. Each record is 5 bytes:
 
-The fixed overlay is a 40x25 screen-space tilemap intended for HUDs, scores,
-menus, dialog boxes, and debug/status text. It has one nametable and one matching
-attribute table:
+| Byte | Name | Meaning |
+| ---: | --- | --- |
+| `0` | `TILE` | character index in `SPRITE_CHR_BANK` |
+| `1` | `X` | low 8 bits of signed screen X |
+| `2` | `Y` | low 8 bits of signed screen Y |
+| `3` | `ATTR` | palette and render attributes |
+| `4` | `EXT` | extended coordinates and flags |
 
-```text
-overlay nametable       = 40 * 25 = 1000 bytes
-overlay attribute table = 40 * 25 = 1000 bytes
-```
+`ATTR` layout:
 
-The overlay uses the same nametable and attribute byte formats as the scrolling
-background, but it is not affected by `scroll_x` or `scroll_y`. Overlay cell
-`(0, 0)` always maps to the top-left 8x8 pixels of the final 320x200 screen.
+| Bits | Name | Meaning |
+| ---: | --- | --- |
+| `0-3` | `PAL` | palette bank `0-15` |
+| `4` | `PRIORITY` | sprite goes behind nonzero background pixels |
+| `5` | `FLIP_X` | mirror sprite horizontally |
+| `6` | `FLIP_Y` | mirror sprite vertically |
+| `7` | reserved | zero |
 
-Overlay color index `0` is transparent, matching sprite transparency. Nonzero
-overlay pixels are drawn with the selected palette. If an overlay cell's
-`PRIORITY` bit is set, its nonzero pixels also hide sprite pixels at the same
-screen positions. This gives software explicit control over whether sprites can
-pass in front of or behind HUD elements.
+`EXT` layout:
 
-### OAM
+| Bits | Name | Meaning |
+| ---: | --- | --- |
+| `0-1` | `X_HI` | bits 8-9 of signed 10-bit X |
+| `2` | `Y_HI` | bit 8 of signed 9-bit Y |
+| `3` | `DISABLE` | hide sprite when set |
+| `4-7` | reserved | zero |
 
-Object Attribute Memory stores 256 sprite records.
-
-```text
-1 sprite = 5 bytes
-256 sprites = 1280 bytes
-```
-
-Recommended v1 sprite layout:
-
-| Byte | Name | Description |
-| - | - | - |
-| `0` | `TILE` | Character index within the active sprite character bank. |
-| `1` | `X` | Low 8 bits of the signed sprite screen X coordinate. |
-| `2` | `Y` | Low 8 bits of the signed sprite screen Y coordinate. |
-| `3` | `ATTR` | Palette and render attributes. |
-| `4` | `EXT` | Extended coordinate bits and object flags. |
-
-Recommended `ATTR` layout:
-
-| Bits | Name | Description |
-| - | - | - |
-| `0-3` | `PAL` | Palette bank id, 0 to 15. |
-| `4` | `PRIORITY` | `0` = in front of background, `1` = behind nonzero background pixels. |
-| `5` | `FLIP_X` | Horizontal flip. |
-| `6` | `FLIP_Y` | Vertical flip. |
-| `7` | Reserved | Must be zero for v1. |
-
-Recommended `EXT` layout:
-
-| Bits | Name | Description |
-| - | - | - |
-| `0-1` | `X_HI` | Bits 8-9 of a signed 10-bit sprite screen X coordinate. |
-| `2` | `Y_HI` | Bit 8 of a signed 9-bit sprite screen Y coordinate. |
-| `3` | `DISABLE` | `1` hides the sprite. |
-| `4-7` | Reserved | Must be zero for v1. |
-
-The renderer sign-extends X from 10 bits and Y from 9 bits. This gives sprites
-enough range to enter and leave the 320x200 viewport smoothly:
+The renderer sign-extends X from 10 bits and Y from 9 bits:
 
 ```text
 X range: -512 to 511
 Y range: -256 to 255
 ```
 
-Sprite coordinates are screen-space coordinates, relative to the top-left corner
-of the final 320x200 viewport. They are signed so sprites can be partially
-offscreen to the left or top without special cases. If a game tracks objects in
-world coordinates, the 6502 computes screen-space OAM coordinates before writing
-the sprite record:
+## Render Order
 
-```text
-sprite_screen_x = object_world_x - scroll_x
-sprite_screen_y = object_world_y - scroll_y
+The client composes one frame in this order:
+
+1. backdrop color,
+2. scrolling background,
+3. sprites that are not hidden by priority,
+4. foreground background/overlay priority pixels,
+5. overlay pixels.
+
+The exact implementation can optimize that order, but the visible result uses
+those priority rules.
+
+## Fast Video Indexes
+
+MIA reserves high index IDs for common video writes. These indexes are
+initialized by `VIDEO_ENABLE` and restored by reset. Programs select them with
+`IDXA_SELECTOR` (`$FFE1`) or `IDXB_SELECTOR` (`$FFE5`) and then stream bytes
+through the matching port.
+
+All fast video indexes use step-on-write and wrap. Small control registers wrap
+over exactly their field size, so repeated writes need no address preparation.
+
+| Index | Name | Address Range | Length | Use |
+| ---: | --- | ---: | ---: | --- |
+| `$80` | `VIDX_SCROLL_X` | `$00008-$00009` | 2 | write `SCROLL_X` low, high, repeat |
+| `$81` | `VIDX_SCROLL_Y` | `$0000A-$0000B` | 2 | write `SCROLL_Y` low, high, repeat |
+| `$82` | `VIDX_BG_PLANE` | `$0000C-$0000D` | 2 | write `BG_ACTIVE_SET`, `BG_SCROLL_MODE`, repeat |
+| `$83` | `VIDX_BANK_SELECT` | `$0000E-$00012` | 5 | write bg, bg alt, overlay, overlay alt, sprite banks |
+| `$84` | `VIDX_LAYER_ENABLE` | `$00003-$00003` | 1 | write layer enable flags |
+| `$85` | `VIDX_OAM_COUNT` | `$00014-$00015` | 2 | write active sprite count low, high, repeat |
+| `$86` | `VIDX_FRAME_FLAGS` | `$00016-$00017` | 2 | write frame flags and commit flags |
+| `$87` | `VIDX_VIDEO_STATUS` | `$00002-$00002` | 1 | read `VIDEO_STATUS` |
+| `$88` | `VIDX_PALETTE` | `$00100-$001FF` | 256 | stream palette bytes |
+| `$89` | `VIDX_OAM` | `$10850-$10D4F` | 1,280 | stream sprite records |
+| `$8A` | `VIDX_OVERLAY_NT` | `$10080-$10467` | 1,000 | stream overlay nametable |
+| `$8B` | `VIDX_OVERLAY_ATTR` | `$10468-$1084F` | 1,000 | stream overlay attributes |
+| `$90-$97` | `VIDX_CHR_BANK_0-7` | bank base | 6,144 | stream one CHR bank |
+| `$A0-$A7` | `VIDX_BG_NT_0-7` | table base | 1,000 | stream one background nametable |
+| `$A8-$AF` | `VIDX_BG_ATTR_0-7` | table base | 1,000 | stream one background attribute table |
+
+For example, after selecting `$80`, every two writes update `SCROLL_X` and the
+index returns to `SCROLL_X` low:
+
+```asm
+lda #$80        ; VIDX_SCROLL_X
+sta $FFE1       ; IDXA_SELECTOR
+
+lda scroll_x_lo
+sta $FFE0       ; SCROLL_X low
+lda scroll_x_hi
+sta $FFE0       ; SCROLL_X high, index wraps
 ```
 
-## Proposed MIA RAM Layout
-
-This layout fits inside the current 128 KiB MIA RAM region.
-
-| Start | Size | End | Description |
-| - | - | - | - |
-| `0x00000` | `0x0100` | `0x000FF` | Video control block |
-| `0x00100` | `0x0100` | `0x001FF` | 16 palette banks |
-| `0x00200` | `0xC000` | `0x0C1FF` | 8 character banks |
-| `0x0C200` | `0x1F40` | `0x0E13F` | 8 background nametables |
-| `0x0E140` | `0x1F40` | `0x1007F` | 8 background attribute tables |
-| `0x10080` | `0x0500` | `0x1057F` | Sprite OAM |
-| `0x10580` | `0x0100` | `0x1067F` | Dirty flags and generation counters |
-| `0x10680` | `0x03E8` | `0x10A67` | Overlay nametable |
-| `0x10A68` | `0x03E8` | `0x10E4F` | Overlay attribute table |
-| `0x10E50` | `0x01B0` | `0x10FFF` | Reserved video expansion |
-| `0x11000` | `0x0F000` | `0x1FFFF` | Free MIA RAM for other uses |
-
-The video region consumes about 68 KiB, leaving about 60 KiB for non-video MIA
-features and user data.
-
-## Preconfigured Indexes
-
-Video reserves a stable range of indexes from the 256-index descriptor table.
-
-| Index | Purpose | Default address | Length |
-| - | - | - | - |
-| `16-23` | Character banks 0-7 | `0x00200 + bank * 0x1800` | `0x1800` |
-| `32-47` | Palette banks 0-15 | `0x00100 + bank * 0x10` | `0x10` |
-| `48-55` | Background nametables 0-7 | `0x0C200 + table * 1000` | `1000` |
-| `56-63` | Background attribute tables 0-7 | `0x0E140 + table * 1000` | `1000` |
-| `64` | Sprite OAM | `0x10080` | `1280` |
-| `65` | Video control block | `0x00000` | `256` |
-| `66` | Dirty flags | `0x10580` | `256` |
-| `67` | Overlay nametable | `0x10680` | `1000` |
-| `68` | Overlay attribute table | `0x10A68` | `1000` |
-| `69-79` | Reserved video indexes | varies | varies |
-
-Each video index should be initialized with:
-
-```text
-current_addr = default_addr
-default_addr = region start
-limit_addr   = region end + 1
-step         = 1
-flags        = W_STP_ENA | R_STP_ENA | WRAP_ENA
-```
-
-For bulk writes from the 6502, software selects one of these indexes in `IDX A`
-or `IDX B`, then streams bytes through the corresponding data port.
-
-## Video Control Block
-
-The control block is the small register-like structure mirrored to the video
-client. Multi-byte fields are little-endian. The network packet header carries
-the `MIAV` signature and protocol version, so the RAM control block starts
-directly with drawing state. Frame presentation and publisher bookkeeping come
-after the render-facing fields.
-
-Drawing state:
-
-| Offset | Size | Name | Description |
-| - | - | - | - |
-| `0x00` | 1 | `mode` | Selects the overall video engine. `0` = disabled, `1` = tile/sprite mode at 320x200. |
-| `0x01` | 1 | `active_set` | `0` = tables 0-3, `1` = tables 4-7. |
-| `0x02` | 1 | `viewport_mode` | `0` single table, `1` horizontal pair, `2` vertical pair, `3` 2x2 four-way plane. |
-| `0x03` | 1 | `render_flags` | Render enable bits. |
-| `0x04` | 2 | `scroll_x` | Unsigned top-left viewport X position in pixels within the active background plane. |
-| `0x06` | 2 | `scroll_y` | Unsigned top-left viewport Y position in pixels within the active background plane. |
-| `0x08` | 1 | `bg_chr_bank` | Primary character bank used for background tiles. |
-| `0x09` | 1 | `bg_chr_bank_alt` | Alternate background character bank used when cell attribute `CHR_ALT` is set. |
-| `0x0A` | 1 | `sprite_chr_bank` | Character bank used for sprites. |
-| `0x0B` | 1 | `bg_color` | Optional backdrop palette index. |
-| `0x0C` | 1 | `overlay_chr_bank` | Primary character bank used for overlay tiles. |
-| `0x0D` | 1 | `overlay_chr_bank_alt` | Alternate overlay character bank used when overlay cell attribute `CHR_ALT` is set. |
-| `0x0E` | 1 | `chr_1bpp_mask` | Bit mask selecting which character banks decode as 1bpp. |
-| `0x0F` | 1 | `chr_1bpp_planes` | Plane selectors for 1bpp background, sprite, and overlay rendering. |
-
-`mode` selects how the whole video memory region should be interpreted. In v1,
-only two values are defined:
-
-| Value | Meaning |
-| - | - |
-| `0` | Video disabled. The client should not render a screen from this state. |
-| `1` | Tile/sprite mode. The client renders a 320x200 viewport from character banks, palettes, background tables, overlay tables, and OAM. |
-
-`viewport_mode` is separate. It only controls how many nametables make up the
-background plane inside tile/sprite mode. For example, `mode = 1` and
-`viewport_mode = 3` means "use the tile/sprite renderer, with four nametables
-arranged as one 80x50-cell scrolling plane."
-
-`scroll_x` and `scroll_y` are unsigned 16-bit background-space coordinates. They
-are the complete smooth-scroll position. MIA does not need separate coarse and
-fine scroll fields because the renderer can derive them directly:
-
-```text
-coarse_col = scroll_x >> 3
-fine_x     = scroll_x & 7
-
-coarse_row = scroll_y >> 3
-fine_y     = scroll_y & 7
-```
-
-In four-way mode, the active background plane is 80x50 cells, or 640x400 pixels.
-The renderer uses the coarse tile position to choose the nametable cell and the
-fine pixel position to draw partially visible edge tiles. For example,
-`scroll_x = 20` and `scroll_y = 12` starts the viewport two full tiles plus four
-pixels from the left, and one full tile plus four pixels from the top.
-
-This gives the video state two explicit coordinate spaces:
-
-| Field | Coordinate space | Signed? | Meaning |
-| - | - | - | - |
-| `scroll_x`, `scroll_y` | Background plane | No | Where the viewport starts inside the active nametable plane. |
-| OAM `X`, `Y` | Screen/viewport | Yes | Where a sprite is drawn on the final 320x200 screen. |
-
-Recommended `render_flags` bits:
-
-| Bit | Name | Description |
-| - | - | - |
-| `0` | `ENABLE_BG` | Render background. |
-| `1` | `ENABLE_SPRITES` | Render sprites. |
-| `2` | `ENABLE_OVERLAY` | Render the fixed overlay tilemap. |
-| `3-7` | Reserved | Must be zero for v1. |
-
-Recommended `chr_1bpp_mask` bits:
-
-| Bit | Name | Description |
-| - | - | - |
-| `0-7` | `BANK_N_1BPP` | Bit `N` selects 1bpp decoding for character bank `N`; clear means normal 3bpp decoding. |
-
-Recommended `chr_1bpp_planes` layout:
-
-| Bits | Name | Description |
-| - | - | - |
-| `0-1` | `BG_PLANE` | Character plane used when the selected background bank is 1bpp. |
-| `2-3` | `SPRITE_PLANE` | Character plane used when the selected sprite bank is 1bpp. |
-| `4-5` | `OVERLAY_PLANE` | Character plane used when the selected overlay bank is 1bpp. |
-| `6-7` | Reserved | Must be zero for v1. |
-
-For each plane selector, values `0`, `1`, and `2` select character planes 0, 1,
-and 2. Value `3` is reserved. A layer uses its plane selector only when the
-selected character bank's bit is set in `chr_1bpp_mask`; otherwise the bank is
-decoded as normal 3bpp character data.
-
-Frame and publisher state:
-
-| Offset | Size | Name | Description |
-| - | - | - | - |
-| `0x10` | 1 | `target_fps` | Suggested publish rate, usually 25 or 30. |
-| `0x11` | 1 | `present_flags` | Frame present hints. |
-| `0x12` | 2 | `frame_id` | Incremented by the 6502 when a frame is ready. |
-| `0x14` | 1 | `sync_flags` | Publisher and synchronization hints. |
-| `0x15` | 1 | `reserved_sync` | Reserved for future sync state. |
-| `0x16` | 2 | `dirty_mask_low` | Optional dirty region bits, low word. |
-| `0x18` | 2 | `dirty_mask_high` | Optional dirty region bits, high word. |
-| `0x1A` | 6 | `reserved` | Reserved for timing and transport metadata. |
-| `0x20` | 224 | `future` | Reserved. |
-
-Recommended `present_flags` bits:
-
-| Bit | Name | Description |
-| - | - | - |
-| `0` | `PRESENT` | 6502 toggles or sets when a coherent frame is ready. |
-| `1` | `FORCE_FULL_FRAME` | Publisher should send full active background tables, overlay tables, and OAM. |
-| `2` | `FORCE_RESOURCE_SYNC` | Publisher should send all palettes and character banks. |
-| `3-7` | Reserved | Must be zero for v1. |
-
-Recommended `sync_flags` bits:
-
-| Bit | Name | Description |
-| - | - | - |
-| `0` | `REQUEST_KEYFRAME` | Client or 6502 may request a full sync. |
-| `1` | `FRAME_LOCK` | 6502 is updating active state; publisher should wait. |
-| `2-7` | Reserved | Must be zero for v1. |
-
-## CPU Programming Model
-
-From the 6502 side, video memory is just MIA RAM behind indexes.
-
-### Writing a Palette Bank
-
-1. Select the palette bank index in `IDXA_SELECT`.
-2. Write 16 bytes to `IDXA_PORT`.
-3. The preconfigured index auto-steps and wraps at the palette bank limit.
-
-Example: palette bank 3 uses MIA index `35`.
-
-```text
-write $FFE1 = 35      ; select index 35 in window A
-write $FFE0 = color0 low
-write $FFE0 = color0 high
-...
-write $FFE0 = color7 high
-```
-
-### Writing a Character
-
-Character bank 0 uses index `16`. Because character data is planar, character
-`N` has one 8-byte row block in each plane:
-
-```text
-plane 0 rows: 0x00200 + 0x0000 + N * 8
-plane 1 rows: 0x00200 + 0x0800 + N * 8
-plane 2 rows: 0x00200 + 0x1000 + N * 8
-```
-
-Each block stores rows `0` through `7`. A full-bank stream writes all of plane
-`0`, then all of plane `1`, then all of plane `2`.
-
-When a bank is flagged as 1bpp, those same three planes become three independent
-monochrome character tables. Software can update only the plane it is using for
-a font, HUD icon set, sprite mask, or other 1bpp art.
-
-The current firmware does not yet expose direct configuration for arbitrary
-index current addresses. The first implementation should therefore add helper
-commands or preconfigured sub-indexes if software needs random character
-updates. The simpler first path is to stream an entire character bank at boot or
-asset-load time.
-
-### Updating a Nametable Cell
-
-Nametable 0 uses index `48`. Cell `(x, y)` starts at:
-
-```text
-0x0C200 + y * 40 + x
-```
-
-For table `T`, use:
-
-```text
-0x0C200 + T * 1000 + y * 40 + x
-```
-
-The matching attribute table uses index `56 + T` and starts at:
-
-```text
-0x0E140 + T * 1000 + y * 40 + x
-```
-
-### Updating an Overlay Cell
-
-The overlay nametable uses index `67`. Cell `(x, y)` starts at:
-
-```text
-0x10680 + y * 40 + x
-```
-
-The matching overlay attribute table uses index `68` and starts at:
-
-```text
-0x10A68 + y * 40 + x
-```
-
-Overlay cell coordinates are screen-space tile coordinates. Cell `(0, 0)` is
-always the top-left tile of the final 320x200 screen.
-
-For efficient random cell updates, the firmware should eventually expose one of
-these mechanisms:
-
-- A command to set the current address of any index.
-- A command to seek a preconfigured video index by offset.
-- A small video command queue in MIA RAM.
-
-Until that exists, sequential writes are easy and random writes are awkward.
-
-### Presenting a Frame
-
-When using the inactive 2x2 set for a page flip, the 6502 should finish writing
-that set, then write the control block fields:
-
-```text
-active_set = next set
-frame_id   = frame_id + 1
-present_flags.PRESENT toggled or set
-```
-
-For scrolling within the active set, software can instead update offscreen rows
-or columns, change `scroll_x` and `scroll_y`, and present a new `frame_id`.
-
-The network publisher treats `frame_id` changes as frame boundaries.
+The general-purpose index configuration path remains available for custom
+ranges. Fast video indexes exist so hot per-frame fields do not need descriptor
+setup.
 
 ## Dirty Tracking
 
-A simple publisher can send a complete active mode-3 frame package at every
-publish interval:
+MIA tracks dirty video state in 64-byte pages. A write through an indexed window
+into video memory sets the matching dirty page bit. Core 1 performs only this
+small dirty mark; core 0 expands dirty pages into protocol records after a frame
+is committed.
+
+For the full 128 KiB MIA RAM, a 64-byte dirty map is:
 
 ```text
-4 background nametables = 4000 bytes
-4 background attributes = 4000 bytes
-overlay nametable       = 1000 bytes
-overlay attribute table = 1000 bytes
-OAM                     = 1280 bytes
-control block           = 256 bytes
-total                   = 11536 bytes, about 11.3 KiB per frame
+128 KiB / 64 B = 2048 pages
+2048 bits = 256 bytes
 ```
 
-At 25 FPS this is about 282 KiB/s. At 30 FPS this is about 338 KiB/s. That is
-still well within a realistic Wi-Fi budget for Pico W-class hardware.
+Packet construction, range coalescing, fill-record detection, retry queues, and
+client bookkeeping all run on core 0.
 
-After the full-frame path works, add dirty tracking:
+## Commit Semantics
 
-| Region | Recommended dirty granularity |
-| - | - |
-| Palette banks | 1 palette bank, 16 bytes |
-| Character banks | 1 3bpp character across 3 planes, 24 bytes total; or 1 1bpp character in one plane, 8 bytes |
-| Background nametables | range of cells or 40-byte row |
-| Background attribute tables | range of cells or 40-byte row |
-| Overlay nametable | range of cells or 40-byte row |
-| Overlay attribute table | range of cells or 40-byte row |
-| OAM | 1 sprite record, 5 bytes |
-| Control block | whole block or changed range |
+`VIDEO_COMMIT_FRAME` is the frame boundary.
 
-Dirty marking must stay cheap. If marking happens in the index write path, it
-should only set a byte, bit, or generation counter. The main loop can later
-expand those flags into packets.
+When the 6502 commits a frame, MIA:
 
-An alternative is shadow comparison: the publisher keeps a shadow copy of video
-regions and diffs them every frame. That keeps the bus path clean but costs more
-background CPU time. For v1, a hybrid approach is reasonable:
+1. accepts or coalesces the current dirty state according to backpressure,
+2. increments `FRAME_ID` for accepted frame boundaries,
+3. captures the current dirty page set into a pending frame job,
+4. clears the active dirty set for future writes,
+5. updates `VIDEO_CAN_COMMIT`,
+6. transmits the pending frame when the client requests it.
 
-- Send full active frame packages first.
-- Add explicit dirty bits for palettes, OAM, and control.
-- Add row-level or tile-level dirty tracking for background and overlay tables.
-- Add character-level dirty tracking for character banks when dynamic character
-  updates become common.
+Frame update records are absolute writes into the client mirror. Applying an
+update does not depend on previous contents. Packet loss is repaired by missing
+chunk retransmission or by a new snapshot.
 
-## Wi-Fi Transport
+`VIDEO_CAN_COMMIT` changes from `1` to `0` when MIA cannot retain another
+distinct frame boundary. The common trigger is `VIDEO_COMMIT_FRAME` filling the
+pending frame queue. It also goes false while video is disabled, while packet
+staging memory is exhausted, or while snapshot/repair work consumes the retained
+frame budget.
 
-Use UDP for video data. A dropped frame update is better than blocking the 6502
-or building a backlog.
+`VIDEO_CAN_COMMIT` changes from `0` to `1` when MIA has room for another
+non-coalesced frame. Common triggers are client acknowledgements, completed
+repairs, completed snapshots, freed packet staging buffers, or a client
+disconnect that returns video to headless mode.
 
-The current `lwipopts.h` uses small packet buffers:
+Calling `VIDEO_COMMIT_FRAME` does not always make `VIDEO_CAN_COMMIT` false. If
+queue capacity remains, the flag stays true. If the commit fills the last
+available retained-frame slot, it becomes false immediately after the commit.
+
+If a free-running program commits while `VIDEO_CAN_COMMIT` is false, MIA
+coalesces the newest dirty state into the latest pending frame job instead of
+adding a distinct queue entry. The client can observe gaps in `FRAME_ID`, but it
+does not desync because the transmitted records are absolute.
+
+## Video Events and IRQ
+
+Video events are latched in `VIDEO_EVENT_STATUS`. Writing `1` to a bit clears
+that event bit. `VIDEO_IRQ_ENABLE` selects which latched events assert the MIA
+video IRQ source.
+
+| Bit | Event | Meaning |
+| ---: | --- | --- |
+| 0 | `VIDEO_EVENT_CAN_COMMIT_RISE` | `VIDEO_CAN_COMMIT` changed `0 -> 1` |
+| 1 | `VIDEO_EVENT_CAN_COMMIT_FALL` | `VIDEO_CAN_COMMIT` changed `1 -> 0` |
+| 2 | `VIDEO_EVENT_CLIENT_CHANGE` | `VIDEO_CLIENT_CONNECTED` changed |
+| 3 | `VIDEO_EVENT_RESYNC` | active client entered snapshot/resync |
+
+When `(VIDEO_EVENT_STATUS & VIDEO_IRQ_ENABLE) != 0`, MIA sets
+`IRQ_VIDEO_EVENT` (`$0020`) in the normal `IRQ_STATUS` register. The 6502
+enables delivery with the normal `IRQ_MASK` register. A program that only wants
+a wake-up when video becomes available sets `VIDEO_IRQ_ENABLE` to
+`VIDEO_EVENT_CAN_COMMIT_RISE` and enables `IRQ_VIDEO_EVENT`.
+
+## Local and Video-Paced Programs
+
+The client chooses transport parameters. The 6502 program chooses timing.
+
+In local/free-running mode, the 6502 program updates game state and commits
+frames at its own pace. If the network falls behind, MIA coalesces unsent frame
+state so the client jumps to a newer state. The game simulation keeps running.
+
+In video-paced mode, the 6502 program waits for `VIDEO_CAN_COMMIT` before
+building and committing the next frame. On a poor network the game slows down,
+similar to a raster-timed machine that has run out of video time, but accepted
+frame boundaries are retained instead of intentionally skipped.
+
+## Client Parameters
+
+The client requests transport parameters during session setup:
+
+- target frame rate,
+- maximum in-flight frame responses,
+- maximum UDP payload size,
+- bandwidth hint,
+- repair timeout.
+
+MIA returns the accepted values and enforces them for that session.
+`max_in_flight` affects transport buffering only. It does not force the 6502
+program to wait; waiting is controlled by the program through
+`VIDEO_CAN_COMMIT`.
+
+## Packet Size Target
+
+The application UDP payload is 512 bytes. The 32-byte protocol header lives
+inside that payload, leaving up to 480 bytes for records in each packet. This
+fits the current lwIP pbuf configuration and leaves room for UDP/IP overhead.
+
+The full 67.3 KiB snapshot takes:
 
 ```text
-PBUF_POOL_BUFSIZE = 592
-TCP_MSS           = 536
+68,944 / 480 = 144 chunks
 ```
 
-For the first UDP protocol, keep payloads at or below 512 bytes. This avoids IP
-fragmentation and fits the current buffer configuration with room for headers.
+Snapshots are used for client startup and resync. Normal frame updates are
+dirty records and are typically hundreds of bytes to a few KiB.
 
-### Connection Model
+## Firmware Service Loop
 
-The first connection model should be unicast UDP:
-
-1. Client sends `HELLO` to MIA.
-2. MIA records the client's IP and port.
-3. MIA sends `WELCOME`.
-4. MIA sends a full snapshot.
-5. MIA starts periodic frame/update packets.
-
-MIA can run either:
-
-- As a station on an existing Wi-Fi network.
-- As a Pico-created access point for direct laptop connection.
-
-AP mode is attractive for demos because any computer can join the MIA network
-without router configuration. STA mode is nicer for development.
-
-### Packet Header
-
-All multi-byte fields are little-endian.
+The firmware links `pico_cyw43_arch_lwip_poll`, so the main loop polls Wi-Fi
+explicitly:
 
 ```c
-typedef struct {
-    uint8_t  magic[4];       // "MIAV"
-    uint8_t  version;        // 1
-    uint8_t  type;           // packet type
-    uint8_t  header_len;     // bytes, including extensions
-    uint8_t  flags;          // packet flags
-    uint32_t session_id;     // random per client session
-    uint32_t frame_id;       // frame/control generation
-    uint16_t sequence;       // packet sequence within session
-    uint16_t chunk_index;    // chunk number for multi-packet payloads
-    uint16_t chunk_count;    // total chunks for this message
-    uint8_t  resource_type;  // palette, chr, nametable, etc.
-    uint8_t  resource_id;    // bank/table/sprite id as applicable
-    uint32_t offset;         // byte offset within the resource
-    uint16_t payload_len;    // bytes after this header
-    uint16_t crc16;          // optional; 0 means unused
-} mia_video_packet_t;
+while (true) {
+    mia_handle_reset_request();
+    mia_service();
+    cyw43_arch_poll();
+    mia_video_service();
+    update_onboard_led_blink();
+    tight_loop_contents();
+}
 ```
 
-Recommended packet types:
-
-| Type | Direction | Purpose |
-| - | - | - |
-| `0x01` | Client to MIA | `HELLO` |
-| `0x02` | MIA to client | `WELCOME` |
-| `0x03` | MIA to client | `SNAPSHOT_BEGIN` |
-| `0x04` | MIA to client | `RESOURCE_CHUNK` |
-| `0x05` | MIA to client | `FRAME_BEGIN` |
-| `0x06` | MIA to client | `FRAME_UPDATE` |
-| `0x07` | MIA to client | `FRAME_END` |
-| `0x08` | Client to MIA | `REQUEST_SNAPSHOT` |
-| `0x09` | Client to MIA | `REQUEST_RESOURCE` |
-| `0x0A` | Bidirectional | `PING` or `HEARTBEAT` |
-
-Recommended resource types:
-
-| Type | Resource |
-| - | - |
-| `0x01` | Video control block |
-| `0x02` | Palette bank |
-| `0x03` | Character bank |
-| `0x04` | Background nametable |
-| `0x05` | Background attribute table |
-| `0x06` | OAM |
-| `0x07` | Overlay nametable |
-| `0x08` | Overlay attribute table |
-| `0x09` | Dirty metadata |
-
-### Reliability Strategy
-
-UDP needs a simple recovery model.
-
-Critical state:
-
-- Palette banks
-- Character banks
-- Full snapshots
-- Control block layout/version changes
-
-Opportunistic state:
-
-- Per-frame OAM updates
-- Per-frame nametable updates
-- Per-frame overlay table updates
-- Frame boundary packets
-
-Recommended v1 behavior:
-
-- Client requests a full snapshot when it detects missing snapshot chunks.
-- Client requests individual resources when critical chunks are missing.
-- MIA sends periodic keyframes, such as every 1 to 5 seconds.
-- The client and publisher should never queue stale frame updates to preserve
-  playback order. The newest coherent `frame_id` wins.
-- MIA may ignore stale frame updates if a newer `frame_id` has arrived.
-- Client renders the newest coherent state it has.
-
-This avoids TCP head-of-line blocking while still allowing the client to recover
-from packet loss. It also bounds display latency: a congested link may drop
-intermediate frames, but it should not become a delayed video feed.
-
-## Publisher Timing
-
-The publisher should live in the main loop or another non-bus-critical service
-path.
-
-Recommended service order:
-
-```text
-main loop:
-    mia_handle_reset_request()
-    mia_service()
-    cyw43_arch_poll()
-    mia_video_service()
-    update_onboard_led_blink()
-```
-
-`mia_video_service()` should:
-
-1. Return immediately if Wi-Fi is not initialized or no client is connected.
-2. Return immediately if the next frame interval has not elapsed.
-3. Read the video control block.
-4. If a snapshot is pending, send snapshot chunks over several service calls.
-5. Otherwise send dirty updates or the full active frame package.
-6. Never busy-wait for network buffers.
-7. Never touch the PIO bus fast path.
-
-## Client Renderer
-
-The client keeps a local mirror:
-
-```text
-control block
-16 palette banks
-8 character banks
-8 background nametables
-8 background attribute tables
-overlay nametable
-overlay attribute table
-OAM
-```
-
-Rendering steps:
-
-1. Clear the output to the backdrop color.
-2. Render background tiles if `render_flags.ENABLE_BG` is set, applying each
-   cell's palette, flip, character-bank, and priority attributes. Track all
-   nonzero background pixels for sprite priority, and track nonzero pixels from
-   `PRIORITY` cells in a foreground mask.
-3. Render overlay tiles if `render_flags.ENABLE_OVERLAY` is set. Overlay color
-   index `0` is transparent. Track nonzero pixels from overlay `PRIORITY` cells
-   in the same foreground mask.
-4. Render sprites with transparency if `render_flags.ENABLE_SPRITES` is set.
-   Sprite pixels should be hidden behind nonzero background pixels when the
-   sprite's `PRIORITY` bit requests it, and behind nonzero background or
-   overlay pixels already marked in the foreground mask.
-5. Present the final 320x200 image, usually scaled to a larger window.
-
-The client can be written in Go, TypeScript, Python, C, or any language with UDP
-and a simple pixel surface. The Go emulator repo is a natural place for the
-first client because it already models Clementina and can share data structures.
-
-## Bandwidth Estimates
-
-Full active frame package:
-
-| Data | Bytes |
-| - | - |
-| Four background nametables | 4000 |
-| Four background attribute tables | 4000 |
-| Overlay nametable | 1000 |
-| Overlay attribute table | 1000 |
-| OAM | 1280 |
-| Control block | 256 |
-| Total payload | 11536 |
-
-Approximate sustained payload:
-
-| FPS | Payload/sec |
-| - | - |
-| 25 | 288400 bytes/sec |
-| 30 | 346080 bytes/sec |
-
-Full resource snapshot:
-
-| Data | Bytes |
-| - | - |
-| Character banks | 49152 |
-| Palette banks | 256 |
-| Background nametables | 8000 |
-| Background attribute tables | 8000 |
-| Overlay nametable | 1000 |
-| Overlay attribute table | 1000 |
-| OAM | 1280 |
-| Control block | 256 |
-| Total payload | 68944 |
-
-Even a full snapshot is only about 67 KiB. Sending that on connect or as an
-occasional keyframe is reasonable. Sending all character data every frame is not
-necessary and should be avoided.
-
-## Firmware Work Plan
-
-### Phase 1: Static Video Memory Layout
-
-- Add `video` constants for the memory map and index ids.
-- Preconfigure indexes 16-23, 32-47, 48-55, 56-63, 64, 65, 66, 67, and 68.
-- Initialize the video control block with mode, drawing defaults, and default FPS.
-- Add tests or debug routines that prove the regions fit in 128 KiB.
-
-### Phase 2: Local Client and Snapshot Format
-
-- Implement the packet structs in shared documentation and client code.
-- Build a desktop client that can render backgrounds, overlay, sprites, and
-  1bpp/3bpp character banks from a captured snapshot.
-- Add a firmware debug path to send a full snapshot over UDP.
-- Keep packet payloads <= 512 bytes.
-
-### Phase 3: Live Wi-Fi Stream
-
-- Initialize Wi-Fi in AP or STA mode.
-- Add `cyw43_arch_poll()` to the main loop.
-- Add UDP `HELLO`/`WELCOME`.
-- Send a full snapshot on connection.
-- Send full active frame packages at 25 FPS.
-
-### Phase 4: Dirty Updates
-
-- Add dirty flags/generation counters for palettes, control, OAM, background
-  tables, and overlay tables.
-- Add resource update packets.
-- Add periodic keyframes.
-- Add client-side resource requests for missed critical chunks.
-
-### Phase 5: Richer PPU Behavior
-
-- Add horizontal, vertical, and four-way scrolling modes.
-- Add sprite priority rules and optional collision status.
-- Add 8x16 sprite mode if needed.
-- Add optional compression for long repeated table regions.
-
-## Open Questions
-
-- Should v1 target 25 FPS, 30 FPS, or allow both through the control block?
-- Should MIA default to AP mode for easy client connection, or STA mode for home
-  network development?
-- Should the 6502 signal frame readiness by changing `frame_id`, toggling a
-  `PRESENT` bit, or issuing a future command?
-- Should arbitrary video index seeking be added as commands, config fields, or a
-  small video command queue?
-- Should the first client live in the Go emulator repo or as a small standalone
-  viewer in this firmware repo?
-
-## Summary
-
-The feasible path is a remote PPU, not a remote framebuffer. MIA stores compact
-tile, palette, background, overlay, and sprite state in its 128 KiB RAM.
-Clementina writes that state through the existing indexed memory interface. MIA
-publishes state snapshots and updates over UDP. The client renders locally.
-
-This keeps bandwidth low, fits the current memory budget, respects the
-time-critical bus architecture, and gives Clementina a video model that feels
-like a period-appropriate graphics chip rather than a pixel streaming device.
+`mia_video_service()` is nonblocking and bounded per call. It sends only the
+packets allowed by pbuf availability and the accepted transport budget.

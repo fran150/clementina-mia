@@ -69,9 +69,6 @@ add_executable(mia
     ${KERNEL_DATA_FILE}  # Add generated kernel data
 )
 
-# Copy and execute program in RAM
-pico_set_binary_type(mia copy_to_ram)
-
 # Generate PIO headers
 pico_generate_pio_header(mia ${CMAKE_SOURCE_DIR}/src/mia/sys/sys.pio)
 

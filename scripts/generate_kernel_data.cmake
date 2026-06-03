@@ -70,12 +70,12 @@ file(APPEND ${KERNEL_DATA_FILE} "#include <stddef.h>\n\n")
 
 # Write the array declaration
 file(APPEND ${KERNEL_DATA_FILE} "// Kernel binary data (${KERNEL_SIZE} bytes)\n")
-file(APPEND ${KERNEL_DATA_FILE} "const uint8_t kernel_data[] = {\n")
+file(APPEND ${KERNEL_DATA_FILE} "const uint8_t kernel_data[] __attribute__((section(\".time_critical.kernel_data\"))) = {\n")
 file(APPEND ${KERNEL_DATA_FILE} "${C_ARRAY_DATA}\n")
 file(APPEND ${KERNEL_DATA_FILE} "};\n\n")
 
 # Write the size declaration
 file(APPEND ${KERNEL_DATA_FILE} "// Kernel size\n")
-file(APPEND ${KERNEL_DATA_FILE} "const size_t kernel_data_size = ${KERNEL_SIZE};\n")
+file(APPEND ${KERNEL_DATA_FILE} "const size_t kernel_data_size __attribute__((section(\".time_critical.kernel_data\"))) = ${KERNEL_SIZE};\n")
 
 message(STATUS "Generated kernel_data.c with ${KERNEL_SIZE} bytes from ${KERNEL_BIN_FILE}")
