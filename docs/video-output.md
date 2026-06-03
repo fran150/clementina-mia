@@ -366,16 +366,17 @@ setup.
 
 ## Dirty Tracking
 
-MIA tracks dirty video state in 64-byte pages. A write through an indexed window
-into video memory sets the matching dirty page bit. Core 1 performs only this
-small dirty mark; core 0 expands dirty pages into protocol records after a frame
-is committed.
+MIA tracks dirty video state in 32-byte pages. A write through an indexed window
+into video memory sets the matching dirty page bit. Writes outside the video
+state range do not create video dirty bits. Core 1 performs only this small
+dirty mark; core 0 expands dirty pages into protocol records after a frame is
+committed.
 
-For the full 128 KiB MIA RAM, a 64-byte dirty map is:
+For the 68,944-byte video state range, a 32-byte dirty map is:
 
 ```text
-128 KiB / 64 B = 2048 pages
-2048 bits = 256 bytes
+ceil(68,944 B / 32 B) = 2,155 pages
+2,155 bits = 270 bytes
 ```
 
 Packet construction, range coalescing, fill-record detection, retry queues, and
