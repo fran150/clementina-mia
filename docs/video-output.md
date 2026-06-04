@@ -91,7 +91,7 @@ and read by the 6502 program.
 | `$01` | 1 | `VIDEO_MODE` | read/write | video enable and renderer mode bits |
 | `$02` | 1 | `VIDEO_STATUS` | read-only | connection and backpressure bits |
 | `$03` | 1 | `LAYER_ENABLE` | read/write | background, overlay, and sprite enables |
-| `$04` | 4 | `FRAME_ID` | read-only | accepted frame commit counter |
+| `$04` | 4 | `FRAME_ID` | read-only | current accepted frame id |
 | `$08` | 2 | `SCROLL_X` | read/write | background scroll X in pixels |
 | `$0A` | 2 | `SCROLL_Y` | read/write | background scroll Y in pixels |
 | `$0C` | 1 | `BG_ACTIVE_SET` | read/write | active 2x2 background set `0-1` |
@@ -109,6 +109,10 @@ and read by the 6502 program.
 | `$19` | 1 | `VIDEO_EVENT_STATUS` | read/write-1-clear | pending video event bits |
 | `$1A` | 6 | reserved | - | zero |
 | `$20` | 224 | reserved | - | zero |
+
+`FRAME_ID` starts at `1`, increments on every accepted `VIDEO_COMMIT_FRAME`, and
+wraps from `0xFFFFFFFF` to `1`; `0` is reserved and is never an accepted frame
+id.
 
 `VIDEO_MODE` bits:
 
@@ -469,14 +473,18 @@ program to wait; waiting is controlled by the program through
 ## Packet Size Target
 
 The application UDP payload is 512 bytes. The 32-byte protocol header lives
-inside that payload, leaving up to 480 bytes for records in each packet. This
-fits the current lwIP pbuf configuration and leaves room for UDP/IP overhead.
+inside that payload, leaving up to 480 bytes of response-stream data in each
+packet. This fits the current lwIP pbuf configuration and leaves room for UDP/IP
+overhead.
 
-The full 67.3 KiB snapshot takes:
+The full 67.3 KiB mirror data alone takes 144 chunks at the default payload size:
 
 ```text
-68,944 / 480 = 144 chunks
+ceil(68,944 / 480) = 144 chunks
 ```
+
+The actual snapshot response stream also includes the response prefix and record
+headers defined in the wire protocol.
 
 Snapshots are used for client startup and resync. Normal frame updates are
 dirty records and are typically hundreds of bytes to a few KiB.

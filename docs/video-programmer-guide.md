@@ -87,7 +87,7 @@ Important fields:
 | `$01` | `VIDEO_MODE` | video enable and renderer mode bits |
 | `$02` | `VIDEO_STATUS` | connection and backpressure bits |
 | `$03` | `LAYER_ENABLE` | background, overlay, sprite enables |
-| `$04-$07` | `FRAME_ID` | accepted frame counter |
+| `$04-$07` | `FRAME_ID` | current accepted frame id |
 | `$08-$09` | `SCROLL_X` | background scroll X |
 | `$0A-$0B` | `SCROLL_Y` | background scroll Y |
 | `$0C` | `BG_ACTIVE_SET` | active 2x2 background set |
@@ -96,6 +96,9 @@ Important fields:
 | `$14-$15` | `OAM_ACTIVE_COUNT` | active sprite record count |
 | `$18` | `VIDEO_IRQ_ENABLE` | enabled video event IRQ sources |
 | `$19` | `VIDEO_EVENT_STATUS` | pending video events; write `1` bits to clear |
+
+`FRAME_ID` starts at `1`, increments on every accepted `VIDEO_COMMIT_FRAME`, and
+wraps from `0xFFFFFFFF` to `1`; `0` is reserved.
 
 `VIDEO_STATUS` bits:
 
