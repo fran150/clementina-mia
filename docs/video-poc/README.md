@@ -10,7 +10,7 @@ It models:
 - a 68,944-byte MIA video RAM region and a complete client mirror,
 - two 270-byte dirty maps, active and pending,
 - fixed 34-byte dirty page records,
-- a 32-byte protocol header inside the accepted UDP payload,
+- a 32-byte protocol header inside the fixed 512-byte UDP payload,
 - deterministic `FRAME_DATA` chunk order,
 - `NACK_CHUNKS` repair from the retained pending page list,
 - `ACK_RESPONSE` cleanup and lost-ACK implicit acknowledgement,
@@ -30,6 +30,7 @@ the PoC rendering/DOM loop rather than the protocol network simulation.
 The protocol simulation uses a fixed virtual timestep, so it can continue to
 advance even when the browser paints fewer canvas frames.
 
-The latency slider is one-way packet delivery delay. The repair slider is the
-client's quiet-period timeout before it asks MIA to resend missing chunks with
+The loss, latency, and bandwidth sliders simulate network conditions in the PoC;
+they are not protocol parameters. The repair slider is the client's
+quiet-period timeout before it asks MIA to resend missing chunks with
 `NACK_CHUNKS`.

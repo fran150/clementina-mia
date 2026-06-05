@@ -24,8 +24,8 @@ captured dirty map to decide which pages to send to the client.
 - A video-memory write on core 1 should remain bounded: write one byte to MIA
   RAM and mark one dirty bit.
 - Core 0 owns all slow video work: dirty-map rotation, page list generation,
-  packet construction, UDP send/receive, repair, bandwidth pacing, status, and
-  lifecycle events.
+  packet construction, UDP send/receive, repair, bounded send scheduling, status,
+  and lifecycle events.
 - Update responses read live MIA RAM. The pending dirty map freezes the list of
   pages for a response, not the byte values in those pages.
 - Repair regenerates chunks from the retained pending dirty map using the same
@@ -296,7 +296,8 @@ When a valid `REQUEST_FRAME` arrives and no response is pending:
 9. Scan the pending dirty map into a page index list.
 
 The pending dirty map must not be modified until the pending response is
-acknowledged, implicitly acknowledged, or the session expires.
+acknowledged, implicitly acknowledged, reset by `HELLO`, or discarded during
+protocol-error recovery.
 
 For fast packet generation and repair, build:
 
@@ -362,14 +363,13 @@ Plan UDP receive with lwIP `udp_pcb`:
 - Bind to the chosen video UDP port.
 - Receive packets into a small stack/local decode buffer.
 - Validate the 32-byte protocol header before reading payload fields.
-- Dispatch `HELLO`, `SET_PARAMS`, `REQUEST_FRAME`, `ACK_RESPONSE`,
-  `NACK_CHUNKS`, and optional client `STATUS`.
+- Dispatch `HELLO`, `REQUEST_FRAME`, `ACK_RESPONSE`, `NACK_CHUNKS`, and optional
+  client `STATUS`.
 
 Plan UDP send with bounded per-service work:
 
 - Send at most a small number of chunks per `mia_video_service()` call.
 - Respect pbuf allocation failure by retrying later.
-- Respect accepted bandwidth hint with a token bucket.
 - Avoid blocking on Wi-Fi or pbuf availability.
 
 ## Session State
@@ -382,7 +382,6 @@ typedef struct {
     ip_addr_t addr;
     uint16_t port;
     uint32_t session_id;
-    uint32_t last_rx_ms;
     uint32_t client_frame_id;
     uint32_t latest_frame_id;
 } mia_video_session_t;
@@ -390,41 +389,30 @@ typedef struct {
 
 Session rules:
 
-- `HELLO` with no active session creates a new session and returns `WELCOME`.
-- `HELLO` from a different endpoint while active returns `STATUS(BUSY)`.
+- Any valid `HELLO` resets the video session and returns `WELCOME`.
+- Reset discards pending response state, clears pending/update status and client
+  frame tracking, assigns a fresh nonzero `session_id`, records the sender
+  endpoint, and schedules a full refresh.
 - Session id `0` is only valid for `HELLO` and no-session status.
-- Valid packets refresh `last_rx_ms`.
-- Expiry after 3,000 ms releases pending response state and clears
-  `VIDEO_CLIENT_CONNECTED`.
-- A new session marks all pages dirty for full refresh.
+- Packets with stale or unknown nonzero session ids are ignored.
 
 Generate nonzero `session_id` from available entropy or a mixed timer/counter
-fallback. Avoid assigning `0`.
+fallback. Avoid assigning `0`. This is a session-generation token, not a client
+index; 32 bits make accidental collision with stale packets from a recently reset
+session negligible.
 
-## Parameter State
+## Packet Size Constants
 
-Accepted parameters:
-
-```c
-typedef struct {
-    uint8_t target_fps;          // 5-30
-    uint16_t max_payload;        // 256-512
-    uint16_t repair_timeout_ms;  // 30-500
-    uint16_t bandwidth_kib_s;    // 0 or 16-4096
-} mia_video_params_t;
-```
-
-`SET_PARAMS` validates reserved payload bytes, clamps values, replies with
-`PARAMS_ACCEPTED`, and sets `PARAMS_CLAMPED` when needed.
-
-Precompute:
+Version 1 uses fixed packet sizing:
 
 ```c
-records_per_chunk = (max_payload - MIA_VIDEO_HEADER_SIZE) /
-                    MIA_VIDEO_PAGE_RECORD_SIZE;
+#define MIA_VIDEO_MAX_UDP_PAYLOAD   512u
+#define MIA_VIDEO_RECORDS_PER_CHUNK 14u
+#define MIA_VIDEO_CHUNK_PAYLOAD     476u
 ```
 
-Reject or clamp any payload size that would make `records_per_chunk == 0`.
+Client request cadence and repair timeout are client-local policy; MIA does not
+store or enforce those values.
 
 ## Pending Response State
 
@@ -446,7 +434,6 @@ typedef struct {
     uint16_t page_count;
     uint16_t chunk_count;
     uint16_t next_chunk_to_send;
-    uint16_t records_per_chunk;
     bool initial_send_done;
 } mia_video_response_t;
 ```
@@ -505,8 +492,8 @@ functions so packet code is explicit and testable.
 
 For each `FRAME_DATA` chunk:
 
-1. Compute `first_record = chunk_index * records_per_chunk`.
-2. Compute `record_count = min(records_per_chunk, page_count - first_record)`.
+1. Compute `first_record = chunk_index * MIA_VIDEO_RECORDS_PER_CHUNK`.
+2. Compute `record_count = min(MIA_VIDEO_RECORDS_PER_CHUNK, page_count - first_record)`.
 3. For each record:
    - page index = `pending_pages[first_record + i]`;
    - offset = `page_index * 32`;
@@ -561,8 +548,8 @@ Repair lifecycle:
 5. Clear `VIDEO_REPAIR_ACTIVE` and `VIDEO_READOUT_ACTIVE`.
 6. Latch `VIDEO_EVENT_READOUT_END`.
 
-Repair does not release pending response state. Only ACK or session expiry
-does.
+Repair does not release pending response state. Only ACK, implicit ACK, a new
+`HELLO` session reset, or protocol-error recovery releases it.
 
 ## Full Refresh Handling
 
@@ -662,18 +649,15 @@ Option 1 is most transparent to programmers but adds a branch to the hot path.
 Option 2 avoids the hot-path branch but is less memory-like. Decide during
 implementation profiling.
 
-## Bandwidth Pacing
+## Send Budget
 
-Implement the token bucket in core 0:
+Bound per-call work so `mia_video_service()` does not monopolize the main loop:
 
-- bucket units are application UDP payload bytes, including the 32-byte header;
-- `bandwidth_kib_s = 0` disables pacing;
-- refill based on elapsed time in `mia_video_service()`;
-- before sending a packet, require enough tokens for `32 + payload_len`;
-- if not enough tokens are available, leave response state unchanged and return.
-
-Also bound per-call work independently of the token bucket so `mia_video_service`
-does not monopolize the main loop.
+- send at most a small number of `FRAME_DATA` chunks per service call;
+- stop immediately if pbuf allocation or UDP send fails and retry on a later
+  service call;
+- leave response state unchanged when a send is deferred;
+- rely on lwIP/Wi-Fi backpressure rather than a protocol rate limit.
 
 ## Bring-Up Phases
 
@@ -714,13 +698,13 @@ does not monopolize the main loop.
 - Verify deterministic chunk mapping by generating the same chunk twice after
   intervening writes.
 
-### Phase 5: UDP Session and Parameters
+### Phase 5: UDP Session
 
-- Add UDP PCB, `HELLO`, `WELCOME`, `SET_PARAMS`, `PARAMS_ACCEPTED`, and
-  `STATUS`.
-- Add session endpoint tracking, timeout, and `STATUS_BUSY`.
+- Add UDP PCB, `HELLO`, `WELCOME`, and `STATUS`.
+- Add session endpoint tracking.
 - Add `cyw43_arch_poll()` and `mia_video_service()` to the main loop.
-- Confirm one client can connect and a second endpoint gets busy status.
+- Confirm any valid `HELLO` resets the session, assigns a fresh session id, and
+  schedules a full refresh.
 
 ### Phase 6: Frame Responses
 
@@ -742,7 +726,7 @@ does not monopolize the main loop.
 
 - Implement implicit ACK via `REQUEST_FRAME(last_complete == pending.frame_id)`.
 - Implement protocol-error full refresh.
-- Implement session expiry cleanup.
+- Implement `HELLO` session-reset cleanup.
 - Test lost ACK, duplicate ACK, stale request, future ACK, reconnect, and full
   refresh after reconnect.
 
@@ -760,11 +744,10 @@ does not monopolize the main loop.
 Host-side tests where possible:
 
 - Header encode/decode and reserved-field validation.
-- Parameter clamping.
 - Frame id serial comparison.
 - Dirty bitmap scanning.
 - Page record packing.
-- Chunk count math for payload sizes 256 and 512.
+- Chunk count math with fixed 14-record chunks.
 - Final-page padding.
 - Repair chunk regeneration maps to the same page indexes.
 - Request handling state machine.
@@ -779,7 +762,7 @@ Hardware/integration tests:
 - Lost ACK is handled by implicit ACK on next request.
 - Duplicate/old ACK is ignored.
 - Future ACK forces full refresh.
-- Client disconnect expires session and next client receives full refresh.
+- New `HELLO` resets the session and the client receives full refresh.
 - `VIDEO_READOUT_ACTIVE`, `VIDEO_RESPONSE_SENT`, and `VIDEO_UPDATE_ACTIVE`
   transitions match the documented lifecycle.
 - Video IRQ fires only for enabled event bits and clears when event status bits
@@ -791,7 +774,7 @@ Hardware/integration tests:
 | --- | --- |
 | Dirty mark slows core 1 bus path | keep helper inline/RAM-resident, no locks, no allocation, profile early |
 | Write-clear video events add hot-path branch | profile option 1 vs command-based event clear |
-| UDP send monopolizes core 0 | cap chunks per service call and use token bucket |
+| UDP send monopolizes core 0 | cap chunks per service call and yield on pbuf/UDP backpressure |
 | Repair reads newer live values | documented readout-window behavior; programmers can wait for ACK |
 | Full refresh is too slow | expected; use only on connect/recovery and keep normal dirty updates small |
 | Wi-Fi stack setup exceeds current main loop assumptions | integrate incrementally after packet builder tests |
@@ -799,13 +782,13 @@ Hardware/integration tests:
 
 ## Definition of Done
 
-- MIA can accept one client session and negotiate parameters.
+- MIA can accept one client session and reset it on any valid `HELLO`.
 - First update after connection is a full refresh.
 - Normal updates send only dirty pages in deterministic ascending page order.
 - One outstanding response is enforced.
 - Missing chunks can be regenerated without retaining a full response buffer.
-- ACK, implicit ACK, stale ACK, future ACK, stale request, retry, and session
-  expiry follow [video-protocol.md](video-protocol.md).
+- ACK, implicit ACK, stale ACK, future ACK, stale request, retry, and reconnect
+  follow [video-protocol.md](video-protocol.md).
 - Core 1 dirty marking remains bounded and measured at target PHI2 speeds.
 - Status bits and video IRQ events match [video-output.md](video-output.md) and
   [video-programmer-guide.md](video-programmer-guide.md).

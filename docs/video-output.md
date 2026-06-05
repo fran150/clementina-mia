@@ -418,9 +418,9 @@ active_dirty[page >> 3] |= 1 << (page & 7)
 ```
 
 Core 1 does not copy page data. Core 0 does the slower work: dirty-map rotation,
-dirty page list construction, packet construction, repair handling, bandwidth
-pacing, and UDP sending. Core 0 never clears the active map and never clears the
-pending map while it is retained for repair.
+dirty page list construction, packet construction, repair handling, bounded send
+scheduling, and UDP sending. Core 0 never clears the active map and never clears
+the pending map while it is retained for repair.
 
 ## Readout Lifecycle
 
@@ -504,9 +504,9 @@ enables delivery with the normal `IRQ_MASK` register.
 
 ## Client Pacing
 
-The client chooses transport parameters and owns the request cadence. It sends
-`REQUEST_FRAME` at the accepted FPS only when the previous response is complete,
-acknowledged, absent, or being explicitly retried.
+The client owns the request cadence. It sends `REQUEST_FRAME` at its chosen FPS
+only when the previous response is complete, acknowledged, absent, or being
+explicitly retried. Repair timeout is also client-local policy.
 
 The 6502 program chooses how tightly to synchronize its visible writes:
 
@@ -518,30 +518,18 @@ If the network is slow, ack-paced programs slow down because the client
 acknowledgement arrives later. This is a programming choice, not hidden firmware
 backpressure.
 
-## Client Parameters
-
-The client requests transport parameters during session setup:
-
-- target frame rate,
-- maximum UDP payload size,
-- bandwidth hint,
-- repair timeout.
-
-MIA returns the accepted values and enforces them for that session. Version 1
-has exactly one outstanding response and no `max_in_flight` parameter.
-
 ## Packet Size Target
 
 The application UDP payload is 512 bytes. The 32-byte protocol header lives
 inside that payload, leaving 480 bytes for response payload. A fixed page record
-is 34 bytes, so the default packet carries 14 page records, or 476 response
+is 34 bytes, so every full packet carries 14 page records, or 476 response
 bytes.
 
 A full refresh has one page record for every video page:
 
 ```text
 2,155 records * 34 bytes = 73,270 bytes
-ceil(2,155 / 14) = 154 chunks at the default payload size
+ceil(2,155 / 14) = 154 chunks at the fixed payload size
 ```
 
 Normal updates are expected to be much smaller. Bandwidth becomes limiting when
