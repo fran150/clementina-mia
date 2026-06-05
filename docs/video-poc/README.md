@@ -1,22 +1,35 @@
 # MIA Video Protocol PoC
 
-This disposable browser PoC was used to explore an earlier MIA video protocol
-model with initial snapshots, committed frames, multiple in-flight responses,
-and retained frame repair.
+This browser PoC simulates the current dirty-page video protocol described in
+[`../video-protocol.md`](../video-protocol.md).
 
-The current protocol documents now describe a simpler client-paced readout
-model:
+It models:
 
-- one active client,
+- one active client session,
 - one outstanding update response,
-- two dirty maps: active for new writes and pending for the current response,
-- ACK cleanup clears the pending map before the ACK event is exposed,
-- deterministic fixed-size dirty page records,
-- full refresh by scheduling the next response to mark every pending page dirty,
-- no explicit 6502 frame commit,
-- no `max_in_flight` parameter.
+- a 68,944-byte MIA video RAM region and a complete client mirror,
+- two 270-byte dirty maps, active and pending,
+- fixed 34-byte dirty page records,
+- a 32-byte protocol header inside the accepted UDP payload,
+- deterministic `FRAME_DATA` chunk order,
+- `NACK_CHUNKS` repair from the retained pending page list,
+- `ACK_RESPONSE` cleanup and lost-ACK implicit acknowledgement,
+- full refresh by setting every pending page dirty on the next accepted request.
 
-Open `index.html` in a browser to inspect the old visual bandwidth model, but do
-not treat it as the normative implementation of
-[`../video-protocol.md`](../video-protocol.md). The PoC should be updated or
-replaced before it is used for protocol validation again.
+Open `index.html` in a browser. The left canvas is live MIA RAM and the right
+canvas is the client mirror after protocol updates have been applied.
+
+The canvas captions split logical frame rates from browser drawing rate:
+
+- `RAM FPS` is the simulated 6502/MIA RAM update rate.
+- `Apply FPS` is the rate of complete protocol responses applied by the client.
+- `Draw FPS` is the browser render-loop rate for the canvas output.
+
+If `Draw FPS` is low while `RAM FPS` and `Apply FPS` are healthy, the bottleneck is
+the PoC rendering/DOM loop rather than the protocol network simulation.
+The protocol simulation uses a fixed virtual timestep, so it can continue to
+advance even when the browser paints fewer canvas frames.
+
+The latency slider is one-way packet delivery delay. The repair slider is the
+client's quiet-period timeout before it asks MIA to resend missing chunks with
+`NACK_CHUNKS`.

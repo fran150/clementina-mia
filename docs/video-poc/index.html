@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>MIA Video Protocol POC</title>
+    <title>MIA Video Dirty Page Protocol PoC</title>
     <link rel="stylesheet" href="styles.css" />
     <script defer src="video-poc.js"></script>
   </head>
@@ -11,43 +11,23 @@
     <main class="app-shell">
       <header class="top-bar">
         <div>
-          <h1>MIA Video Protocol POC</h1>
+          <h1>MIA Video Protocol PoC</h1>
+          <p>Dirty pages, chunk repair, ACK cleanup, and full refresh recovery.</p>
         </div>
-        <div class="toolbar" aria-label="Simulation controls">
+        <div class="toolbar" aria-label="Simulation commands">
           <button class="icon-button" id="play-toggle" type="button" title="Pause simulation" aria-label="Pause simulation">
             <span aria-hidden="true">II</span>
           </button>
-          <button class="icon-button" id="snapshot-button" type="button" title="Send full snapshot" aria-label="Send full snapshot">
-            <span aria-hidden="true">S</span>
+          <button class="icon-button" id="full-refresh-button" type="button" title="Force full refresh" aria-label="Force full refresh">
+            <span aria-hidden="true">F</span>
+          </button>
+          <button class="icon-button" id="drop-ack-button" type="button" title="Drop next ACK" aria-label="Drop next ACK">
+            <span aria-hidden="true">A</span>
           </button>
         </div>
       </header>
 
-      <section class="control-band" aria-label="Protocol settings">
-        <fieldset class="segmented">
-          <legend>Active Banks</legend>
-          <label>
-            <input type="radio" name="bank-mode" value="simple" checked />
-            <span>3 banks</span>
-          </label>
-          <label>
-            <input type="radio" name="bank-mode" value="alt" />
-            <span>5 banks</span>
-          </label>
-        </fieldset>
-
-        <fieldset class="segmented">
-          <legend>6502 Clock</legend>
-          <label>
-            <input type="radio" name="clock-mode" value="local" checked />
-            <span>Local</span>
-          </label>
-          <label>
-            <input type="radio" name="clock-mode" value="paced" />
-            <span>Video-paced</span>
-          </label>
-        </fieldset>
-
+      <section class="control-band" aria-label="Protocol controls">
         <label class="slider-control">
           <span>Client FPS</span>
           <input id="fps-slider" type="range" min="5" max="30" value="25" />
@@ -55,112 +35,87 @@
         </label>
 
         <label class="slider-control">
-          <span>RTT</span>
-          <input id="rtt-slider" type="range" min="0" max="200" value="30" step="5" />
-          <output id="rtt-output">30 ms</output>
+          <span>Loss</span>
+          <input id="loss-slider" type="range" min="0" max="20" value="2" step="0.5" />
+          <output id="loss-output">2%</output>
         </label>
 
         <label class="slider-control">
-          <span>Jitter</span>
-          <input id="jitter-slider" type="range" min="0" max="100" value="10" step="5" />
-          <output id="jitter-output">10 ms</output>
+          <span>Latency</span>
+          <input id="latency-slider" type="range" min="0" max="200" value="14" step="1" />
+          <output id="latency-output">14 ms</output>
         </label>
 
         <label class="slider-control">
           <span>Bandwidth</span>
-          <input id="bandwidth-slider" type="range" min="50" max="1200" value="300" step="50" />
-          <output id="bandwidth-output">300 KiB/s</output>
+          <input id="bandwidth-slider" type="range" min="0" max="4096" value="512" step="16" />
+          <output id="bandwidth-output">512 KiB/s</output>
         </label>
 
         <label class="slider-control">
-          <span>In Flight</span>
-          <input id="inflight-slider" type="range" min="1" max="4" value="1" />
-          <output id="inflight-output">1</output>
+          <span>Repair</span>
+          <input id="repair-slider" type="range" min="30" max="500" value="100" step="10" />
+          <output id="repair-output">100 ms</output>
         </label>
 
-        <label class="slider-control">
-          <span>Packet Loss</span>
-          <input id="loss-slider" type="range" min="0" max="12" value="2" step="0.5" />
-          <output id="loss-output">2%</output>
-        </label>
-
-        <label class="toggle-control">
-          <input id="dynamic-chr-toggle" type="checkbox" checked />
-          <span>CHR edits</span>
-        </label>
+        <fieldset class="segmented">
+          <legend>6502 visible writes</legend>
+          <label>
+            <input type="radio" name="write-mode" value="free" checked />
+            <span>Free</span>
+          </label>
+          <label>
+            <input type="radio" name="write-mode" value="ack" />
+            <span>Ack-paced</span>
+          </label>
+        </fieldset>
       </section>
 
       <section class="stage-band" aria-label="Video output comparison">
-        <figure class="viewport viewport-large">
-          <figcaption>Client Mirror</figcaption>
-          <canvas id="client-canvas" width="320" height="200"></canvas>
+        <figure class="viewport">
+          <figcaption>
+            <span>MIA RAM</span>
+            <span class="fps-readout">
+              <strong id="mia-fps-output">RAM 0.0 FPS</strong>
+              <strong id="mia-draw-fps-output">Draw 0.0 FPS</strong>
+            </span>
+          </figcaption>
+          <canvas id="mia-canvas" width="320" height="200"></canvas>
         </figure>
-
-        <figure class="viewport viewport-small">
-          <figcaption>Reference</figcaption>
-          <canvas id="reference-canvas" width="320" height="200"></canvas>
+        <figure class="viewport">
+          <figcaption>
+            <span>Client Mirror</span>
+            <span class="fps-readout">
+              <strong id="client-fps-output">Apply 0.0 FPS</strong>
+              <strong id="client-draw-fps-output">Draw 0.0 FPS</strong>
+            </span>
+          </figcaption>
+          <canvas id="client-canvas" width="320" height="200"></canvas>
         </figure>
       </section>
 
       <section class="metrics-band" aria-label="Protocol metrics">
-        <div class="metric">
-          <span>Frame</span>
-          <strong id="metric-frame">0</strong>
-        </div>
-        <div class="metric">
-          <span>Payload/response</span>
-          <strong id="metric-payload">0 B</strong>
-        </div>
-        <div class="metric">
-          <span>Packets/response</span>
-          <strong id="metric-packets">0</strong>
-        </div>
-        <div class="metric">
-          <span>Sustained</span>
-          <strong id="metric-sustained">0 KiB/s</strong>
-        </div>
-        <div class="metric">
-          <span>Snapshot</span>
-          <strong id="metric-snapshot">67.3 KiB</strong>
-        </div>
-        <div class="metric">
-          <span>Drops / Repairs</span>
-          <strong id="metric-repairs">0 / 0</strong>
-        </div>
-        <div class="metric">
-          <span>Pixel Diff</span>
-          <strong id="metric-diff">0</strong>
-        </div>
-        <div class="metric">
-          <span>Frame Lag</span>
-          <strong id="metric-frame-lag">0</strong>
-        </div>
-        <div class="metric">
-          <span>Mode</span>
-          <strong id="metric-mode">3 banks</strong>
-        </div>
-        <div class="metric">
-          <span>6502 Clock</span>
-          <strong id="metric-clock">Local</strong>
-        </div>
-        <div class="metric">
-          <span>Latency</span>
-          <strong id="metric-latency">0 ms</strong>
-        </div>
-        <div class="metric">
-          <span>In Flight</span>
-          <strong id="metric-inflight">0 / 1</strong>
-        </div>
-        <div class="metric">
-          <span>Queue Delay</span>
-          <strong id="metric-queue">0 ms</strong>
-        </div>
+        <div class="metric"><span>MIA frame</span><strong id="metric-frame">0</strong></div>
+        <div class="metric"><span>Client frame</span><strong id="metric-client-frame">0</strong></div>
+        <div class="metric"><span>Active dirty</span><strong id="metric-active-dirty">0</strong></div>
+        <div class="metric"><span>Pending pages</span><strong id="metric-pending-pages">0</strong></div>
+        <div class="metric"><span>Last chunks</span><strong id="metric-chunks">0</strong></div>
+        <div class="metric"><span>Last payload</span><strong id="metric-payload">0 B</strong></div>
+        <div class="metric"><span>Drops</span><strong id="metric-drops">0</strong></div>
+        <div class="metric"><span>NACKs</span><strong id="metric-nacks">0</strong></div>
+        <div class="metric"><span>ACKs</span><strong id="metric-acks">0</strong></div>
+        <div class="metric"><span>Implicit ACKs</span><strong id="metric-implicit-acks">0</strong></div>
+        <div class="metric"><span>Full refreshes</span><strong id="metric-full-refreshes">0</strong></div>
+        <div class="metric"><span>Render FPS</span><strong id="metric-render-fps">0.0</strong></div>
+        <div class="metric"><span>Pixel diff</span><strong id="metric-diff">0</strong></div>
+        <div class="metric metric-wide"><span>Bottleneck</span><strong id="metric-bottleneck">warming up</strong></div>
+        <div class="metric metric-wide"><span>Status</span><strong id="metric-status">HELLO</strong></div>
       </section>
 
       <section class="packet-band" aria-label="Packet activity">
         <div class="packet-header">
-          <span>Recent Update Types</span>
-          <strong id="metric-recent">snapshot</strong>
+          <span>Recent packets</span>
+          <strong id="metric-recent">none</strong>
         </div>
         <div class="packet-strip" id="packet-strip" aria-hidden="true"></div>
       </section>

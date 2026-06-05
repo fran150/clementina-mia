@@ -531,7 +531,13 @@ When a response is pending:
   acknowledgement of the pending response. MIA clears the pending dirty map,
   releases pending response state, sets `client_frame_id = pending_frame_id`,
   and then handles the new request.
-- Other `REQUEST_FRAME` packets while a response is pending receive
+- `REQUEST_FRAME(last_complete_frame_id > pending_frame_id)` is impossible
+  because MIA has not assigned or completed that newer frame. MIA returns
+  `STATUS(PROTOCOL_ERROR)`, discards pending response state, sets
+  full-refresh-pending, and requires a full refresh response before trusting the
+  client mirror again.
+- Other stale, duplicate, or early `REQUEST_FRAME` packets while a response is
+  pending receive
   `STATUS(RESPONSE_PENDING)` and do not create another response.
 
 If full refresh recovery is pending, the next valid `REQUEST_FRAME` can produce

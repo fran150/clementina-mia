@@ -529,8 +529,8 @@ compression in v1; deterministic fixed-size page records make repair simple.
 | no pending | `last_complete > client_frame_id` | protocol error, schedule full refresh |
 | pending | same `request_id` and same base | resend/regenerate pending response |
 | pending | `last_complete == pending.frame_id` | implicit ACK, then handle request |
-| pending | other old/duplicate request | return `RESPONSE_PENDING` |
-| pending | future/impossible base | protocol error, schedule full refresh |
+| pending | `last_complete > pending.frame_id` | protocol error, schedule full refresh |
+| pending | other stale/duplicate/early request | return `RESPONSE_PENDING` |
 
 `STATUS(NO_DIRTY_PAGES)` does not assign a frame id and does not require ACK.
 
