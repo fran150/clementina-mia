@@ -7,17 +7,33 @@ The short version:
 - Write video state through MIA's indexed RAM windows.
 - Use fast video indexes for hot registers such as scroll, banks, OAM, palettes,
   and nametables.
-- Call `VIDEO_COMMIT_FRAME` when the current frame is ready.
-- Ignore `VIDEO_CAN_COMMIT` for a local/free-running game.
-- Wait for `VIDEO_CAN_COMMIT` for a video-paced game.
+- The client requests video updates; the 6502 does not explicitly commit frames.
+- MIA marks 32-byte video pages dirty as you write them.
+- Avoid changing visible memory during MIA readout or before client
+  acknowledgement if you want artifact-free output.
+- Use video status bits or IRQ events to pace strict update loops.
 
 ## Mental Model
 
-MIA behaves like a remote PPU. Your program writes tile maps, character
-graphics, palettes, sprites, scroll values, and overlay text into MIA RAM. The
-client mirrors that state and renders the pixels on a host computer.
+MIA behaves like a remote video processor. Your program writes tile maps,
+character graphics, palettes, sprites, scroll values, and overlay text into MIA
+RAM. The client mirrors that state and renders the pixels on a host computer.
 
 You are not drawing pixels into a framebuffer. You are updating graphics state.
+MIA tracks which 32-byte pages of that graphics state changed. When the client
+requests an update, MIA sends the dirty pages to the client and starts tracking
+new writes for the following update.
+
+The mirrored video region is 68,944 bytes. MIA divides it into 2,155 pages of
+32 bytes each and tracks those pages with a 270-byte dirty map. Each bit in that
+map means "this page changed." Two maps are used: one collects your current
+writes, while the other names the pages being sent or repaired for the active
+client update.
+
+This is similar to classic video hardware in one important way: if you change
+visible video memory while the display system is reading it, you can get a
+temporary artifact. MIA exposes status bits and IRQ events so your program can
+choose how strict it wants to be.
 
 ## MIA Registers
 
@@ -53,27 +69,30 @@ Video commands use the normal command registers.
 | Command | Id | Purpose |
 | --- | ---: | --- |
 | `VIDEO_ENABLE` | `$40` | initialize video state and fast video indexes |
-| `VIDEO_COMMIT_FRAME` | `$41` | commit the current dirty video state as one frame |
-| `VIDEO_REQUEST_SNAPSHOT` | `$42` | force the active client to resync from a snapshot |
+| `VIDEO_FORCE_FULL_REFRESH` | `$42` | mark all video pages dirty for the next client update |
 | `VIDEO_SET_MODE` | `$43` | update `VIDEO_MODE` bits |
 
-Committing a frame:
+There is no frame commit command in the current video model. The client
+requests updates, and MIA publishes the pages that were dirty at the moment the
+request was accepted.
+
+Forcing a full refresh:
 
 ```asm
-VIDEO_COMMIT_FRAME = $41
+VIDEO_FORCE_FULL_REFRESH = $42
 
-video_commit_frame:
-    lda #$00
-    sta $FFE6       ; CMD_PARAM1: flags
+video_force_full_refresh:
+    stz $FFE6       ; CMD_PARAM1
     stz $FFE7       ; CMD_PARAM2
     stz $FFE8       ; CMD_PARAM3
-    lda #VIDEO_COMMIT_FRAME
+    lda #VIDEO_FORCE_FULL_REFRESH
     sta $FFE9       ; CMD_TRIGGER
     rts
 ```
 
-`VIDEO_COMMIT_FRAME` is the frame boundary. Writes made before the command
-belong to that frame. Writes made after the command belong to later frames.
+A full refresh is not a frozen snapshot. It schedules the next accepted update
+to include every video page. MIA sends the current contents of those pages when
+the client requests that update.
 
 ## Video Control Block
 
@@ -85,9 +104,9 @@ Important fields:
 | Offset | Field | Meaning |
 | ---: | --- | --- |
 | `$01` | `VIDEO_MODE` | video enable and renderer mode bits |
-| `$02` | `VIDEO_STATUS` | connection and backpressure bits |
+| `$02` | `VIDEO_STATUS` | connection and update lifecycle bits |
 | `$03` | `LAYER_ENABLE` | background, overlay, sprite enables |
-| `$04-$07` | `FRAME_ID` | current accepted frame id |
+| `$04-$07` | `FRAME_ID` | latest assigned client update id |
 | `$08-$09` | `SCROLL_X` | background scroll X |
 | `$0A-$0B` | `SCROLL_Y` | background scroll Y |
 | `$0C` | `BG_ACTIVE_SET` | active 2x2 background set |
@@ -97,18 +116,35 @@ Important fields:
 | `$18` | `VIDEO_IRQ_ENABLE` | enabled video event IRQ sources |
 | `$19` | `VIDEO_EVENT_STATUS` | pending video events; write `1` bits to clear |
 
-`FRAME_ID` starts at `1`, increments on every accepted `VIDEO_COMMIT_FRAME`, and
-wraps from `0xFFFFFFFF` to `1`; `0` is reserved.
+`FRAME_ID` starts at `0` for a session, increments when MIA accepts a client
+request that produces an update, and wraps from `0xFFFFFFFF` to `1`.
 
 `VIDEO_STATUS` bits:
 
 | Bit | Name | Meaning |
 | ---: | --- | --- |
 | 0 | `VIDEO_CLIENT_CONNECTED` | a client owns the video session |
-| 1 | `VIDEO_CAN_COMMIT` | MIA can accept another non-coalesced frame |
-| 2 | `VIDEO_SNAPSHOT_ACTIVE` | snapshot response in progress |
-| 3 | `VIDEO_REPAIR_ACTIVE` | repair response in progress |
-| 4 | `VIDEO_FRAME_QUEUE_FULL` | pending frame storage is full |
+| 1 | `VIDEO_UPDATE_ACTIVE` | an accepted update is not yet acknowledged |
+| 2 | `VIDEO_READOUT_ACTIVE` | MIA is reading live video RAM for send or repair |
+| 3 | `VIDEO_RESPONSE_SENT` | initial response send finished; ACK may still be pending |
+| 4 | `VIDEO_FULL_REFRESH_PENDING` | the next update will include all video pages |
+| 5 | `VIDEO_REPAIR_ACTIVE` | repair chunks are being regenerated/sent |
+
+The most conservative clean-output rule is:
+
+```text
+do not change visible memory while VIDEO_UPDATE_ACTIVE is set
+```
+
+That waits until the client has acknowledged the update, so later repairs cannot
+pick up newer visible values. A lower-latency rule is:
+
+```text
+do not change visible memory while VIDEO_READOUT_ACTIVE is set
+```
+
+That avoids artifacts during the first send but allows repair-time artifacts if
+the network loses chunks.
 
 ## Fast Video Indexes
 
@@ -124,7 +160,7 @@ and wraps at its limit.
 | `$83` | `VIDX_BANK_SELECT` | 5 | write bg, bg alt, overlay, overlay alt, sprite banks |
 | `$84` | `VIDX_LAYER_ENABLE` | 1 | write layer enable flags |
 | `$85` | `VIDX_OAM_COUNT` | 2 | write active sprite count low, high, repeat |
-| `$86` | `VIDX_FRAME_FLAGS` | 2 | write frame flags and commit flags |
+| `$86` | `VIDX_FRAME_FLAGS` | 1 | write render frame flags |
 | `$87` | `VIDX_VIDEO_STATUS` | 1 | read video status |
 | `$88` | `VIDX_PALETTE` | 256 | stream palette bytes |
 | `$89` | `VIDX_OAM` | 1,280 | stream sprite records |
@@ -197,160 +233,193 @@ A program normally initializes video in this order:
 5. fill overlay nametable and attributes,
 6. initialize OAM,
 7. set scroll, layer flags, and active banks,
-8. call `VIDEO_COMMIT_FRAME`,
-9. enter the main loop.
+8. enter the main loop.
 
-The first client receives a full snapshot. Large startup writes affect startup
-time, not steady-state bandwidth.
+The first client update after connection is a full refresh because MIA marks
+every video page dirty. Large startup writes affect startup transfer time, not
+steady-state bandwidth.
 
-## Local Mode
+## Update Lifecycle
 
-In local/free-running mode, the game loop does not wait for video.
+MIA and the client loop through this lifecycle:
+
+```text
+nothing pending
+client requests update
+MIA rotates active dirty set to pending and starts readout
+MIA sends dirty page records
+MIA finishes first send
+client repairs missing chunks if needed
+client applies the complete update
+client ACKs the frame
+MIA clears the retained pending dirty set
+nothing pending
+```
+
+During the lifecycle:
+
+- `VIDEO_EVENT_FRAME_REQUEST` fires when MIA accepts the request.
+- `VIDEO_UPDATE_ACTIVE` is set from accepted request until ACK.
+- `VIDEO_READOUT_ACTIVE` is set while MIA is reading video RAM for send/repair.
+- `VIDEO_EVENT_FRAME_SENT` fires when the first complete send has finished.
+- `VIDEO_EVENT_FRAME_ACKED` fires after the client acknowledges the update and
+  MIA has already cleared the retained dirty set used for repair.
+
+Changing visible memory at different points has different tradeoffs:
+
+| When you write visible memory | Result |
+| --- | --- |
+| before request | included in the next update |
+| during `VIDEO_READOUT_ACTIVE` | may appear partially in the current update |
+| after first send but before ACK | may appear in repair chunks for that update |
+| after ACK | belongs cleanly to a later update |
+
+Writes to inactive or non-visible resources are safe as long as they cannot
+affect the update currently being read. For example, loading an unused CHR bank
+is safe until the same visible update selects that bank.
+
+## Free-Running Mode
+
+In free-running mode, the game loop ignores video timing.
 
 ```asm
 main_loop:
     jsr read_input
     jsr update_game
     jsr draw_video_state
-    jsr video_commit_frame
     jmp main_loop
 ```
 
-The simulation keeps its own pace. If the network falls behind, MIA coalesces
-old unsent visual state and the client jumps to a newer frame later.
+The simulation keeps its own pace. MIA keeps marking dirty pages. If the client
+or network falls behind, the next response includes the accumulated dirty pages.
+The client may see transient artifacts if visible memory changes while MIA is
+reading it, but the mirror converges on later updates.
 
-Use this mode when local simulation timing matters more than remote display
-smoothness.
+Use this mode when local responsiveness matters more than remote display
+cleanliness.
 
-## Video-Paced Mode
+## Readout-Paced Mode
 
-In video-paced mode, the game waits until MIA can accept a frame without
-coalescing.
+In readout-paced mode, the game avoids visible writes while MIA is actively
+reading video RAM.
 
 ```asm
-VIDX_VIDEO_STATUS = $87
-VIDEO_CAN_COMMIT = %00000010
+VIDX_VIDEO_STATUS     = $87
+VIDEO_READOUT_ACTIVE = %00000100
 
-wait_video_can_commit:
+wait_readout_clear:
     lda #VIDX_VIDEO_STATUS
     sta $FFE1
 
 wait_loop:
     lda $FFE0
-    and #VIDEO_CAN_COMMIT
-    beq wait_loop
+    and #VIDEO_READOUT_ACTIVE
+    bne wait_loop
     rts
 
 main_loop:
-    jsr wait_video_can_commit
+    jsr wait_readout_clear
     jsr read_input
     jsr update_game
-    jsr draw_video_state
-    jsr video_commit_frame
+    jsr draw_visible_video_state
     jmp main_loop
 ```
 
-This makes the client/network pace the game. If Wi-Fi is slow, the game runs
-slower, but accepted frame boundaries are retained. This is similar in spirit
-to old machines where game logic synchronizes to raster or vblank timing.
+This avoids the most direct readout artifacts. It does not prevent repair chunks
+from seeing newer visible values if packets are lost after the first send.
 
-## What VIDEO_CAN_COMMIT Means
+## Ack-Paced Mode
 
-`VIDEO_CAN_COMMIT` means MIA has room to accept another frame boundary without
-intentional coalescing.
+In ack-paced mode, the game avoids visible writes until the client has applied
+and acknowledged the previous update.
 
-MIA calculates it from:
+```asm
+VIDX_VIDEO_STATUS    = $87
+VIDEO_UPDATE_ACTIVE = %00000010
 
-- video enable state,
-- active client state,
-- accepted `max_in_flight`,
-- pending frame queue space,
-- snapshot and repair pressure,
-- packet staging memory.
+wait_update_clear:
+    lda #VIDX_VIDEO_STATUS
+    sta $FFE1
 
-It does not mean the client has already displayed the previous frame. It means
-MIA can safely accept the next `VIDEO_COMMIT_FRAME`.
+wait_loop:
+    lda $FFE0
+    and #VIDEO_UPDATE_ACTIVE
+    bne wait_loop
+    rts
 
-When no client is connected, MIA keeps `VIDEO_CAN_COMMIT` set so a
-video-paced program continues to run while disconnected. The separate
-`VIDEO_CLIENT_CONNECTED` bit tells a monitor or demo if a client is attached.
+main_loop:
+    jsr wait_update_clear
+    jsr read_input
+    jsr update_game
+    jsr draw_visible_video_state
+    jmp main_loop
+```
 
-`VIDEO_CAN_COMMIT` changes from set to clear when MIA runs out of room for
-another distinct frame commit. With a one-slot queue, this normally happens
-immediately after `VIDEO_COMMIT_FRAME`. With a deeper queue, it happens only
-after the last retained-frame slot is filled.
+This is the cleanest mode for visible updates. If Wi-Fi stalls or the client
+stops acknowledging, the game can slow down or appear unresponsive. That is the
+program's choice, similar to synchronizing tightly to a slow display device.
 
-`VIDEO_CAN_COMMIT` changes from clear to set when MIA has room again. This
-usually happens after the client acknowledges a frame response, a repair
-finishes, a snapshot finishes, or packet staging memory becomes available.
-
-Calling `VIDEO_COMMIT_FRAME` while `VIDEO_CAN_COMMIT` is clear is valid for a
-local/free-running game. MIA coalesces the newest dirty state into the latest
-pending frame instead of queueing a distinct frame. The client can skip visual
-frames, but it stays synchronized.
-
-## Video IRQ
+## Video Event IRQ
 
 MIA can raise an IRQ when selected video events occur. This lets a program do
-other work while waiting for video, or use the IRQ as the cadence source for a
-video-paced loop.
+other work while waiting for a client update point.
 
 Video event bits live in the video control block:
 
 | Bit | Event | Meaning |
 | ---: | --- | --- |
-| 0 | `VIDEO_EVENT_CAN_COMMIT_RISE` | `VIDEO_CAN_COMMIT` changed from clear to set |
-| 1 | `VIDEO_EVENT_CAN_COMMIT_FALL` | `VIDEO_CAN_COMMIT` changed from set to clear |
-| 2 | `VIDEO_EVENT_CLIENT_CHANGE` | client connection state changed |
-| 3 | `VIDEO_EVENT_RESYNC` | client entered snapshot/resync |
+| 0 | `VIDEO_EVENT_FRAME_REQUEST` | MIA accepted a client update request |
+| 1 | `VIDEO_EVENT_FRAME_SENT` | initial response send completed |
+| 2 | `VIDEO_EVENT_FRAME_ACKED` | client acknowledged the response |
+| 3 | `VIDEO_EVENT_CLIENT_CHANGE` | client connected or disconnected |
+| 4 | `VIDEO_EVENT_FULL_REFRESH` | all pages were marked dirty |
+| 5 | `VIDEO_EVENT_REPAIR_REQUEST` | client requested missing chunks |
+| 6 | `VIDEO_EVENT_READOUT_START` | MIA started reading video RAM |
+| 7 | `VIDEO_EVENT_READOUT_END` | MIA finished the current readout pass |
 
 `VIDEO_IRQ_ENABLE` selects which event bits raise the video IRQ. Latched events
-appear in `VIDEO_EVENT_STATUS`; write `1` bits to clear them. When any enabled
-event is pending, MIA sets `IRQ_VIDEO_EVENT` (`$0020`) in `IRQ_STATUS`. The
-normal `IRQ_MASK` register controls delivery to the 6502 IRQ line.
+remain set until the program clears them by writing `1` bits to
+`VIDEO_EVENT_STATUS`.
 
-To wake when a frame commit becomes available, enable
-`VIDEO_EVENT_CAN_COMMIT_RISE` in `VIDEO_IRQ_ENABLE` and enable
-`IRQ_VIDEO_EVENT` in `IRQ_MASK`.
+When an enabled video event is pending, MIA sets `IRQ_VIDEO_EVENT` (`$0020`) in
+`IRQ_STATUS`. The normal `IRQ_MASK` register controls whether that source drives
+the 6502 IRQ line.
 
-## Cheap and Expensive Updates
+For a clean client-paced loop, enable `VIDEO_EVENT_FRAME_ACKED`. For a lower
+latency loop, enable `VIDEO_EVENT_FRAME_SENT` or `VIDEO_EVENT_READOUT_END`.
 
-Cheap per-frame updates:
+## Performance Tips
 
-- scroll registers,
-- sprite positions,
-- OAM records,
-- a few nametable cells,
-- palette cycling,
-- small overlay text.
+Small updates are cheap. Large memory changes are bandwidth-bound.
 
-Expensive updates:
+Good steady-state patterns:
 
-- many nametable rows,
-- many attribute rows,
-- large CHR edits,
-- full-screen tile animation.
+- update scroll registers instead of rewriting nametables for camera movement;
+- update OAM for sprites instead of rewriting background tiles;
+- batch overlay text changes when possible;
+- load CHR banks during setup or in inactive banks;
+- avoid forcing full refreshes during gameplay.
 
-CHR edits are legal and bandwidth-heavy. One 8x8 3bpp character is 24 data
-bytes before protocol overhead. A whole 256-character bank is 6 KiB.
+Expensive patterns:
 
-## Avoiding Artifacts
+- rewriting all CHR banks every frame;
+- clearing and rebuilding large nametable regions every frame;
+- changing visible CHR data during readout;
+- ack-pacing game logic over an unreliable network when responsiveness matters.
 
-Build a complete frame in MIA video memory, then call `VIDEO_COMMIT_FRAME`.
+Build complete logical changes before the next clean point when possible. For
+ack-paced loops, start visible writes after `VIDEO_EVENT_FRAME_ACKED`; for
+readout-paced loops, start after `VIDEO_EVENT_READOUT_END`.
 
-For video-paced loops, wait for `VIDEO_CAN_COMMIT` before starting the next
-frame's writes. This gives MIA a clean frame boundary and enough queue space to
-retain the committed state.
+## Troubleshooting
 
-For local loops, continuous writes are valid. The client can skip visual frames
-when the network falls behind, but absolute updates and snapshot repair prevent
-permanent desync.
-
-## Debugging
-
-- Old graphics on the client: request a snapshot from the client or issue
-  `VIDEO_REQUEST_SNAPSHOT`.
-- Slow game only in video-paced mode: the client/network is the limiter.
-- Large payload spikes: reduce per-frame CHR edits or preload more CHR banks.
-- Rising frame lag: lower client FPS or increase `max_in_flight` up to 4.
-- Frequent repairs: lower FPS, lower payload size, or improve the Wi-Fi link.
+- Client shows old graphics after connect: force a full refresh or reconnect the
+  client.
+- One-frame visual tearing: avoid visible writes while `VIDEO_READOUT_ACTIVE` is
+  set.
+- Repair-time artifacts: avoid visible writes while `VIDEO_UPDATE_ACTIVE` is
+  set, or improve the Wi-Fi link.
+- Slow game in ack-paced mode: the client/network is the limiter; use
+  readout-paced or free-running mode if responsiveness matters more.
+- Large updates miss 30 FPS: reduce dirty page count, lower client FPS, or avoid
+  large CHR/nametable uploads during steady-state play.

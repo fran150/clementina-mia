@@ -1,18 +1,22 @@
 # MIA Video Protocol PoC
 
-This disposable browser PoC simulates the selected video protocol approach:
+This disposable browser PoC was used to explore an earlier MIA video protocol
+model with initial snapshots, committed frames, multiple in-flight responses,
+and retained frame repair.
 
-- client mirror,
-- initial snapshot,
-- absolute frame updates,
-- client-requested frames,
-- network latency/jitter/bandwidth limits,
-- packet loss and repair,
-- local versus video-paced 6502 behavior,
-- simple 3-bank and alternate-bank resource modes.
+The current protocol documents now describe a simpler client-paced readout
+model:
 
-Open `index.html` in a browser to run it.
+- one active client,
+- one outstanding update response,
+- two dirty maps: active for new writes and pending for the current response,
+- ACK cleanup clears the pending map before the ACK event is exposed,
+- deterministic fixed-size dirty page records,
+- full refresh by scheduling the next response to mark every pending page dirty,
+- no explicit 6502 frame commit,
+- no `max_in_flight` parameter.
 
-The PoC is not firmware. It is a visual bandwidth and behavior model for the
-protocol documented in `../video-output.md` and `../video-protocol.md`.
-
+Open `index.html` in a browser to inspect the old visual bandwidth model, but do
+not treat it as the normative implementation of
+[`../video-protocol.md`](../video-protocol.md). The PoC should be updated or
+replaced before it is used for protocol validation again.

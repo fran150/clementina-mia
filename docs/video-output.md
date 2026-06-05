@@ -4,14 +4,21 @@ This document defines MIA's Wi-Fi video-output architecture. The wire protocol
 is defined in [video-protocol.md](video-protocol.md), and the 6502 programming
 model is defined in [video-programmer-guide.md](video-programmer-guide.md).
 
-MIA video uses the `docs/video-poc` model:
+MIA video uses a client-paced readout model:
 
 - The client keeps a complete mirror of MIA video state.
-- The client receives one full snapshot when it connects.
-- After the snapshot, MIA sends absolute byte updates for changed video state.
-- The client requests frames at the pace its display and network can sustain.
-- MIA exposes backpressure so the 6502 program can run either free-running or
-  video-paced.
+- MIA divides the 68,944-byte video state into 2,155 pages of 32 bytes each.
+- MIA tracks those pages with a 270-byte dirty map, where each bit represents
+  one video page.
+- The client requests updates at the pace its display and network can sustain.
+- MIA keeps two dirty maps: one active map for new 6502 writes, and one pending
+  map for the update currently being generated or repaired.
+- When a request is accepted, MIA moves the active map into the pending role,
+  makes the already-clear other map active for new writes, and sends the pages
+  named by the pending map.
+- While MIA is generating or repairing an update, it reads live MIA RAM.
+- The 6502 program can use status bits and IRQ events to avoid changing visible
+  memory during the readout/acknowledgement window.
 
 MIA does not stream raw pixels and does not run a video codec. The 6502 writes a
 compact tile/sprite state. The client renders the final pixels locally.
@@ -21,19 +28,21 @@ compact tile/sprite state. The client renders the final pixels locally.
 - Render a 320x200 display on a host client over Wi-Fi.
 - Keep the 6502 programming model close to classic tile/sprite machines.
 - Avoid sending full pixel frames during normal rendering.
-- Stay useful at 25 FPS on ordinary Wi-Fi.
+- Stay useful at 25-30 FPS for ordinary gameplay-style dirty updates.
 - Recover from packet loss without permanent client desync.
-- Allow one active client to tune transport parameters such as requested FPS and
-  maximum in-flight frame responses.
-- Let the 6502 program choose local/free-running or video-paced timing.
+- Keep the core 1 bus path bounded and fast: write live RAM, mark one dirty bit,
+  and return.
+- Let the 6502 program choose between artifact-tolerant free-running updates and
+  stricter client-paced visible-memory updates.
 
 ## Non-Goals
 
 - Physical VGA, HDMI, or composite output.
 - Full-frame image compression on the Pico.
 - Multiple simultaneous video clients.
-- Guaranteed delivery of every locally generated frame when the 6502 program
-  runs free-running.
+- Stable per-frame snapshots of video memory.
+- Guaranteed artifact-free output when the 6502 changes visible memory while
+  MIA is reading it for an update or repair.
 
 ## Firmware Context
 
@@ -43,8 +52,8 @@ MIA appears to Clementina as a 32-byte register block at `$FFE0-$FFFF`. It owns
 Core split:
 
 - Core 1 services the time-critical 6502 bus action loop.
-- Core 0 runs the firmware service loop, Wi-Fi polling, packet construction,
-  repair, and video publishing.
+- Core 0 runs the firmware service loop, Wi-Fi polling, dirty-map rotation,
+  packet construction, repair, and video publishing.
 
 The firmware executes most code from flash/XIP. The bus-critical path remains
 RAM-resident:
@@ -56,9 +65,10 @@ RAM-resident:
 - Generated `kernel_data` used by the loader is in RAM.
 - The command trigger path writes the SIO FIFO directly from `act_loop()`.
 
-The action loop does not build packets, poll Wi-Fi, allocate buffers, or wait
-for core 0. It only services bus events, updates MIA RAM/registers, marks video
-dirty state, and pushes compact command notifications to core 0.
+The action loop does not build packets, poll Wi-Fi, allocate buffers, scan dirty
+maps, or wait for core 0. It only services bus events, updates MIA
+RAM/registers, marks the active video dirty bit, and pushes compact command
+notifications to core 0.
 
 ## Video Memory Map
 
@@ -77,8 +87,9 @@ offsets from the start of MIA RAM.
 | `$10850` | 1,280 B | `OAM` | 256 sprite records, 5 bytes each |
 | `$10D50` | - | end | first byte after video state |
 
-The full client mirror is 68,944 bytes, or 67.3 KiB. This is small enough for a
-startup snapshot and too large for every-frame transmission at 25 FPS.
+The full client mirror is 68,944 bytes, or 67.3 KiB. A full refresh sends all
+2,155 dirty pages and is appropriate for startup and recovery. Normal updates
+are expected to dirty a much smaller subset of the mirror.
 
 ## Control Block
 
@@ -89,9 +100,9 @@ and read by the 6502 program.
 | ---: | ---: | --- | --- | --- |
 | `$00` | 1 | `VIDEO_VERSION` | read-only | video state layout version |
 | `$01` | 1 | `VIDEO_MODE` | read/write | video enable and renderer mode bits |
-| `$02` | 1 | `VIDEO_STATUS` | read-only | connection and backpressure bits |
+| `$02` | 1 | `VIDEO_STATUS` | read-only | connection and update lifecycle bits |
 | `$03` | 1 | `LAYER_ENABLE` | read/write | background, overlay, and sprite enables |
-| `$04` | 4 | `FRAME_ID` | read-only | current accepted frame id |
+| `$04` | 4 | `FRAME_ID` | read-only | latest assigned update/readout frame id |
 | `$08` | 2 | `SCROLL_X` | read/write | background scroll X in pixels |
 | `$0A` | 2 | `SCROLL_Y` | read/write | background scroll Y in pixels |
 | `$0C` | 1 | `BG_ACTIVE_SET` | read/write | active 2x2 background set `0-1` |
@@ -103,16 +114,16 @@ and read by the 6502 program.
 | `$12` | 1 | `SPRITE_CHR_BANK` | read/write | sprite CHR bank `0-7` |
 | `$13` | 1 | `BACKDROP_PALETTE` | read/write | backdrop palette/color selection |
 | `$14` | 2 | `OAM_ACTIVE_COUNT` | read/write | active sprite record count; `0` means none |
-| `$16` | 1 | `FRAME_FLAGS` | read/write | per-frame render flags |
-| `$17` | 1 | `COMMIT_FLAGS` | read/write | flags consumed by `VIDEO_COMMIT_FRAME` |
+| `$16` | 1 | `FRAME_FLAGS` | read/write | render flags sampled by the client |
+| `$17` | 1 | reserved | - | zero |
 | `$18` | 1 | `VIDEO_IRQ_ENABLE` | read/write | enabled video event IRQ sources |
 | `$19` | 1 | `VIDEO_EVENT_STATUS` | read/write-1-clear | pending video event bits |
 | `$1A` | 6 | reserved | - | zero |
 | `$20` | 224 | reserved | - | zero |
 
-`FRAME_ID` starts at `1`, increments on every accepted `VIDEO_COMMIT_FRAME`, and
-wraps from `0xFFFFFFFF` to `1`; `0` is reserved and is never an accepted frame
-id.
+`FRAME_ID` starts at `0` for a new session and increments when MIA accepts a
+client update request that produces `FRAME_DATA`. It wraps from `0xFFFFFFFF` to
+`1`; `0` is reserved for "no update applied yet."
 
 `VIDEO_MODE` bits:
 
@@ -126,10 +137,16 @@ id.
 | Bit | Name | Meaning |
 | ---: | --- | --- |
 | 0 | `VIDEO_CLIENT_CONNECTED` | a client owns the video session |
-| 1 | `VIDEO_CAN_COMMIT` | MIA can accept another non-coalesced frame commit |
-| 2 | `VIDEO_SNAPSHOT_ACTIVE` | a snapshot response is being generated |
-| 3 | `VIDEO_REPAIR_ACTIVE` | a repair response is being generated |
-| 4 | `VIDEO_FRAME_QUEUE_FULL` | pending frame storage is full |
+| 1 | `VIDEO_UPDATE_ACTIVE` | an accepted update is not yet acknowledged |
+| 2 | `VIDEO_READOUT_ACTIVE` | MIA is reading live video RAM for send or repair |
+| 3 | `VIDEO_RESPONSE_SENT` | initial response send finished; ACK may still be pending |
+| 4 | `VIDEO_FULL_REFRESH_PENDING` | the next update will include all video pages |
+| 5 | `VIDEO_REPAIR_ACTIVE` | repair chunks are being regenerated/sent |
+
+`VIDEO_UPDATE_ACTIVE` is the conservative "visible memory may still affect the
+client's pending update" bit. Programs that want clean output wait for this bit
+to clear before changing visible memory. `VIDEO_READOUT_ACTIVE` is narrower: it
+means core 0 is currently reading MIA RAM.
 
 `LAYER_ENABLE` bits:
 
@@ -341,7 +358,7 @@ over exactly their field size, so repeated writes need no address preparation.
 | `$83` | `VIDX_BANK_SELECT` | `$0000E-$00012` | 5 | write bg, bg alt, overlay, overlay alt, sprite banks |
 | `$84` | `VIDX_LAYER_ENABLE` | `$00003-$00003` | 1 | write layer enable flags |
 | `$85` | `VIDX_OAM_COUNT` | `$00014-$00015` | 2 | write active sprite count low, high, repeat |
-| `$86` | `VIDX_FRAME_FLAGS` | `$00016-$00017` | 2 | write frame flags and commit flags |
+| `$86` | `VIDX_FRAME_FLAGS` | `$00016-$00016` | 1 | write render frame flags |
 | `$87` | `VIDX_VIDEO_STATUS` | `$00002-$00002` | 1 | read `VIDEO_STATUS` |
 | `$88` | `VIDX_PALETTE` | `$00100-$001FF` | 256 | stream palette bytes |
 | `$89` | `VIDX_OAM` | `$10850-$10D4F` | 1,280 | stream sprite records |
@@ -371,57 +388,98 @@ setup.
 ## Dirty Tracking
 
 MIA tracks dirty video state in 32-byte pages. A write through an indexed window
-into video memory sets the matching dirty page bit. Writes outside the video
-state range do not create video dirty bits. Core 1 performs only this small
-dirty mark; core 0 expands dirty pages into protocol records after a frame is
-committed.
+into video memory sets the matching dirty page bit in the active dirty map.
+Writes outside the video state range do not create video dirty bits.
 
-For the 68,944-byte video state range, a 32-byte dirty map is:
+For the 68,944-byte video state range:
 
 ```text
 ceil(68,944 B / 32 B) = 2,155 pages
 2,155 bits = 270 bytes
 ```
 
-Packet construction, range coalescing, fill-record detection, retry queues, and
-client bookkeeping all run on core 0.
+MIA keeps two 270-byte dirty maps:
 
-## Commit Semantics
+| Dirty map | Owner | Meaning |
+| --- | --- | --- |
+| active | core 1 write path | receives bits for new 6502 writes |
+| pending | core 0 video service | retained page list for the current response |
 
-`VIDEO_COMMIT_FRAME` is the frame boundary.
+When no response is pending, the non-active map is already clear and ready for
+the next rotation. There is no separate third map and no explicit "free" flag:
+with two maps, the clear non-active map is the available map by definition.
 
-When the 6502 commits a frame, MIA:
+The core 1 write-side operation is bounded:
 
-1. accepts or coalesces the current dirty state according to backpressure,
-2. increments `FRAME_ID` for accepted frame boundaries,
-3. captures the current dirty page set into a pending frame job,
-4. clears the active dirty set for future writes,
-5. updates `VIDEO_CAN_COMMIT`,
-6. transmits the pending frame when the client requests it.
+```text
+MIA_RAM[offset] = value
+page = offset >> 5
+active_dirty[page >> 3] |= 1 << (page & 7)
+```
 
-Frame update records are absolute writes into the client mirror. Applying an
-update does not depend on previous contents. Packet loss is repaired by missing
-chunk retransmission or by a new snapshot.
+Core 1 does not copy page data. Core 0 does the slower work: dirty-map rotation,
+dirty page list construction, packet construction, repair handling, bandwidth
+pacing, and UDP sending. Core 0 never clears the active map and never clears the
+pending map while it is retained for repair.
 
-`VIDEO_CAN_COMMIT` changes from `1` to `0` when MIA cannot retain another
-distinct frame boundary. The common trigger is `VIDEO_COMMIT_FRAME` filling the
-pending frame queue. It also goes false while video is disabled, while packet
-staging memory is exhausted, or while snapshot/repair work consumes the retained
-frame budget.
+## Readout Lifecycle
 
-`VIDEO_CAN_COMMIT` changes from `0` to `1` when MIA has room for another
-non-coalesced frame. Common triggers are client acknowledgements, completed
-repairs, completed snapshots, freed packet staging buffers, or a client
-disconnect that returns video to headless mode.
+When the client requests an update and no response is pending, MIA performs a
+small coordinated dirty-map rotation:
 
-Calling `VIDEO_COMMIT_FRAME` does not always make `VIDEO_CAN_COMMIT` false. If
-queue capacity remains, the flag stays true. If the commit fills the last
-available retained-frame slot, it becomes false immediately after the commit.
+1. if full refresh is not pending and the active dirty map is empty, return
+   `STATUS(NO_DIRTY_PAGES)`;
+2. rotate the active dirty map into the pending role and the already-clear other
+   map into the active role;
+3. if full refresh is pending, set every valid page bit in the pending map and
+   clear `VIDEO_FULL_REFRESH_PENDING`;
+4. assign the next nonzero `FRAME_ID`;
+5. set `VIDEO_UPDATE_ACTIVE` and `VIDEO_READOUT_ACTIVE`;
+6. emit `VIDEO_EVENT_FRAME_REQUEST` and `VIDEO_EVENT_READOUT_START`.
 
-If a free-running program commits while `VIDEO_CAN_COMMIT` is false, MIA
-coalesces the newest dirty state into the latest pending frame job instead of
-adding a distinct queue entry. The client can observe gaps in `FRAME_ID`, but it
-does not desync because the transmitted records are absolute.
+After the rotation, new 6502 writes are tracked in the active map for the next
+client update. Core 0 reads the pending dirty map, builds fixed page records in
+ascending page order, and sends `FRAME_DATA` chunks.
+
+When the first complete response has been sent, MIA clears
+`VIDEO_READOUT_ACTIVE`, sets `VIDEO_RESPONSE_SENT`, and emits
+`VIDEO_EVENT_FRAME_SENT` and `VIDEO_EVENT_READOUT_END`. The pending dirty map is
+still retained because the client may request repair.
+
+When the client acknowledges the response, MIA first clears the pending dirty
+map. Only after that cleanup does it clear `VIDEO_UPDATE_ACTIVE` and
+`VIDEO_RESPONSE_SENT`, release the pending response state, update the
+acknowledged client frame id, and emit `VIDEO_EVENT_FRAME_ACKED`. This order
+guarantees that a 6502 program observing the ACK event sees one active map for
+future writes and one already-clear map ready for the next accepted request.
+
+If the client requests missing chunks, MIA sets `VIDEO_REPAIR_ACTIVE` and
+`VIDEO_READOUT_ACTIVE`, regenerates those chunks from the same pending dirty map
+and current MIA RAM values, sends them, then clears the repair/readout bits.
+
+## Readout Visibility Rules
+
+The pending dirty map freezes the list of pages for a response. It does not
+freeze the byte values in those pages. Core 0 reads live MIA RAM while sending
+or repairing an update.
+
+This means visible writes during `VIDEO_READOUT_ACTIVE` can appear in the update
+currently being generated. Visible writes after `VIDEO_RESPONSE_SENT` but before
+acknowledgement can appear in a later repair of that same update. In both cases,
+the active dirty map also records the write for the next update, so the client
+mirror converges.
+
+Programmers choose the timing discipline:
+
+- ignore the flags for lowest latency and possible visual artifacts;
+- avoid visible writes while `VIDEO_READOUT_ACTIVE` is set to avoid first-send
+  readout artifacts;
+- avoid visible writes while `VIDEO_UPDATE_ACTIVE` is set to also avoid repair
+  artifacts.
+
+This is similar to classic video hardware where changing visible memory during
+display readout can produce a transient artifact, but changing inactive or
+off-screen state is safe.
 
 ## Video Events and IRQ
 
@@ -431,63 +489,64 @@ video IRQ source.
 
 | Bit | Event | Meaning |
 | ---: | --- | --- |
-| 0 | `VIDEO_EVENT_CAN_COMMIT_RISE` | `VIDEO_CAN_COMMIT` changed `0 -> 1` |
-| 1 | `VIDEO_EVENT_CAN_COMMIT_FALL` | `VIDEO_CAN_COMMIT` changed `1 -> 0` |
-| 2 | `VIDEO_EVENT_CLIENT_CHANGE` | `VIDEO_CLIENT_CONNECTED` changed |
-| 3 | `VIDEO_EVENT_RESYNC` | active client entered snapshot/resync |
+| 0 | `VIDEO_EVENT_FRAME_REQUEST` | MIA accepted a client update request |
+| 1 | `VIDEO_EVENT_FRAME_SENT` | initial response send completed |
+| 2 | `VIDEO_EVENT_FRAME_ACKED` | client acknowledged the response |
+| 3 | `VIDEO_EVENT_CLIENT_CHANGE` | `VIDEO_CLIENT_CONNECTED` changed |
+| 4 | `VIDEO_EVENT_FULL_REFRESH` | all pages were marked dirty |
+| 5 | `VIDEO_EVENT_REPAIR_REQUEST` | client requested missing chunks |
+| 6 | `VIDEO_EVENT_READOUT_START` | MIA started reading video RAM for send/repair |
+| 7 | `VIDEO_EVENT_READOUT_END` | MIA finished the current readout/repair pass |
 
 When `(VIDEO_EVENT_STATUS & VIDEO_IRQ_ENABLE) != 0`, MIA sets
 `IRQ_VIDEO_EVENT` (`$0020`) in the normal `IRQ_STATUS` register. The 6502
-enables delivery with the normal `IRQ_MASK` register. A program that only wants
-a wake-up when video becomes available sets `VIDEO_IRQ_ENABLE` to
-`VIDEO_EVENT_CAN_COMMIT_RISE` and enables `IRQ_VIDEO_EVENT`.
+enables delivery with the normal `IRQ_MASK` register.
 
-## Local and Video-Paced Programs
+## Client Pacing
 
-The client chooses transport parameters. The 6502 program chooses timing.
+The client chooses transport parameters and owns the request cadence. It sends
+`REQUEST_FRAME` at the accepted FPS only when the previous response is complete,
+acknowledged, absent, or being explicitly retried.
 
-In local/free-running mode, the 6502 program updates game state and commits
-frames at its own pace. If the network falls behind, MIA coalesces unsent frame
-state so the client jumps to a newer state. The game simulation keeps running.
+The 6502 program chooses how tightly to synchronize its visible writes:
 
-In video-paced mode, the 6502 program waits for `VIDEO_CAN_COMMIT` before
-building and committing the next frame. On a poor network the game slows down,
-similar to a raster-timed machine that has run out of video time, but accepted
-frame boundaries are retained instead of intentionally skipped.
+- free-running programs write whenever they want and tolerate artifacts;
+- readout-paced programs wait for `VIDEO_READOUT_ACTIVE` to clear;
+- ack-paced programs wait for `VIDEO_UPDATE_ACTIVE` to clear.
+
+If the network is slow, ack-paced programs slow down because the client
+acknowledgement arrives later. This is a programming choice, not hidden firmware
+backpressure.
 
 ## Client Parameters
 
 The client requests transport parameters during session setup:
 
 - target frame rate,
-- maximum in-flight frame responses,
 - maximum UDP payload size,
 - bandwidth hint,
 - repair timeout.
 
-MIA returns the accepted values and enforces them for that session.
-`max_in_flight` affects transport buffering only. It does not force the 6502
-program to wait; waiting is controlled by the program through
-`VIDEO_CAN_COMMIT`.
+MIA returns the accepted values and enforces them for that session. Version 1
+has exactly one outstanding response and no `max_in_flight` parameter.
 
 ## Packet Size Target
 
 The application UDP payload is 512 bytes. The 32-byte protocol header lives
-inside that payload, leaving up to 480 bytes of response-stream data in each
-packet. This fits the current lwIP pbuf configuration and leaves room for UDP/IP
-overhead.
+inside that payload, leaving 480 bytes for response payload. A fixed page record
+is 34 bytes, so the default packet carries 14 page records, or 476 response
+bytes.
 
-The full 67.3 KiB mirror data alone takes 144 chunks at the default payload size:
+A full refresh has one page record for every video page:
 
 ```text
-ceil(68,944 / 480) = 144 chunks
+2,155 records * 34 bytes = 73,270 bytes
+ceil(2,155 / 14) = 154 chunks at the default payload size
 ```
 
-The actual snapshot response stream also includes the response prefix and record
-headers defined in the wire protocol.
-
-Snapshots are used for client startup and resync. Normal frame updates are
-dirty records and are typically hundreds of bytes to a few KiB.
+Normal updates are expected to be much smaller. Bandwidth becomes limiting when
+a program frequently changes large CHR ranges, rewrites whole nametables, or
+forces repeated full refreshes.
 
 ## Firmware Service Loop
 

@@ -1,11 +1,112 @@
 # MIA Video Protocol
 
-This document defines the client/MIA wire protocol for Wi-Fi video output. It
-matches the `docs/video-poc` architecture: client mirror, initial snapshot,
-absolute updates, client-requested frames, repair, and bounded in-flight frame
-responses.
+## Introduction
 
-The protocol serves one active client at a time.
+MIA is the Multifunction Interface Adapter for the Clementina 6502 computer,
+implemented on a Raspberry Pi Pico 2 W. It appears to the 6502 as a 32-byte
+register block at `$FFE0-$FFFF`, generates the 6502 clock, handles the data
+bus, and provides 128 KiB of internal RAM through indexed memory windows. The
+video service uses that adapter role to give Clementina Wi-Fi video output
+without adding a framebuffer or video encoder to the 6502 side.
+
+At a high level, MIA behaves like a remote video processor. A 6502 program
+writes graphics state into MIA RAM: control registers, palettes, character
+graphics, background and overlay nametables, attributes, and sprite records. A
+host client keeps a complete mirror of that video state and renders the final
+320x200 image locally. MIA does not stream raw pixels and does not run a video
+codec.
+
+The video state occupies the first 68,944 bytes of MIA's 128 KiB RAM. That
+region starts with a 256-byte control block, followed by palette data, CHR tile
+graphics, background nametables and attributes, overlay tables, and OAM sprite
+records. The full layout is defined in [video-output.md](video-output.md); this
+protocol treats that memory region as the state mirrored by the client.
+
+For update tracking, MIA divides that 68,944-byte video region into 32-byte
+pages. There are 2,155 video pages, so one dirty map is 2,155 bits, or 270
+bytes. Each bit represents one video page. When the 6502 writes anywhere inside
+the video region, MIA writes the byte to live RAM and sets the matching dirty
+bit. Rewriting another byte in the same page only sets the same bit again.
+
+MIA maintains two dirty maps in parallel. One is the `active` that keeps track
+of the updates the 6502 is doing. The other is `pending` which is the one being
+used to generate the video frame sent to the client.
+
+The protocol is client-paced. The client requests video updates at the rate it
+can display and receive them, up to the accepted FPS limit.
+
+The 6502 can change any byte in VRAM. MIA does not send anything at write time;
+it only records that the corresponding 32-byte page "is dirty" in the `active`
+map and must eventually be published to the client.
+
+When the client is ready for another video update, it sends `REQUEST_FRAME`. If
+no response is already pending, MIA accepts the request and rotates the
+dirty-map roles: the active map becomes the pending map for this response, and
+the other map becomes the new active map for later 6502 writes. Moving the
+`active` map to the pending role captures the list of dirty pages that must be
+sent on the next frame and allows the 6502 to keep marking dirty pages that
+will be sent in a later frame request in the `active` map.
+
+MIA then reads the pages named by the pending map and sends them as
+`FRAME_DATA`. Since the protocol uses UDP and a frame update may be larger than
+one datagram, the response is split into numbered chunks. MIA sends every chunk
+once, but it cannot release the pending map: UDP packets may be lost, and the
+client may request the missing chunks.
+
+If chunks are missing, the client sends `NACK_CHUNKS`. MIA uses the retained
+pending map to regenerate the requested chunks in the same deterministic page
+order. Only after the client has received and applied the complete update does
+it send `ACK_RESPONSE`. MIA handles that acknowledgement by clearing the pending
+map first (this is needed so when it becomes active doesn't have any pages
+marked as dirty), then publishing the acknowledgement status/events to the 6502
+side. After this cleanup the pending map is ready to become active on the next
+accepted `REQUEST_FRAME`.
+
+So the 6502 programmer will observe the following lifecycle in a typical frame
+to frame update:
+
+```text
+all clear -> FRAME_REQUEST -> FRAME_SENT -> FRAME_ACKED -> all clear
+```
+
+The programmer can change the VRAM at any point in this lifecycle but the
+changes may have consequences if they are done in the visible parts of the
+memory (being drawn on the screen).
+
+- **All Clear**: The last frame has been acknowledged (client has applied the
+update to its local copy of memory). No new frame has been requested yet.
+Programmer can change any VRAM memory with no visual inconsistencies until the
+next FRAME_REQUEST arrives.
+- **FRAME_REQUEST**: Client has requested a frame. Frame is being prepared for
+transmission. The programmer should change only non-visible memory. MIA is
+packing the frame for transmission. Any change made on visible memory that is
+marked as dirty on the frame being packed may or may not be packed and
+transmitted causing visual inconsistencies. Updates to non-visible VRAM memory
+are fine.
+- **FRAME_SENT**: All the chunks for the requested frame have been sent at least
+once. The programmer should change only non-visible memory. Since the client has
+not acknowledged yet, if the programmer changes a page that is marked as dirty
+and needs to be sent again due to issues in the network, the changes may be
+included in a repair chunk causing visual inconsistencies.
+- **FRAME_ACKED**: The client has acknowledged the last frame (has received it
+in full and updated its local VRAM copy). After this event the protocol is
+back to "all clear", the programmer can make changes to any register without
+risking visual inconsistencies until the next FRAME_REQUEST.
+
+All these events are latched via flags in MIA and will generate IRQs only when
+enabled. This allows the programmer to tie the game loop to any of them
+depending on convenience. For example, stepping a game loop only after ACK will
+ensure that every frame is sent to the client at the cost of the whole
+application running slower if there are issues in the network. On the other
+side, the programmer may choose to step the game loop independently and only
+build the frame when ACK flag allows it. This lets the program keep running
+independently from network updates or repair delays, but if the network falls
+behind the displayed video can lag or feel jumpy.
+
+The protocol serves one active client at a time. On connection and on
+unrecoverable mismatch, MIA schedules a full refresh. The next accepted update
+marks every video page dirty in the pending map and rebuilds the client mirror;
+no separate snapshot packet type is required.
 
 ## Transport
 
@@ -13,8 +114,9 @@ Video uses UDP over IPv4.
 
 UDP keeps latency and firmware complexity low. Packet loss is handled in the
 application protocol through chunking, complete-response acknowledgements,
-missing-chunk repair, and snapshot resync. Payload integrity is provided by the
-link layer and UDP checksum; corrupted datagrams are treated as missing packets.
+missing-chunk repair, deterministic dirty-page packing, and full-refresh
+recovery. Payload integrity is provided by the link layer and UDP checksum;
+corrupted datagrams are treated as missing packets.
 
 ## Defaults and Limits
 
@@ -23,16 +125,25 @@ link layer and UDP checksum; corrupted datagrams are treated as missing packets.
 | Client FPS | 25 | 5-30 | rate of client `REQUEST_FRAME` messages |
 | Max UDP payload | 512 B | 256-512 B | includes the 32-byte protocol header |
 | Protocol header | 32 B | fixed | every packet starts with this header |
-| Response stream bytes per packet | 480 B | payload minus 32 B | at default payload size |
-| Max in-flight responses | 1 | 1-4 | outstanding frame responses requested by client |
+| Response bytes per packet | 476 B | derived | 14 page records at the default payload size |
+| Dirty page size | 32 B | fixed | last page is padded on the wire |
+| Video page count | 2,155 | fixed | `ceil(68,944 / 32)` |
+| Dirty map size | 270 B | fixed | `ceil(2,155 / 8)` |
+| Dirty map count | 2 | fixed | one active set and one pending response set |
+| Page record size | 34 B | fixed | 2-byte page index plus 32 data bytes |
+| Full refresh payload | 73,270 B | fixed | all 2,155 page records |
+| Full refresh chunks | 154 | fixed | at the default payload size |
 | Repair timeout | 100 ms | 30-500 ms | delay before `NACK_CHUNKS` |
 | Bandwidth hint | 0 KiB/s | 0, 16-4096 KiB/s | `0` means unrestricted |
 | Keepalive interval | 500 ms | fixed | client sends `STATUS_KEEPALIVE` when otherwise idle |
 | Session timeout | 3,000 ms | fixed | MIA expires an idle active client |
-| Snapshot mirror size | 68,944 B | fixed | mirror data alone is 144 chunks at the default payload size |
 
 The client requests parameters with `SET_PARAMS`. MIA responds with the accepted
 values in `PARAMS_ACCEPTED` and uses those values until the session ends.
+
+Version 1 has exactly one outstanding update response. The client does not ask
+for another update while a response is incomplete, except for the explicit retry
+and lost-ACK cases defined below.
 
 ## Endianness
 
@@ -50,17 +161,17 @@ Every packet starts with a 32-byte header:
 | 4 | 4 | `session_id` | nonzero random id assigned by MIA after `HELLO` |
 | 8 | 4 | `seq` | nonzero sender sequence number |
 | 12 | 4 | `ack` | highest peer sequence observed by sender |
-| 16 | 4 | `frame_id` | nonzero 32-bit video frame id, or `0` for non-frame/unknown-target messages |
-| 20 | 2 | `request_id` | 16-bit client request id, echoed by MIA |
-| 22 | 2 | `chunk_index` | zero-based chunk number for chunked responses |
-| 24 | 2 | `chunk_count` | chunk count for this response |
+| 16 | 4 | `frame_id` | update/readout frame id, or `0` for non-frame messages |
+| 20 | 2 | `request_id` | client request id, echoed by MIA for responses |
+| 22 | 2 | `chunk_index` | zero-based chunk number for `FRAME_DATA` |
+| 24 | 2 | `chunk_count` | chunk count for `FRAME_DATA` |
 | 26 | 2 | `payload_len` | bytes after this header |
 | 28 | 2 | `flags` | type-specific flags |
 | 30 | 2 | `reserved` | sender writes zero; receiver validates zero |
 
 `seq` increments independently for each sender. `seq = 0` is reserved as the
 empty `ack` sentinel and is never sent as a packet sequence number. `request_id`
-groups chunks that belong to the same client request.
+groups packets that belong to the same client request.
 
 ## Packet Types
 
@@ -68,15 +179,15 @@ groups chunks that belong to the same client request.
 | ---: | --- | --- | --- |
 | `0x01` | `HELLO` | client to MIA | start a session |
 | `0x02` | `WELCOME` | MIA to client | accept client and assign nonzero `session_id` |
-| `0x03` | `SET_PARAMS` | client to MIA | request FPS, in-flight count, payload size, repair timeout, bandwidth hint |
+| `0x03` | `SET_PARAMS` | client to MIA | request FPS, payload size, repair timeout, bandwidth hint |
 | `0x04` | `PARAMS_ACCEPTED` | MIA to client | return accepted transport parameters |
-| `0x05` | `REQUEST_FRAME` | client to MIA | ask for the next frame response |
-| `0x06` | `ACK_RESPONSE` | client to MIA | acknowledge a complete response |
-| `0x07` | `NACK_CHUNKS` | client to MIA | request missing chunks |
-| `0x08` | `REQUEST_SNAPSHOT` | client to MIA | ask for a full state snapshot |
-| `0x10` | `SNAPSHOT_DATA` | MIA to client | chunk of a full snapshot response |
-| `0x20` | `FRAME_DATA` | MIA to client | chunk of a frame update response |
-| `0x30` | `STATUS` | either | keepalive, counters, diagnostics, resync flags |
+| `0x05` | `REQUEST_FRAME` | client to MIA | request the next dirty-page update |
+| `0x06` | `ACK_RESPONSE` | client to MIA | acknowledge a complete update response |
+| `0x07` | `NACK_CHUNKS` | client to MIA | request missing chunks for the pending response |
+| `0x20` | `FRAME_DATA` | MIA to client | chunk of a dirty-page update response |
+| `0x30` | `STATUS` | either | keepalive, diagnostics, busy, protocol status |
+
+Packet type values not listed above are reserved in version 1.
 
 ## Session Flow
 
@@ -87,119 +198,65 @@ client -> MIA: HELLO
 MIA    -> client: WELCOME(session_id)
 client -> MIA: SET_PARAMS
 MIA    -> client: PARAMS_ACCEPTED
-client -> MIA: REQUEST_SNAPSHOT
-MIA    -> client: SNAPSHOT_DATA chunks
-client -> MIA: ACK_RESPONSE
+MIA marks every video page dirty
+client -> MIA: REQUEST_FRAME(last_complete_frame_id = 0)
+MIA    -> client: FRAME_DATA chunks for full refresh
+client -> MIA: ACK_RESPONSE(frame_id)
 ```
 
 Steady state:
 
 ```text
-client -> MIA: REQUEST_FRAME(request_id, last_complete_frame_id)
-MIA    -> client: FRAME_DATA chunks
-client -> MIA: ACK_RESPONSE(request_id, frame_id)
+client -> MIA: REQUEST_FRAME(last_complete_frame_id)
+MIA    -> client: FRAME_DATA chunks, or STATUS(NO_DIRTY_PAGES)
+client -> MIA: ACK_RESPONSE(frame_id) after applying a complete response
 ```
 
-If there is no newer frame, MIA returns `STATUS_KEEPALIVE` with reason
-`NO_NEWER_FRAME` and no `ACK_RESPONSE` is required. If resync is required, MIA
-returns `STATUS_RESYNC_REQUIRED` and the client requests a snapshot.
+`STATUS(NO_DIRTY_PAGES)` does not create a pending response, does not assign a
+new `frame_id`, and does not require `ACK_RESPONSE`.
 
-The client keeps at most `max_in_flight` frame responses outstanding. A response
-is outstanding from `REQUEST_FRAME` until the client receives every chunk and
-sends `ACK_RESPONSE`, sends `ACK_RESPONSE` for a stale response it discarded, or
-abandons the response and resyncs. A `REQUEST_FRAME` that receives `STATUS`
-with `STATUS_KEEPALIVE` and reason `NO_NEWER_FRAME` does not create an
-outstanding frame response.
+The client sends at most one `REQUEST_FRAME` for a new update at a time. A
+response is pending from the moment MIA accepts `REQUEST_FRAME` and assigns a
+new `frame_id` until the client acknowledges that `frame_id`, MIA treats a later
+request as an implicit acknowledgement, or the session expires.
 
-Version 1 does not support session resume. `HELLO` has no payload, uses
-`session_id = 0`, and starts a new session. `WELCOME` has no payload; the
-assigned nonzero session id is carried in the packet header. A reconnecting
-client requests a new snapshot after `WELCOME`.
+If the client receives no chunks for a pending request before its timeout, it
+retransmits the same `REQUEST_FRAME` with the same `request_id` and
+`last_complete_frame_id`. MIA regenerates or resends the pending response for
+that request.
 
-MIA never assigns `session_id = 0`. The value `0` is reserved for `HELLO`,
-packets without an established session, and `STATUS` responses that intentionally
-do not identify an active session.
+If the client applied the pending response but its `ACK_RESPONSE` was lost, the
+next `REQUEST_FRAME` carries `last_complete_frame_id` equal to the pending
+response's `frame_id`. MIA treats that request as an implicit acknowledgement of
+the pending response, clears and releases the pending dirty set, and then
+handles the new request normally.
 
-The active client is identified by both its UDP source endpoint and the assigned
-`session_id`. The endpoint is the source IPv4 address and UDP port that sent the
-accepted `HELLO`. MIA refreshes the session timeout only for valid packets from
-that endpoint with the active `session_id`, except for the initial `HELLO` with
-`session_id = 0`. A packet from another endpoint carrying the active
-`session_id` is treated as a different client and receives `STATUS_BUSY` while
-the original session is alive.
+Version 1 does not support session resume. A reconnecting client starts with a
+new `HELLO`; MIA marks all pages dirty for that new session.
+
+## Frame Ids
+
+`frame_id = 0` means that the client has not yet applied any MIA video update in
+the current session. MIA never assigns frame id `0`.
+
+MIA increments `frame_id` whenever it accepts a `REQUEST_FRAME` that produces a
+`FRAME_DATA` response, wrapping from `0xFFFFFFFF` to `1`. A frame id identifies
+one completed update/readout cycle. It does not promise that all bytes were read
+from MIA RAM at one instant.
+
+The client tracks the highest complete frame id it has applied. That value is
+sent as `last_complete_frame_id` in the next `REQUEST_FRAME`.
+
+All protocol text that says a frame id is newer, older, `<`, `<=`, `>`, or
+`>=` uses 32-bit serial number comparison. Sequence `a` is newer than sequence
+`b` when `0 < (uint32_t)(a - b) < 0x80000000`.
 
 `request_id` is a 16-bit client-generated id. The client increments it modulo
-`65536` for each `REQUEST_SNAPSHOT` and `REQUEST_FRAME`. It must not reuse a
-`request_id` while any previous response with that id is outstanding, repairable,
-or inside the 3,000 ms late-packet guard after a terminal `ACK_RESPONSE`
-(`ACK_APPLIED`, `ACK_STALE`, or `ACK_ABANDONED`). With the accepted 30 FPS
-maximum, wraparound is slow enough that this guard is normally automatic. MIA and
-the client identify a known response by `(request_id, response_type, frame_id)`
-and discard chunks that do not match an active known response.
-
-## Header Use by Packet Type
-
-Every sender initializes `seq` to `1`, increments it for each packet it sends,
-and wraps from `0xFFFFFFFF` to `1`. `ack` is the highest peer `seq` observed by
-that sender using 32-bit serial number comparison, or `0` if none has been
-observed. Sequence `a` is newer than sequence `b` when
-`0 < (uint32_t)(a - b) < 0x80000000`.
-
-Valid frame ids are nonzero and also use 32-bit serial number comparison. All
-protocol text that says a frame id is newer, older, `<=`, `>=`, `<`, or `>` uses
-that serial ordering, not plain integer ordering. MIA increments `FRAME_ID` on
-each accepted `VIDEO_COMMIT_FRAME`, wrapping from `0xFFFFFFFF` to `1`.
-`frame_id = 0` is reserved for non-frame packets and unknown-target abandon; it
-is never an accepted frame id and never participates in frame ordering.
-
-`payload_len` is meaningful for every packet and is set to the number of bytes
-after the 32-byte packet header. Packets with no payload set `payload_len = 0`.
-
-All other fields not listed as meaningful for a packet type are written as zero
-by the sender. Reserved fields are validated as zero; non-reserved unused fields
-are ignored by the receiver.
-
-`seq` and `ack` are diagnostics and liveness aids only. They do not control
-delivery, retransmission, frame ordering, chunk repair, or client mirror
-application. Request ids, response chunk indexes, and frame ids define protocol
-state.
-
-| Packet | `session_id` | `frame_id` | `request_id` | `chunk_index/count` | `flags` |
-| --- | --- | --- | --- | --- | --- |
-| `HELLO` | `0` | `0` | `0` | `0/0` | `0` |
-| `WELCOME` | assigned nonzero session | `0` | `0` | `0/0` | `0` |
-| `SET_PARAMS` | active session | `0` | `0` | `0/0` | `0` |
-| `PARAMS_ACCEPTED` | active session | `0` | `0` | `0/0` | bit 0 `PARAMS_CLAMPED` |
-| `REQUEST_SNAPSHOT` | active session | `0` | client request id | `0/0` | `0` |
-| `REQUEST_FRAME` | active session | `0` | client request id | `0/0` | `0` |
-| `SNAPSHOT_DATA` | active session | snapshot frame id | echoed request id | response chunk position | `0` |
-| `FRAME_DATA` | active session | target frame id | echoed request id | response chunk position | `0` |
-| `ACK_RESPONSE` | active session | acknowledged response frame id, or `0` for unknown-target abandon | acknowledged request id | `0/0` | one `ACK_*` bit |
-| `NACK_CHUNKS` | active session | response frame id | response request id | `0/0` | `0` |
-| `STATUS` | active session, or `0` if no session | latest frame id, or `0` | related request id, or `0` | `0/0` | `STATUS_*` bits |
-
-`PARAMS_CLAMPED = 0x0001` means at least one requested parameter was outside the
-accepted range and was clamped in `PARAMS_ACCEPTED`.
-
-`ACK_RESPONSE` flags:
-
-| Bit | Name | Meaning |
-| ---: | --- | --- |
-| 0 | `ACK_APPLIED` | client applied the complete response |
-| 1 | `ACK_STALE` | client received the complete response but discarded it because its `frame_id` was not newer than the client mirror |
-| 2 | `ACK_ABANDONED` | client abandoned the response, usually because it will request a snapshot |
-
-Exactly one `ACK_*` bit is set.
-
-`STATUS` flags:
-
-| Bit | Name | Meaning |
-| ---: | --- | --- |
-| 0 | `STATUS_RESYNC_REQUIRED` | receiver must discard partial frame state and request a snapshot |
-| 1 | `STATUS_BUSY` | MIA has an active session owned by another client |
-| 2 | `STATUS_KEEPALIVE` | no state change; liveness/diagnostics only |
-| 3 | `STATUS_RESPONSE_NOT_RETAINED` | requested repair/ack target is no longer retained |
-| 4 | `STATUS_PROTOCOL_ERROR` | malformed packet, bad field value, or unsupported version |
+`65536` for each new `REQUEST_FRAME`. If the client retries a request because it
+received zero chunks, it retransmits that same request with the same
+`request_id`. It must not reuse a `request_id` while the previous response with
+that id is pending, repairable, or inside the 3,000 ms late-packet guard after
+the response was acknowledged or abandoned by session expiry.
 
 ## Client Parameters
 
@@ -208,7 +265,7 @@ Exactly one `ACK_*` bit is set.
 | Offset | Size | Field | Description |
 | ---: | ---: | --- | --- |
 | 0 | 1 | `target_fps` | frame request rate |
-| 1 | 1 | `max_in_flight` | in-flight frame response limit |
+| 1 | 1 | `reserved` | sender writes zero; receiver validates zero |
 | 2 | 2 | `max_payload` | maximum UDP payload bytes, including header |
 | 4 | 2 | `repair_timeout_ms` | delay before missing chunk repair |
 | 6 | 2 | `bandwidth_kib_s` | bandwidth hint; `0` means unrestricted |
@@ -220,310 +277,267 @@ packet sizing.
 `bandwidth_kib_s = 0` disables bandwidth pacing. A nonzero value is clamped to
 `16-4096` KiB/s. MIA enforces the accepted value with a token bucket over
 application UDP payload bytes, including the 32-byte protocol header. If the
-bucket is empty, `mia_video_service()` delays sending more chunks; retained frame
-and snapshot state remain subject to the normal staging-memory limits.
+bucket is empty, `mia_video_service()` delays sending more chunks.
 
-## Client-To-MIA Data
+## Client-To-MIA Packets
 
 The client does not send video memory, pixels, CHR data, nametables, palettes,
 or sprite state to MIA. MIA is the only source of video state.
 
 Client-to-MIA packets are control and reliability messages:
 
-| Packet | Client Data |
+| Packet | Payload |
 | --- | --- |
-| `HELLO` | no payload in version 1 |
-| `SET_PARAMS` | requested FPS, payload size, in-flight count, repair timeout, bandwidth hint |
-| `REQUEST_SNAPSHOT` | request id in packet header |
-| `REQUEST_FRAME` | request id and `last_complete_frame_id` |
-| `ACK_RESPONSE` | completed request id and frame id |
-| `NACK_CHUNKS` | response id and missing chunk indexes |
-| `STATUS` | keepalive and client diagnostics |
+| `HELLO` | none |
+| `SET_PARAMS` | requested FPS, payload size, repair timeout, bandwidth hint |
+| `REQUEST_FRAME` | `last_complete_frame_id` |
+| `ACK_RESPONSE` | none |
+| `NACK_CHUNKS` | missing chunk indexes |
+| `STATUS` | optional keepalive/diagnostic payload |
 
 `REQUEST_FRAME` payload:
 
 | Offset | Size | Field | Description |
 | ---: | ---: | --- | --- |
-| 0 | 4 | `last_complete_frame_id` | newest frame fully applied by the client |
-| 4 | 1 | `flags` | request flags; zero for normal frame requests |
-| 5 | 3 | reserved | zero |
+| 0 | 4 | `last_complete_frame_id` | newest complete update the client has applied, or `0` before the first full refresh |
 
-`ACK_RESPONSE` payload:
-
-| Offset | Size | Field | Description |
-| ---: | ---: | --- | --- |
-| 0 | 1 | `response_type` | `SNAPSHOT_DATA` (`0x10`) or `FRAME_DATA` (`0x20`) |
-| 1 | 1 | `ack_status` | `0` applied, `1` stale, `2` abandoned |
-| 2 | 2 | reserved | zero |
-| 4 | 4 | `client_frame_id` | newest frame id fully represented by the client mirror after this ack |
-
-`ack_status` must match the single `ACK_*` bit set in the packet header.
-For `ACK_ABANDONED`, the packet header `frame_id` is the abandoned response's
-frame id when known. If the client received zero chunks for that response and
-therefore never learned the response target, it sends `frame_id = 0`.
-`ACK_ABANDONED` with `frame_id = 0` is the only unknown-target ack form. It
-matches by `(request_id, response_type)` instead of the normal
-`(request_id, response_type, frame_id)` tuple and releases any outstanding
-response for that request/type if MIA still has one.
+`ACK_RESPONSE` has no payload. The acknowledged response is identified by the
+packet header `request_id` and `frame_id`.
 
 `NACK_CHUNKS` payload:
 
 | Offset | Size | Field | Description |
 | ---: | ---: | --- | --- |
-| 0 | 1 | `response_type` | `SNAPSHOT_DATA` (`0x10`) or `FRAME_DATA` (`0x20`) |
-| 1 | 1 | reserved | zero |
-| 2 | 2 | `missing_count` | number of missing chunk indexes |
-| 4 | 2 * N | `missing_indexes` | zero-based chunk indexes for the response named by `request_id`, `frame_id`, and `response_type` |
+| 0 | 2 | `missing_count` | number of chunk indexes that follow |
+| 2 | 2 | `reserved` | sender writes zero; receiver validates zero |
+| 4 | 2 * N | `missing_indexes` | zero-based missing chunk indexes for the pending response named by `request_id` and `frame_id` |
 
-`STATUS` payload:
+## Status Packets
 
-| Offset | Size | Field | Description |
-| ---: | ---: | --- | --- |
-| 0 | 2 | `status_flags` | same bit values as the packet header `flags` |
-| 2 | 2 | `reason` | status reason code |
-| 4 | 4 | `latest_frame_id` | newest frame id known to the sender, or `0` |
-| 8 | 4 | `retained_base_frame_id` | oldest frame id from which MIA can build a frame response, or `0` |
-| 12 | 4 | `sender_time_ms` | low 32 bits of sender uptime in milliseconds |
-
-For `STATUS_BUSY`, `session_id` is `0` unless MIA is willing to disclose the
-active session id. For `STATUS_RESYNC_REQUIRED`, `request_id` and `frame_id`
-identify the frame response or repair target that failed when applicable.
-
-Status reason codes:
-
-| Code | Name |
-| ---: | --- |
-| `0` | `NONE` |
-| `1` | `BUSY` |
-| `2` | `STALE_BASE` |
-| `3` | `RESPONSE_NOT_RETAINED` |
-| `4` | `SNAPSHOT_ACTIVE` |
-| `5` | `PROTOCOL_ERROR` |
-| `6` | `TIMEOUT` |
-| `7` | `NO_NEWER_FRAME` |
-
-## Control Packet Validation
-
-Control packets have fixed payload lengths except `NACK_CHUNKS`:
-
-| Packet | Required `payload_len` |
-| --- | ---: |
-| `HELLO` | 0 |
-| `WELCOME` | 0 |
-| `SET_PARAMS` | 8 |
-| `PARAMS_ACCEPTED` | 8 |
-| `REQUEST_SNAPSHOT` | 0 |
-| `REQUEST_FRAME` | 8 |
-| `ACK_RESPONSE` | 8 |
-| `NACK_CHUNKS` | `4 + 2 * missing_count` |
-| `STATUS` | 16 |
-
-A receiver rejects a control packet as malformed when any required reserved byte
-or reserved header field is nonzero, when `payload_len` does not match the
-packet type, or when the packet uses flags not defined for that packet type.
-For `STATUS`, the payload `status_flags` must equal the packet header `flags`.
-
-For `NACK_CHUNKS`, `missing_count` must be greater than zero, `payload_len` must
-equal `4 + 2 * missing_count`, and every missing index must be less than the
-retained response's `chunk_count`. Duplicate missing indexes are malformed. A
-`NACK_CHUNKS` for an unknown response is not repairable; MIA responds with
-`STATUS_RESYNC_REQUIRED` and `STATUS_RESPONSE_NOT_RETAINED`.
-
-## State Regions
-
-Update records address bytes within named regions. Region layout and control
-fields are defined in [video-output.md](video-output.md).
-
-| Region | Id | Size | Contents |
-| --- | ---: | ---: | --- |
-| `CONTROL` | `0x00` | 256 B | mode, status, frame id, scroll, active banks, flags |
-| `PALETTE` | `0x01` | 256 B | 16 banks of 8 RGB565 colors |
-| `CHR` | `0x02` | 49,152 B | 8 character banks |
-| `BG_NT` | `0x03` | 8,000 B | background nametables |
-| `BG_ATTR` | `0x04` | 8,000 B | background attributes |
-| `OV_NT` | `0x05` | 1,000 B | overlay nametable |
-| `OV_ATTR` | `0x06` | 1,000 B | overlay attributes |
-| `OAM` | `0x07` | 1,280 B | sprite records |
-
-## Update Records
-
-`SNAPSHOT_DATA` and `FRAME_DATA` chunks carry consecutive bytes of one response
-stream. The response stream starts with a fixed prefix, followed by update
-records:
+`STATUS` packets carry this payload:
 
 | Offset | Size | Field | Description |
 | ---: | ---: | --- | --- |
-| 0 | 4 | `base_frame_id` | frame id the response is valid from |
-| 4 | 4 | `stream_len` | total response stream bytes, including this prefix |
-| 8 | 2 | `record_count` | number of update records after the prefix |
-| 10 | 2 | reserved | zero |
+| 0 | 2 | `status_code` | status reason |
+| 2 | 2 | `pending_chunk_count` | chunk count for the pending response, or `0` |
+| 4 | 4 | `client_frame_id` | frame id MIA believes the client has completed, or `0` |
+| 8 | 4 | `pending_frame_id` | pending response frame id, or `0` |
+| 12 | 4 | `latest_frame_id` | latest frame id assigned by MIA, or `0` |
 
-For `SNAPSHOT_DATA`, `base_frame_id` equals the snapshot frame id in the packet
-header. For `FRAME_DATA`, `base_frame_id` equals the `last_complete_frame_id`
-from the matching `REQUEST_FRAME`.
+Status codes:
 
-Records may cross chunk boundaries. The client reassembles all chunks for a
-response before parsing the response stream.
+| Code | Name | Meaning |
+| ---: | --- | --- |
+| `0` | `OK` | diagnostic/no error |
+| `1` | `NO_DIRTY_PAGES` | request accepted but no video pages were dirty |
+| `2` | `RESPONSE_PENDING` | MIA already has one pending response |
+| `3` | `RESPONSE_RESENT` | MIA regenerated or resent the pending response |
+| `4` | `FULL_REFRESH_PENDING` | next accepted update will include all video pages |
+| `5` | `BUSY` | another endpoint owns the active session |
+| `6` | `PROTOCOL_ERROR` | malformed packet or impossible state |
 
-For a response with accepted `max_payload`, the chunk data capacity is:
+`STATUS` flags:
 
-```text
-chunk_capacity = max_payload - 32
-```
+| Bit | Name | Meaning |
+| ---: | --- | --- |
+| 0 | `STATUS_KEEPALIVE` | no state change; liveness/diagnostics only |
+| 1 | `STATUS_RESPONSE_PENDING` | one update response is pending |
+| 2 | `STATUS_FULL_REFRESH_PENDING` | MIA has marked all pages dirty |
+| 3 | `STATUS_BUSY` | MIA has an active session owned by another client |
+| 4 | `STATUS_PROTOCOL_ERROR` | malformed packet, bad field value, or unsupported version |
 
-The byte offset of a chunk in the response stream is:
+## Header Use by Packet Type
 
-```text
-chunk_offset = chunk_index * chunk_capacity
-```
+Every sender initializes `seq` to `1`, increments it for each packet it sends,
+and wraps from `0xFFFFFFFF` to `1`. `ack` is the highest peer `seq` observed by
+that sender using serial number comparison, or `0` if none has been observed.
 
-All chunks except the final chunk have `payload_len = chunk_capacity`. The final
-chunk has `payload_len = stream_len - chunk_offset`. `chunk_count` is
-`ceil(stream_len / chunk_capacity)`.
+`seq` and `ack` are diagnostics and liveness aids only. They do not control
+delivery, retransmission, frame ordering, chunk repair, or client mirror
+application. Request ids, response chunk indexes, and frame ids define protocol
+state.
 
-Record header:
+All fields not listed as meaningful for a packet type are written as zero by
+the sender. Reserved fields are validated as zero; non-reserved unused fields
+are ignored by the receiver.
 
-| Offset | Size | Field | Description |
-| ---: | ---: | --- | --- |
-| 0 | 1 | `record_type` | `0x01` write, `0x02` fill |
-| 1 | 1 | `region_id` | target region |
-| 2 | 3 | `offset` | byte offset within region |
-| 5 | 2 | `length` | number of bytes affected |
-| 7 | N | `data` | write data, or one fill byte for fill records |
+| Packet | `session_id` | `frame_id` | `request_id` | `chunk_index/count` | `flags` |
+| --- | --- | --- | --- | --- | --- |
+| `HELLO` | `0` | `0` | `0` | `0/0` | `0` |
+| `WELCOME` | assigned nonzero session | `0` | `0` | `0/0` | `0` |
+| `SET_PARAMS` | active session | `0` | `0` | `0/0` | `0` |
+| `PARAMS_ACCEPTED` | active session | `0` | `0` | `0/0` | bit 0 `PARAMS_CLAMPED` |
+| `REQUEST_FRAME` | active session | `0` | client request id | `0/0` | `0` |
+| `FRAME_DATA` | active session | response frame id | echoed request id | response chunk position | `0` |
+| `ACK_RESPONSE` | active session | acknowledged response frame id | acknowledged request id | `0/0` | `0` |
+| `NACK_CHUNKS` | active session | response frame id | response request id | `0/0` | `0` |
+| `STATUS` | active session, or `0` if no session | related/latest frame id, or `0` | related request id, or `0` | `0/0` | `STATUS_*` bits |
 
-`WRITE` records carry `length` data bytes.
+`PARAMS_CLAMPED = 0x0001` means at least one requested parameter was outside the
+accepted range and was clamped in `PARAMS_ACCEPTED`.
 
-`FILL` records carry one data byte and write that value `length` times.
+## Dirty-Page Response Format
 
-Records are absolute. Applying a record sets the client mirror bytes to the
-specified values. The client never needs the previous value.
-
-## Stream Validation
-
-A receiver rejects a packet or response stream as malformed when any of these
-conditions are true:
-
-- `magic`, `version`, `session_id`, reserved fields, or `payload_len` are invalid.
-- `payload_len` exceeds the accepted `max_payload - 32`.
-- `chunk_count` is zero for `SNAPSHOT_DATA` or `FRAME_DATA`.
-- `chunk_index >= chunk_count`.
-- chunks for the same response disagree on `frame_id`, `request_id`,
-  `chunk_count`, or response type.
-- a non-final response chunk has `payload_len != chunk_capacity`.
-- the final response chunk's `payload_len` does not match `stream_len`.
-- the response stream is shorter than the 12-byte stream prefix.
-- `stream_len` does not match the reassembled response byte count.
-- `record_count` does not match the parsed record count.
-- record parsing does not consume exactly `stream_len` bytes.
-- `record_type` is unknown.
-- `region_id` is unknown.
-- `length` is zero.
-- `offset + length` exceeds the target region size.
-- a `WRITE` record does not contain exactly `length` data bytes.
-- a `FILL` record does not contain exactly one fill byte.
-
-Rejected records are never applied. If MIA rejects a client packet, it sends
-`STATUS` with `STATUS_PROTOCOL_ERROR` when the session is known. If the client
-rejects a MIA response, it sends `ACK_RESPONSE` with `ACK_ABANDONED` when it can
-identify the request, discards partial response state, and requests a snapshot.
-
-## Snapshot Response
-
-A snapshot response contains enough records to rebuild the complete client
-mirror.
-
-The client applies a snapshot only after it has all chunks for the response.
-Missing chunks are repaired with `NACK_CHUNKS`. Failed repair causes a fresh
-`REQUEST_SNAPSHOT`.
-
-When MIA accepts `REQUEST_SNAPSHOT`, it assigns `snapshot_frame_id` to the
-current committed `FRAME_ID` and creates a stable snapshot source for the full
-68,944-byte mirror at that frame id. Every byte in the `SNAPSHOT_DATA` response
-must come from that same snapshot source. Writes and commits that happen after
-the snapshot starts belong to later frame ids and are not part of the snapshot.
-
-The stable source may be a copied snapshot buffer, a retained immutable mirror,
-or another implementation that guarantees all streamed bytes represent
-`snapshot_frame_id`. MIA does not need to allocate or queue all UDP packets for
-the snapshot at once; it may still stream chunks across many calls to
-`mia_video_service()`.
-
-After applying a complete snapshot, the client sets its current frame id to
-`snapshot_frame_id`, discards any retained incomplete frame responses with
-`frame_id <= snapshot_frame_id`, and resumes by sending `REQUEST_FRAME` with
-`last_complete_frame_id = snapshot_frame_id`.
-
-## Frame Response
-
-A frame response contains absolute records for the frame MIA selected for the
-request.
-
-The client applies a frame response only when its base state is known. The
-response stream's `base_frame_id` is the `last_complete_frame_id` sent in
+`FRAME_DATA` chunks carry page records. A response contains one record for each
+page whose bit was set in the pending dirty map when MIA accepted the matching
 `REQUEST_FRAME`.
 
-A `FRAME_DATA` response is cumulative from `base_frame_id` to the target
-`frame_id` in the packet header. It must contain every byte in the union of video
-ranges dirtied by accepted frames `(base_frame_id, frame_id]`, using the byte
-values from the target `frame_id`. This makes the response safe to apply when
-the client's current frame id is any value `>= base_frame_id` and `< frame_id`.
+Each page record is fixed-size:
 
-For each `REQUEST_FRAME`, MIA returns one of these outcomes:
+| Offset | Size | Field | Description |
+| ---: | ---: | --- | --- |
+| 0 | 2 | `page_index` | video page index, `0-2154` |
+| 2 | 32 | `page_data` | bytes read from MIA RAM for that page |
 
-| Outcome | Meaning |
+The video address for a page record is:
+
+```text
+page_offset = page_index * 32
+valid_len   = min(32, 68,944 - page_offset)
+```
+
+The final video page has only 16 valid bytes. Its remaining 16 wire bytes are
+padding and are ignored by the client.
+
+MIA emits page records in ascending `page_index` order. Clean pages are skipped.
+This deterministic order is part of the repair protocol.
+
+For an accepted `max_payload`, the number of records per chunk is:
+
+```text
+records_per_chunk = floor((max_payload - 32) / 34)
+```
+
+At the default 512-byte UDP payload:
+
+```text
+records_per_chunk = floor((512 - 32) / 34) = 14
+payload_len       = 14 * 34 = 476 bytes, except the final chunk
+```
+
+`chunk_count = ceil(dirty_page_count / records_per_chunk)`. A `FRAME_DATA`
+packet's payload contains the page records with indexes:
+
+```text
+first_record = chunk_index * records_per_chunk
+last_record  = min(first_record + records_per_chunk, dirty_page_count) - 1
+```
+
+The client validates that page indexes are strictly increasing across the
+complete response, within range, and present only once. The client applies a
+response only after it has received every chunk for that response. It then sends
+`ACK_RESPONSE`.
+
+## Readout Semantics
+
+Readout is driven by events from both sides of MIA. The 6502 side changes video
+memory; the client side asks MIA to publish those changes. Dirty maps are the
+bridge between those two timelines: a write records that a 32-byte page changed,
+and a client request turns the accumulated dirty pages into a response.
+
+| Event | Meaning | Dirty-map effect | Programmer-visible effect |
+| --- | --- | --- | --- |
+| 6502 writes video memory | live MIA RAM changed | set the page bit in the active map | no packet is sent yet |
+| client sends `REQUEST_FRAME` with no pending response | client asks for the next update | active map becomes pending; already-clear other map becomes active | update/readout events fire; later writes belong to the next update |
+| first `FRAME_DATA` send completes | every chunk was sent once | pending map is retained for possible repair | response-sent event fires, but the update is not complete yet |
+| client sends `NACK_CHUNKS` | some chunks were missed | requested chunks are regenerated from the pending map | repair/readout events fire |
+| client sends `ACK_RESPONSE` | client applied the complete update | pending map is cleared before it is released | acknowledgement event fires after cleanup; this is the strict clean point for visible writes |
+| reconnect or unrecoverable protocol mismatch | client mirror must be rebuilt | all video page bits are marked dirty | next update is a full refresh |
+
+MIA maintains two dirty maps and one pending-response state bit:
+
+| Dirty map | Meaning |
 | --- | --- |
-| exact next frame | records move the client from its base frame to the next queued frame |
-| cumulative newer frame | records move the client from its base frame to a newer retained frame |
-| no newer frame | MIA has no accepted frame newer than the client's base frame |
-| resync required | MIA cannot build a response from the client's base frame |
+| active | receives bits for new 6502 writes |
+| pending | retained dirty-page list for the current response |
 
-If MIA cannot prove that the response is valid from the client's base frame for
-a reason not otherwise specified below, it sends `STATUS` with
-`STATUS_RESYNC_REQUIRED` set. The client then requests a full snapshot and does
-not apply partial frame data.
+Each write through an indexed window into the video memory range sets one bit in
+the active dirty map. Rewriting the same page sets the same bit again; MIA keeps
+only one dirty record per page per response.
 
-If `last_complete_frame_id` is older than the oldest retained base frame from
-which MIA can build a cumulative frame response, MIA sends `STATUS` with
-`STATUS_RESYNC_REQUIRED` set, reason `STALE_BASE`, `request_id` echoed from the
-request, `frame_id`/`latest_frame_id` set to MIA's latest accepted frame, and
-`retained_base_frame_id` set to that oldest retained base. The client then
-requests a snapshot.
+When no response is pending, the non-active map is already clear and available
+for the next rotation. That is a derived role, not a third dirty map. Core 0
+clears only maps that core 1 cannot write: startup/reset maps, or the pending
+map after a matching acknowledgement has been validated and before pending state
+is released. Core 1 writes only the active map; core 0 scans and repairs only
+the pending map.
 
-If `last_complete_frame_id` is newer than MIA's latest accepted `FRAME_ID`, the
-client is claiming a future base frame. MIA sends `STATUS` with
-`STATUS_RESYNC_REQUIRED` and `STATUS_PROTOCOL_ERROR` set, reason
-`PROTOCOL_ERROR`, `request_id` echoed from the request, and
-`frame_id`/`latest_frame_id` set to MIA's latest accepted frame. The client then
-requests a snapshot.
+When MIA accepts a `REQUEST_FRAME`, the dirty maps move through these steps:
 
-If `last_complete_frame_id` equals MIA's latest accepted `FRAME_ID`, MIA sends
-`STATUS` with `STATUS_KEEPALIVE`, reason `NO_NEWER_FRAME`, `request_id` echoed
-from the request, and `frame_id`/`latest_frame_id` set to the latest frame. The
-client treats that request as complete without sending `ACK_RESPONSE` and may
-send another `REQUEST_FRAME` according to its accepted frame pacing.
+1. if full refresh is not pending and the active dirty map is empty, MIA returns
+   `STATUS(NO_DIRTY_PAGES)`;
+2. otherwise, MIA rotates the active map into the pending role and the
+   already-clear other map into the active role;
+3. if full refresh is pending, MIA sets every valid page bit in the pending map
+   and clears the full-refresh-pending state;
+4. MIA assigns a new nonzero `frame_id`;
+5. core 0 scans the pending dirty map, optionally builds a dirty page index
+   list, and sends deterministic `FRAME_DATA` chunks.
 
-The client never applies a frame response with `frame_id <= current_frame_id`.
-That response is stale; the client discards it and sends `ACK_RESPONSE` with
-`ACK_STALE`. If a complete frame response has `base_frame_id >
-current_frame_id`, the client cannot prove it has the required base state. It
-abandons pending frame responses and requests a snapshot.
+The pending dirty map is retained until the response is acknowledged, implicitly
+acknowledged by a later request, or the session expires. During that time,
+`NACK_CHUNKS` and same-request retries regenerate chunks from the same pending
+dirty map and the same deterministic page order.
 
-Local/free-running program behavior:
+When `ACK_RESPONSE` is accepted, MIA clears the pending map before clearing
+`VIDEO_UPDATE_ACTIVE`, clearing `VIDEO_RESPONSE_SENT`, latching
+`VIDEO_EVENT_FRAME_ACKED`, or triggering the video IRQ. A 6502 program that sees
+the acknowledgement event therefore sees a coherent state: one map is active
+for future writes, there is no pending response, and the other map is already
+clear for the next rotation.
 
-- If the 6502 has committed multiple frames since the last request, MIA
-  coalesces unsent state and sends the newest coherent state.
-- The client can observe gaps in `frame_id`.
-- The client mirror stays synchronized because every record is absolute.
+MIA does not freeze page byte values for a response. Initial sends, retries, and
+repairs may read current MIA RAM values for the pending page indexes. This keeps
+the core 1 bus path fast: it only writes the live byte and marks the active
+dirty bit. The visible consequence is that 6502 writes to visible video memory
+during an active or unacknowledged update can appear in that update or in a
+later repair of that update.
 
-Video-paced program behavior:
+This behavior is intentional. Programs that need artifact-free output wait until
+the client acknowledges the previous update before changing visible memory.
+Programs that prefer lower latency can write earlier and accept possible
+transient artifacts. Later updates converge the client mirror because every
+post-request write marks the active dirty map for the next response.
 
-- The 6502 waits for `VIDEO_CAN_COMMIT`.
-- MIA retains each accepted committed frame until it is requested, transmitted,
-  acknowledged, repaired, or replaced by a snapshot resync.
-- The client does not observe intentional frame-id gaps.
+## Request Handling
 
-The client renders a frame only after every chunk for an applicable response has
-arrived and the response has been applied.
+MIA tracks `client_frame_id`, the newest frame id that it believes the client
+has completed. It starts at `0` for each session.
+
+When no response is pending:
+
+- `REQUEST_FRAME(last_complete_frame_id == client_frame_id)` is valid. MIA
+  either sends a new `FRAME_DATA` response or returns `STATUS(NO_DIRTY_PAGES)`.
+- `REQUEST_FRAME(last_complete_frame_id < client_frame_id)` is stale. MIA
+  ignores the request and does not create a response.
+- `REQUEST_FRAME(last_complete_frame_id > client_frame_id)` is impossible unless
+  full refresh recovery is pending. MIA returns `STATUS(PROTOCOL_ERROR)`,
+  discards pending response state if any exists, sets full-refresh-pending, and
+  requires a full refresh response before trusting the client mirror again.
+
+When a response is pending:
+
+- `ACK_RESPONSE` matching the pending `request_id` and `frame_id` clears the
+  pending dirty map, releases pending response state, and sets
+  `client_frame_id = frame_id`.
+- `ACK_RESPONSE` for an older, duplicate, or unknown response is ignored.
+- `ACK_RESPONSE` for a future or impossible `frame_id` is a protocol error. MIA
+  discards pending response state, sets full-refresh-pending, and requires a
+  full refresh response before trusting the client mirror again.
+- `REQUEST_FRAME` with the same `request_id` and the same
+  `last_complete_frame_id` as the pending response regenerates or resends that
+  pending response.
+- `REQUEST_FRAME(last_complete_frame_id == pending_frame_id)` is an implicit
+  acknowledgement of the pending response. MIA clears the pending dirty map,
+  releases pending response state, sets `client_frame_id = pending_frame_id`,
+  and then handles the new request.
+- Other `REQUEST_FRAME` packets while a response is pending receive
+  `STATUS(RESPONSE_PENDING)` and do not create another response.
+
+If full refresh recovery is pending, the next valid `REQUEST_FRAME` can produce
+a response containing every video page, even if the client's
+`last_complete_frame_id` is stale or unknown. The client applies that full
+refresh as its new mirror state and acknowledges its `frame_id`.
 
 ## Repairs
 
@@ -533,76 +547,116 @@ the network. It can also happen when a datagram was discarded by the Wi-Fi/IP/UD
 stack due to link corruption, checksum failure, receive-buffer pressure, or when
 a delayed/reordered datagram arrives after the client's repair timeout.
 
-`NACK_CHUNKS` identifies the response with the packet header `request_id`,
-packet header `frame_id`, and payload `response_type`. The missing indexes are
-chunk indexes for that response stream, not record indexes.
+The client detects missing chunks from the `FRAME_DATA` headers. Every chunk in
+a response carries the same `request_id`, the response `frame_id`, its
+zero-based `chunk_index`, and the response `chunk_count`. After receiving at
+least one chunk, the client tracks which indexes from `0` through
+`chunk_count - 1` have arrived. If `repair_timeout_ms` expires before all
+indexes are present, the client sends the absent indexes in `NACK_CHUNKS`. If
+zero chunks arrive for a request, the client does not know the response
+`frame_id` or `chunk_count`; it retries the same `REQUEST_FRAME` with the same
+`request_id` and `last_complete_frame_id` instead.
 
-The client sends `NACK_CHUNKS` only after receiving at least one chunk for the
-response, because every response chunk carries the target `frame_id` and
-`chunk_count`. If `repair_timeout_ms` elapses for an outstanding response and
-the client has received zero chunks for that response, the target frame and chunk
-count are unknown. The client sends `ACK_RESPONSE` with `ACK_ABANDONED`,
-`frame_id = 0`, and the request id, then requests a snapshot instead of sending
-`NACK_CHUNKS`.
+`NACK_CHUNKS` identifies the pending response with the packet header
+`request_id` and `frame_id`. Missing indexes are chunk indexes for that response,
+not page record indexes.
 
-MIA retransmits retained missing chunks. If the requested response is no longer
-retained, MIA sends `STATUS` with `STATUS_RESYNC_REQUIRED` and
-`STATUS_RESPONSE_NOT_RETAINED` set. The client then requests a new snapshot.
+MIA repairs by regenerating the requested chunks from the pending dirty map. The
+same `chunk_index` always maps to the same range of pending dirty page records
+because records are fixed-size and ordered by ascending page index. Regenerated
+repair chunks may contain newer byte values than an earlier send of the same
+chunk if the 6502 wrote those pages while the response was pending.
 
-## In-Flight Responses
+If `NACK_CHUNKS` names the current pending response and all missing indexes are
+valid, MIA sends those `FRAME_DATA` chunks again. If it names an old, duplicate,
+or unknown response, MIA ignores the packet. If it names a future or impossible
+response, MIA returns `STATUS(PROTOCOL_ERROR)`, discards pending response state,
+sets full-refresh-pending, and requires a full refresh response before trusting
+the client mirror again. Unknown repairs never release pending response state.
 
-`max_in_flight` is the number of requested frame responses the client allows to
-exist at once.
+## Full Refresh
 
-Higher values improve throughput on higher-latency links because MIA keeps
-sending while older responses are still traveling. Higher values also increase
-memory pressure and visual lag. The accepted maximum is 4.
+A full refresh is a normal `FRAME_DATA` response whose pending dirty map has
+every video page bit set. It is used:
 
-Out-of-order completion is allowed. The client applies only responses whose
-target `frame_id` is newer than the current client mirror and whose
-`base_frame_id` is not newer than the current client mirror. A newer cumulative
-response may make older in-flight responses stale. Stale responses are discarded
-and acknowledged with `ACK_STALE` so MIA can release retained response state.
+- after `WELCOME` for the first client update,
+- when a client reconnects,
+- after an unrecoverable protocol mismatch,
+- when the 6502 program explicitly requests a full refresh through MIA control,
+- when firmware diagnostics decide the client mirror should be rebuilt.
 
-MIA must retain or regenerate response chunks until the response is acknowledged,
-abandoned, replaced by snapshot resync, or no longer retained. If MIA cannot
-repair or regenerate an outstanding response, it sends `STATUS` with
-`STATUS_RESYNC_REQUIRED`.
+A full refresh is not a frozen snapshot. MIA still reads live MIA RAM while
+generating the response. Writes during the full refresh are tracked in the
+active dirty map and will be sent again in a later update.
 
-## Keepalive and Timeout
+## Validation
 
-Any valid packet from the active client endpoint with the active `session_id`
-refreshes the session liveness timer. When the client has no other packet to
-send for 500 ms, it sends `STATUS` with `STATUS_KEEPALIVE`. The keepalive
-payload uses the normal `STATUS` schema and sets `latest_frame_id` to the newest
-frame fully represented by the client mirror.
+Control packets have fixed payload lengths except `NACK_CHUNKS`:
+
+| Packet | Valid `payload_len` |
+| --- | ---: |
+| `HELLO` | 0 |
+| `WELCOME` | 0 |
+| `SET_PARAMS` | 8 |
+| `PARAMS_ACCEPTED` | 8 |
+| `REQUEST_FRAME` | 4 |
+| `ACK_RESPONSE` | 0 |
+| `NACK_CHUNKS` | `4 + 2 * missing_count` |
+| `STATUS` | 16 |
+
+`FRAME_DATA` `payload_len` must be a nonzero multiple of 34. It must contain no
+more than `records_per_chunk` page records. `chunk_count` must be nonzero,
+`chunk_index` must be less than `chunk_count`, and the final chunk must contain
+at least one record.
+
+For `NACK_CHUNKS`, `missing_count` must be greater than zero, `payload_len` must
+equal `4 + 2 * missing_count`, every missing index must be less than the pending
+response's `chunk_count`, and duplicate missing indexes are malformed.
+
+A receiver rejects a packet or response as malformed when any of these are true:
+
+- `magic`, `version`, `payload_len`, or reserved fields are invalid;
+- `session_id` is missing or wrong for packets that require an active session;
+- a packet that must have no payload has a nonzero `payload_len`;
+- a multi-byte field is out of range;
+- `FRAME_DATA` page indexes are out of range, duplicated, or not strictly
+  increasing across the complete response;
+- `FRAME_DATA` chunk metadata disagrees across chunks for the same response;
+- a control packet uses a nonzero unused header field that must be zero.
+
+If MIA rejects a client packet for a known session, it sends `STATUS` with
+`STATUS_PROTOCOL_ERROR` when doing so is useful and safe. If a client rejects a
+MIA response as malformed, it discards the partial response and sends `STATUS`
+with `STATUS_PROTOCOL_ERROR` when it can identify the session. MIA can then
+discard pending response state, set full-refresh-pending, and serve a full
+refresh on the next valid `REQUEST_FRAME`. If the client cannot identify a
+valid session, it restarts with `HELLO`.
+
+## Timing and Pacing
+
+The client owns the video request cadence. It requests at the accepted FPS while
+the previous response is complete, acknowledged, or known to be absent. If an
+update is large, repair-heavy, or delayed by bandwidth pacing, the next request
+naturally occurs later.
+
+Thirty request/acknowledgement cycles per second are small control traffic. The
+limiting factor is the amount of dirty page data per response, not the control
+packet rate. Normal gameplay updates are expected to dirty a small subset of
+video memory. Full refreshes and large CHR uploads can take many packets and
+should not be expected to sustain 30 FPS.
+
+MIA may send `STATUS_KEEPALIVE` while otherwise idle. Client-side timeout policy
+is implementation-defined, but a client should send `STATUS_KEEPALIVE` at least
+every 500 ms when it has no request, acknowledgement, or repair traffic to send.
 
 MIA expires the active session after 3,000 ms with no valid packet from that
-endpoint and session id. Expiry releases retained responses, repair state, and
-snapshot state for that session. After expiry, the next valid `HELLO` can become
-the active client and receives a new `session_id`.
+endpoint and session id. Expiry releases pending response state. After expiry,
+the next valid `HELLO` can become the active client and will receive a full
+refresh.
 
-MIA may also send `STATUS_KEEPALIVE` while otherwise idle. Client-side timeout
-policy is implementation-defined, but a client that decides the session is dead
-must abandon outstanding responses and restart with `HELLO`.
-
-## Frame Ids
-
-MIA initializes `FRAME_ID` to `1` for the initial video state before serving
-snapshots. `frame_id` increments on every accepted `VIDEO_COMMIT_FRAME`,
-wrapping from `0xFFFFFFFF` to `1`. Frame ordering uses the serial comparison
-rule defined in the packet-header section. `0` is not a valid accepted frame id.
-
-A local/free-running program can produce gaps at the client when MIA coalesces
-old unsent frame state. A video-paced program that waits for
-`VIDEO_CAN_COMMIT` does not produce intentional gaps.
-
-## Session Ownership
-
-MIA accepts one active client endpoint at a time. A second endpoint's `HELLO`
-receives a `STATUS` response with `STATUS_BUSY` set while the active session is
-alive. If the active session has timed out, the next valid `HELLO` becomes the
-active client and receives a new `session_id`.
+## Security
 
 Discovery and trust are local-network mechanisms. The protocol payload includes
-the session id; it does not provide encryption.
+no authentication, encryption, or access control. MIA accepts one active client
+endpoint at a time. A second endpoint's `HELLO` receives a `STATUS` response
+with `STATUS_BUSY` set while the active session is alive.
