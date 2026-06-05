@@ -118,6 +118,9 @@ missing-chunk repair, deterministic dirty-page packing, and full-refresh
 recovery. Payload integrity is provided by the link layer and UDP checksum;
 corrupted datagrams are treated as missing packets.
 
+The protocol is intended for trusted local networks and supports one active
+client session at a time.
+
 ## Defaults and Limits
 
 Version 1 has fixed wire sizes. Client-local policy is not configured in MIA; the
@@ -159,25 +162,62 @@ Every packet starts with a 32-byte header:
 
 | Offset | Size | Field | Description |
 | ---: | ---: | --- | --- |
-| 0 | 2 | `magic` | `0x4D56` (`"MV"` little-endian) |
+| 0 | 2 | `magic` | `0x4D56` (`"MV"` little-endian); rejects packets for other protocols |
 | 2 | 1 | `version` | protocol version, `1` |
-| 3 | 1 | `type` | packet type |
-| 4 | 4 | `session_id` | nonzero session-generation token assigned by MIA after `HELLO` |
-| 8 | 4 | `seq` | nonzero endpoint-local diagnostic sequence number |
-| 12 | 4 | `ack` | highest peer `seq` observed by this endpoint |
-| 16 | 4 | `frame_id` | update/readout frame id, or `0` for non-frame messages |
-| 20 | 2 | `request_id` | client request id, echoed by MIA for responses |
-| 22 | 2 | `chunk_index` | zero-based chunk number for `FRAME_DATA` |
-| 24 | 2 | `chunk_count` | chunk count for `FRAME_DATA` |
+| 3 | 1 | `type` | packet type; see [Packet Types](#packet-types) |
+| 4 | 4 | `session_id` | session token assigned by MIA in `WELCOME`; `0` is used before a session exists |
+| 8 | 4 | `seq` | endpoint-local packet sequence number for diagnostics/liveness |
+| 12 | 4 | `ack` | highest peer `seq` observed by this endpoint, or `0` if none |
+| 16 | 4 | `frame_id` | MIA-assigned update id for a `FRAME_DATA` response, or `0` for non-frame packets |
+| 20 | 2 | `request_id` | client-assigned id for a `REQUEST_FRAME`; echoed by MIA in the matching response |
+| 22 | 2 | `chunk_index` | zero-based chunk number for `FRAME_DATA`; otherwise `0` |
+| 24 | 2 | `chunk_count` | total chunks in this `FRAME_DATA` response; otherwise `0` |
 | 26 | 2 | `payload_len` | bytes after this header |
-| 28 | 2 | `flags` | type-specific flags |
+| 28 | 2 | `flags` | type-specific flags; currently used by `STATUS` |
 | 30 | 2 | `reserved` | sender writes zero; receiver validates zero |
 
-Both endpoints send packets: the client sends requests and acknowledgements; MIA
-sends responses and status. Each endpoint increments its own `seq` for each
-packet it sends. `seq = 0` is reserved as the empty `ack` sentinel and is never
-sent as a packet sequence number. `request_id` groups packets that belong to the
-same client request.
+### Header Field Semantics
+
+`session_id` answers "which client session does this packet belong to?" The client
+sends `HELLO` with `session_id = 0`. MIA replies with `WELCOME` and a fresh
+nonzero `session_id`. After that, packets for the active session carry that
+value. Packets from older sessions are ignored.
+
+`seq` and `ack` are diagnostic fields. Each endpoint increments its own `seq` for
+each packet it sends, wrapping from `0xFFFFFFFF` to `1`. `seq = 0` is reserved as
+the empty `ack` sentinel and is never sent as a packet sequence number. These
+fields do not drive retransmission, frame ordering, chunk repair, or client
+mirror application.
+
+`frame_id` answers "which MIA update response is this?" MIA assigns a new
+nonzero `frame_id` only when it accepts a `REQUEST_FRAME` that produces
+`FRAME_DATA`. `frame_id = 0` means no update has been produced or applied yet in
+this session. A frame id identifies one dirty-page response; it does not mean all
+bytes were sampled from MIA RAM at one instant.
+
+The client tracks the newest complete `frame_id` it has applied and sends that
+value as `last_complete_frame_id` in the next `REQUEST_FRAME`. MIA uses that
+value to distinguish a normal request, a stale request, an implicit
+acknowledgement after a lost `ACK_RESPONSE`, and an impossible future request.
+
+`request_id` answers "which client request is this?" The client chooses a new
+16-bit `request_id` for each new `REQUEST_FRAME`. MIA echoes that id in every
+`FRAME_DATA`, `STATUS`, or repair response related to that request. If the client
+received zero chunks and retries the same request, it reuses the same
+`request_id`. The client must not reuse a `request_id` while the previous
+response with that id is pending or repairable.
+
+`chunk_index` and `chunk_count` are meaningful only for `FRAME_DATA`. They split
+one response, identified by `request_id` and `frame_id`, into numbered UDP
+datagrams. `NACK_CHUNKS` refers to these chunk indexes, not to dirty page
+indexes.
+
+`payload_len` is the number of bytes after the 32-byte header. Receivers validate
+it against the packet type before reading payload fields.
+
+All fields not meaningful for a packet type are written as zero by the sender.
+Reserved fields are validated as zero; non-reserved unused fields are ignored by
+the receiver.
 
 ## Packet Types
 
@@ -238,29 +278,6 @@ session: MIA discards pending response state if any exists, assigns a fresh
 nonzero `session_id`, marks every video page dirty for full refresh, and returns
 `WELCOME`. Stale packets from an older session id are ignored.
 
-## Frame Ids
-
-`frame_id = 0` means that the client has not yet applied any MIA video update in
-the current session. MIA never assigns frame id `0`.
-
-MIA increments `frame_id` whenever it accepts a `REQUEST_FRAME` that produces a
-`FRAME_DATA` response, wrapping from `0xFFFFFFFF` to `1`. A frame id identifies
-one completed update/readout cycle. It does not promise that all bytes were read
-from MIA RAM at one instant.
-
-The client tracks the highest complete frame id it has applied. That value is
-sent as `last_complete_frame_id` in the next `REQUEST_FRAME`.
-
-All protocol text that says a frame id is newer, older, `<`, `<=`, `>`, or
-`>=` uses 32-bit serial number comparison. Sequence `a` is newer than sequence
-`b` when `0 < (uint32_t)(a - b) < 0x80000000`.
-
-`request_id` is a 16-bit client-generated id. The client increments it modulo
-`65536` for each new `REQUEST_FRAME`. If the client retries a request because it
-received zero chunks, it retransmits that same request with the same
-`request_id`. It must not reuse a `request_id` while the previous response with
-that id is pending or repairable.
-
 ## Client-To-MIA Packets
 
 The client does not send video memory, pixels, CHR data, nametables, palettes,
@@ -276,84 +293,82 @@ Client-to-MIA packets are control and reliability messages:
 | `NACK_CHUNKS` | missing chunk indexes |
 | `STATUS` | diagnostic/protocol status payload |
 
-`REQUEST_FRAME` payload:
+### HELLO
+
+`HELLO` starts or resets the active video session. It has no payload. The client
+sends it with `session_id = 0`. Any valid `HELLO` causes MIA to discard pending
+response state, assign a fresh nonzero `session_id`, schedule a full refresh, and
+reply with `WELCOME`.
+
+### REQUEST_FRAME
+
+`REQUEST_FRAME` asks MIA to publish the next dirty-page update. It carries a
+client-generated `request_id` in the header and `last_complete_frame_id` in the
+payload. The header `frame_id`, `chunk_index`, and `chunk_count` fields are `0`.
+
+Payload:
 
 | Offset | Size | Field | Description |
 | ---: | ---: | --- | --- |
 | 0 | 4 | `last_complete_frame_id` | newest complete update the client has applied, or `0` before the first full refresh |
 
-`ACK_RESPONSE` has no payload. The acknowledged response is identified by the
-packet header `request_id` and `frame_id`.
+If the client received zero chunks for a request, it retries the same
+`REQUEST_FRAME` with the same `request_id` and `last_complete_frame_id`.
 
-`NACK_CHUNKS` payload:
+### ACK_RESPONSE
+
+`ACK_RESPONSE` acknowledges that the client has received, validated, and applied
+a complete `FRAME_DATA` response. It has no payload. The acknowledged response is
+identified by the header `request_id` and `frame_id`.
+
+### NACK_CHUNKS
+
+`NACK_CHUNKS` asks MIA to resend missing chunks for the current pending response.
+The pending response is identified by the header `request_id` and `frame_id`.
+Missing indexes are chunk indexes for that response, not page record indexes.
+
+Payload:
 
 | Offset | Size | Field | Description |
 | ---: | ---: | --- | --- |
 | 0 | 2 | `missing_count` | number of chunk indexes that follow |
 | 2 | 2 | `reserved` | sender writes zero; receiver validates zero |
-| 4 | 2 * N | `missing_indexes` | zero-based missing chunk indexes for the pending response named by `request_id` and `frame_id` |
+| 4 | 2 * N | `missing_indexes` | zero-based missing chunk indexes for the pending response |
 
-## Status Packets
+### Client STATUS
 
-`STATUS` packets carry this payload:
+A client may send `STATUS`, usually to report that it rejected a MIA response as
+malformed. The payload is the common status payload defined below.
 
-| Offset | Size | Field | Description |
-| ---: | ---: | --- | --- |
-| 0 | 2 | `status_code` | status reason |
-| 2 | 2 | `pending_chunk_count` | chunk count for the pending response, or `0` |
-| 4 | 4 | `client_frame_id` | frame id MIA believes the client has completed, or `0` |
-| 8 | 4 | `pending_frame_id` | pending response frame id, or `0` |
-| 12 | 4 | `latest_frame_id` | latest frame id assigned by MIA, or `0` |
+## MIA-To-Client Packets
 
-Status codes:
+MIA-to-client packets accept sessions, publish video state, and report protocol
+state. The client never receives raw pixels; it receives dirty video-memory pages
+and updates its local mirror.
 
-| Code | Name | Meaning |
-| ---: | --- | --- |
-| `0` | `OK` | diagnostic/no error |
-| `1` | `NO_DIRTY_PAGES` | request accepted but no video pages were dirty |
-| `2` | `RESPONSE_PENDING` | MIA already has one pending response |
-| `3` | `RESPONSE_RESENT` | MIA regenerated or resent the pending response |
-| `4` | `FULL_REFRESH_PENDING` | next accepted update will include all video pages |
-| `5` | `PROTOCOL_ERROR` | malformed packet or impossible state |
+| Packet | Payload |
+| --- | --- |
+| `WELCOME` | none |
+| `FRAME_DATA` | dirty page records |
+| `STATUS` | diagnostic/protocol status payload |
 
-`STATUS` flags:
+### WELCOME
 
-| Bit | Name | Meaning |
-| ---: | --- | --- |
-| 0 | `STATUS_RESPONSE_PENDING` | one update response is pending |
-| 1 | `STATUS_FULL_REFRESH_PENDING` | MIA has marked all pages dirty |
-| 2 | `STATUS_PROTOCOL_ERROR` | malformed packet, bad field value, or unsupported version |
+`WELCOME` accepts a client session. It has no payload. The assigned session token
+is carried in the header `session_id` field.
 
-## Header Use by Packet Type
+After `WELCOME`, MIA has scheduled a full refresh. The next accepted
+`REQUEST_FRAME` produces a normal `FRAME_DATA` response whose pending dirty map
+contains every video page.
 
-Every endpoint initializes `seq` to `1`, increments it for each packet it sends,
-and wraps from `0xFFFFFFFF` to `1`. `ack` is the highest peer `seq` observed by
-that endpoint using serial number comparison, or `0` if none has been observed.
+### FRAME_DATA
 
-`seq` and `ack` are diagnostics and liveness aids only. They do not control
-delivery, retransmission, frame ordering, chunk repair, or client mirror
-application. Request ids, response chunk indexes, and frame ids define protocol
-state.
+`FRAME_DATA` carries one chunk of a dirty-page response. All chunks in a response
+carry the same `session_id`, `request_id`, `frame_id`, and `chunk_count`.
+`chunk_index` identifies this packet's zero-based chunk position in the response.
 
-All fields not listed as meaningful for a packet type are written as zero by
-the sender. Reserved fields are validated as zero; non-reserved unused fields
-are ignored by the receiver.
-
-| Packet | `session_id` | `frame_id` | `request_id` | `chunk_index/count` | `flags` |
-| --- | --- | --- | --- | --- | --- |
-| `HELLO` | `0` | `0` | `0` | `0/0` | `0` |
-| `WELCOME` | assigned nonzero session | `0` | `0` | `0/0` | `0` |
-| `REQUEST_FRAME` | active session | `0` | client request id | `0/0` | `0` |
-| `FRAME_DATA` | active session | response frame id | echoed request id | response chunk position | `0` |
-| `ACK_RESPONSE` | active session | acknowledged response frame id | acknowledged request id | `0/0` | `0` |
-| `NACK_CHUNKS` | active session | response frame id | response request id | `0/0` | `0` |
-| `STATUS` | active session, or `0` if no session | related/latest frame id, or `0` | related request id, or `0` | `0/0` | `STATUS_*` bits |
-
-## Dirty-Page Response Format
-
-`FRAME_DATA` chunks carry page records. A response contains one record for each
-page whose bit was set in the pending dirty map when MIA accepted the matching
-`REQUEST_FRAME`.
+A response contains one page record for each page whose bit was set in the
+pending dirty map when MIA accepted the matching `REQUEST_FRAME`.
 
 Each page record is fixed-size:
 
@@ -384,7 +399,7 @@ records_per_chunk = floor((512 - 32) / 34) = 14
 At the fixed 512-byte UDP payload:
 
 ```text
-payload_len       = 14 * 34 = 476 bytes, except the final chunk
+payload_len = 14 * 34 = 476 bytes, except the final chunk
 ```
 
 `chunk_count = ceil(dirty_page_count / records_per_chunk)`. A `FRAME_DATA`
@@ -399,6 +414,42 @@ The client validates that page indexes are strictly increasing across the
 complete response, within range, and present only once. The client applies a
 response only after it has received every chunk for that response. It then sends
 `ACK_RESPONSE`.
+
+### MIA STATUS
+
+MIA sends `STATUS` to report protocol state, errors, empty updates, pending
+responses, and repair/resend events. `STATUS(NO_DIRTY_PAGES)` does not create a
+pending response, does not assign a new `frame_id`, and does not require
+`ACK_RESPONSE`.
+
+`STATUS` packets carry this payload:
+
+| Offset | Size | Field | Description |
+| ---: | ---: | --- | --- |
+| 0 | 2 | `status_code` | status reason |
+| 2 | 2 | `pending_chunk_count` | chunk count for the pending response, or `0` |
+| 4 | 4 | `client_frame_id` | frame id MIA believes the client has completed, or `0` |
+| 8 | 4 | `pending_frame_id` | pending response frame id, or `0` |
+| 12 | 4 | `latest_frame_id` | latest frame id assigned by MIA, or `0` |
+
+Status codes:
+
+| Code | Name | Meaning |
+| ---: | --- | --- |
+| `0` | `OK` | diagnostic/no error |
+| `1` | `NO_DIRTY_PAGES` | request accepted but no video pages were dirty |
+| `2` | `RESPONSE_PENDING` | MIA already has one pending response |
+| `3` | `RESPONSE_RESENT` | MIA regenerated or resent the pending response |
+| `4` | `FULL_REFRESH_PENDING` | next accepted update will include all video pages |
+| `5` | `PROTOCOL_ERROR` | malformed packet or impossible state |
+
+`STATUS` flags:
+
+| Bit | Name | Meaning |
+| ---: | --- | --- |
+| 0 | `STATUS_RESPONSE_PENDING` | one update response is pending |
+| 1 | `STATUS_FULL_REFRESH_PENDING` | MIA has marked all pages dirty |
+| 2 | `STATUS_PROTOCOL_ERROR` | malformed packet, bad field value, or unsupported version |
 
 ## Readout Semantics
 
@@ -447,9 +498,9 @@ When MIA accepts a `REQUEST_FRAME`, the dirty maps move through these steps:
    list, and sends deterministic `FRAME_DATA` chunks.
 
 The pending dirty map is retained until the response is acknowledged, implicitly
-acknowledged by a later request, or a new `HELLO` resets the session. During that time,
-`NACK_CHUNKS` and same-request retries regenerate chunks from the same pending
-dirty map and the same deterministic page order.
+acknowledged by a later request, or a new `HELLO` resets the session. During that
+time, `NACK_CHUNKS` and same-request retries regenerate chunks from the same
+pending dirty map and the same deterministic page order.
 
 When `ACK_RESPONSE` is accepted, MIA clears the pending map before clearing
 `VIDEO_UPDATE_ACTIVE`, clearing `VIDEO_RESPONSE_SENT`, latching
@@ -534,10 +585,6 @@ are present, the client sends the absent indexes in `NACK_CHUNKS`. If zero chunk
 arrive for a request, the client does not know the response
 `frame_id` or `chunk_count`; it retries the same `REQUEST_FRAME` with the same
 `request_id` and `last_complete_frame_id` instead.
-
-`NACK_CHUNKS` identifies the pending response with the packet header
-`request_id` and `frame_id`. Missing indexes are chunk indexes for that response,
-not page record indexes.
 
 MIA repairs by regenerating the requested chunks from the pending dirty map. The
 same `chunk_index` always maps to the same range of pending dirty page records
@@ -625,10 +672,3 @@ MIA does not expose a configurable send-rate limit in the protocol. Firmware may
 still bound per-service work, defer sends when pbufs are unavailable, and respect
 Wi-Fi/lwIP backpressure. Those are implementation safeguards, not wire
 parameters.
-
-## Security
-
-Discovery and trust are local-network mechanisms. The protocol payload includes
-no authentication, encryption, or access control. MIA tracks one active client
-session at a time. Any valid `HELLO` resets the session and schedules a full
-refresh; packets from stale session ids are ignored.
