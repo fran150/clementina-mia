@@ -105,7 +105,7 @@ behind the displayed video can lag or feel jumpy.
 
 The protocol serves one active client at a time. On connection and on
 unrecoverable mismatch, MIA schedules a full refresh. The next accepted update
-marks every video page dirty in the pending map and rebuilds the client mirror;
+marks every valid page bit in the pending map and rebuilds the client mirror;
 no separate snapshot packet type is required.
 
 ## Transport
@@ -167,7 +167,7 @@ Every packet starts with a 32-byte header:
 | 3 | 1 | `type` | packet type; see [Packet Types](#packet-types) |
 | 4 | 4 | `session_id` | session token assigned by MIA in `WELCOME`; `0` is used before a session exists |
 | 8 | 4 | `seq` | endpoint-local packet sequence number for diagnostics/liveness |
-| 12 | 4 | `ack` | highest peer `seq` observed by this endpoint, or `0` if none |
+| 12 | 4 | `ack` | newest peer `seq` observed by this endpoint, or `0` if none |
 | 16 | 4 | `frame_id` | MIA-assigned update id for a `FRAME_DATA` response, or `0` for non-frame packets |
 | 20 | 2 | `request_id` | client-assigned id for a `REQUEST_FRAME`; echoed by MIA in the matching response |
 | 22 | 2 | `chunk_index` | zero-based chunk number for `FRAME_DATA`; otherwise `0` |
@@ -183,11 +183,11 @@ sends `HELLO` with `session_id = 0`. MIA replies with `WELCOME` and a fresh
 nonzero `session_id`. After that, packets for the active session carry that
 value. Packets from older sessions are ignored.
 
-`seq` and `ack` are diagnostic fields. Each endpoint increments its own `seq` for
-each packet it sends, wrapping from `0xFFFFFFFF` to `1`. `seq = 0` is reserved as
-the empty `ack` sentinel and is never sent as a packet sequence number. These
-fields do not drive retransmission, frame ordering, chunk repair, or client
-mirror application.
+`seq` and `ack` are diagnostic fields. `seq` identifies this packet in the
+sender's packet stream. `ack` reports the newest peer `seq` this endpoint has
+observed, or `0` if it has not seen any peer packet yet. Together they help logs
+confirm that packets are flowing in both directions. They do not drive
+retransmission, frame ordering, chunk repair, or client mirror application.
 
 `frame_id` answers "which MIA update response is this?" MIA assigns a new
 nonzero `frame_id` only when it accepts a `REQUEST_FRAME` that produces
@@ -240,7 +240,7 @@ Startup:
 ```text
 client -> MIA: HELLO
 MIA    -> client: WELCOME(session_id)
-MIA marks every video page dirty
+MIA schedules a full refresh
 client -> MIA: REQUEST_FRAME(last_complete_frame_id = 0)
 MIA    -> client: FRAME_DATA chunks for full refresh
 client -> MIA: ACK_RESPONSE(frame_id)
@@ -275,8 +275,8 @@ handles the new request normally.
 
 Version 1 does not support session resume. Any valid `HELLO` resets the video
 session: MIA discards pending response state if any exists, assigns a fresh
-nonzero `session_id`, marks every video page dirty for full refresh, and returns
-`WELCOME`. Stale packets from an older session id are ignored.
+nonzero `session_id`, schedules a full refresh, and returns `WELCOME`. Stale
+packets from an older session id are ignored.
 
 ## Client-To-MIA Packets
 
@@ -334,11 +334,6 @@ Payload:
 | 0 | 2 | `missing_count` | number of chunk indexes that follow |
 | 2 | 2 | `reserved` | sender writes zero; receiver validates zero |
 | 4 | 2 * N | `missing_indexes` | zero-based missing chunk indexes for the pending response |
-
-### Client STATUS
-
-A client may send `STATUS`, usually to report that it rejected a MIA response as
-malformed. The payload is the common status payload defined below.
 
 ## MIA-To-Client Packets
 
@@ -415,12 +410,18 @@ complete response, within range, and present only once. The client applies a
 response only after it has received every chunk for that response. It then sends
 `ACK_RESPONSE`.
 
-### MIA STATUS
+### STATUS
 
-MIA sends `STATUS` to report protocol state, errors, empty updates, pending
-responses, and repair/resend events. `STATUS(NO_DIRTY_PAGES)` does not create a
-pending response, does not assign a new `frame_id`, and does not require
-`ACK_RESPONSE`.
+`STATUS` carries diagnostic and protocol state. MIA sends it to report protocol
+state, empty updates, pending responses, and repair/resend events. A client may
+also send `STATUS`, usually to report that it rejected a malformed MIA response.
+
+`STATUS(NO_DIRTY_PAGES)` does not create a pending response, does not assign a
+new `frame_id`, and does not require `ACK_RESPONSE`.
+
+`STATUS(FULL_REFRESH_PENDING)` is diagnostic. MIA may send it to report that the
+next accepted update will be a full refresh; the client does not need to request
+a different packet type.
 
 `STATUS` packets carry this payload:
 
@@ -440,7 +441,7 @@ Status codes:
 | `1` | `NO_DIRTY_PAGES` | request accepted but no video pages were dirty |
 | `2` | `RESPONSE_PENDING` | MIA already has one pending response |
 | `3` | `RESPONSE_RESENT` | MIA regenerated or resent the pending response |
-| `4` | `FULL_REFRESH_PENDING` | next accepted update will include all video pages |
+| `4` | `FULL_REFRESH_PENDING` | diagnostic: next accepted update will include all video pages |
 | `5` | `PROTOCOL_ERROR` | malformed packet or impossible state |
 
 `STATUS` flags:
@@ -448,7 +449,7 @@ Status codes:
 | Bit | Name | Meaning |
 | ---: | --- | --- |
 | 0 | `STATUS_RESPONSE_PENDING` | one update response is pending |
-| 1 | `STATUS_FULL_REFRESH_PENDING` | MIA has marked all pages dirty |
+| 1 | `STATUS_FULL_REFRESH_PENDING` | MIA has scheduled a full refresh |
 | 2 | `STATUS_PROTOCOL_ERROR` | malformed packet, bad field value, or unsupported version |
 
 ## Readout Semantics
@@ -525,7 +526,8 @@ post-request write marks the active dirty map for the next response.
 ## Request Handling
 
 MIA tracks `client_frame_id`, the newest frame id that it believes the client
-has completed. It starts at `0` for each session.
+has completed. It starts at `0` for each session. Frame id comparisons in this
+section use normal unsigned integer comparison.
 
 When no response is pending:
 
