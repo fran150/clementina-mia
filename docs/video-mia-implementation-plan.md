@@ -89,12 +89,8 @@ or a carefully packed access layer for:
 Status bits:
 
 ```c
-#define VIDEO_CLIENT_CONNECTED      (1u << 0)
-#define VIDEO_UPDATE_ACTIVE         (1u << 1)
-#define VIDEO_READOUT_ACTIVE        (1u << 2)
-#define VIDEO_RESPONSE_SENT         (1u << 3)
-#define VIDEO_FULL_REFRESH_PENDING  (1u << 4)
-#define VIDEO_REPAIR_ACTIVE         (1u << 5)
+#define VIDEO_FRAME_REQUESTED       (1u << 0)
+#define VIDEO_FRAME_SENT            (1u << 1)
 ```
 
 Event bits:
@@ -103,11 +99,6 @@ Event bits:
 #define VIDEO_EVENT_FRAME_REQUEST   (1u << 0)
 #define VIDEO_EVENT_FRAME_SENT      (1u << 1)
 #define VIDEO_EVENT_FRAME_ACKED     (1u << 2)
-#define VIDEO_EVENT_CLIENT_CHANGE   (1u << 3)
-#define VIDEO_EVENT_FULL_REFRESH    (1u << 4)
-#define VIDEO_EVENT_REPAIR_REQUEST  (1u << 5)
-#define VIDEO_EVENT_READOUT_START   (1u << 6)
-#define VIDEO_EVENT_READOUT_END     (1u << 7)
 ```
 
 Add `IRQ_VIDEO_EVENT` to [src/mia/irq/irq.h](../src/mia/irq/irq.h). The docs
@@ -128,17 +119,17 @@ Add video command handlers in the command table:
 | Command | Id | Core 0 handler |
 | --- | ---: | --- |
 | `VIDEO_ENABLE` | `$40` | initialize video control state and fast video indexes |
-| `VIDEO_FORCE_FULL_REFRESH` | `$42` | schedule a full refresh for the next update |
+| `VIDEO_FORCE_FULL_REFRESH` | `$42` | mark every video page dirty for the next update |
 | `VIDEO_SET_MODE` | `$43` | update `VIDEO_MODE` bits |
 
 Suggested command behavior:
 
 - `VIDEO_ENABLE` clears video state, initializes the video control block,
-  configures fast video index descriptors, clears both dirty maps, and sets
-  `VIDEO_FULL_REFRESH_PENDING`.
-- `VIDEO_FORCE_FULL_REFRESH` sets `VIDEO_FULL_REFRESH_PENDING` and raises
-  `VIDEO_EVENT_FULL_REFRESH`. The next accepted response marks every pending
-  page dirty after dirty-map rotation.
+  configures fast video index descriptors, clears both dirty maps, and marks
+  every video page dirty in the active map.
+- `VIDEO_FORCE_FULL_REFRESH` marks every video page dirty in the active map and
+  leaves pending response state alone. The next accepted response is therefore a
+  normal update containing every page.
 - `VIDEO_SET_MODE` updates the `VIDEO_MODE` field and can trigger full refresh
   if a mode change invalidates the client renderer's assumptions.
 
@@ -261,39 +252,35 @@ The lifecycle is:
 | Event | Meaning | Dirty-map action | 6502-visible state |
 | --- | --- | --- | --- |
 | 6502 writes video memory | one byte in live video RAM changed | set one bit in the active dirty map | no status event; the write is only queued for a future update |
-| client connects or recovery is required | client mirror must be rebuilt | set `VIDEO_FULL_REFRESH_PENDING`; next response marks every pending page dirty | `VIDEO_FULL_REFRESH_PENDING` and `VIDEO_EVENT_FULL_REFRESH` are set |
-| client sends `REQUEST_FRAME` and no response is pending | client asks MIA to publish accumulated changes | rotate active dirty map to pending; already-clear other map becomes active | `VIDEO_UPDATE_ACTIVE`, `VIDEO_READOUT_ACTIVE`, `VIDEO_EVENT_FRAME_REQUEST`, and `VIDEO_EVENT_READOUT_START` are set |
-| first response send completes | every dirty page chunk was sent once | keep pending map for possible repair | clear `VIDEO_READOUT_ACTIVE`, set `VIDEO_RESPONSE_SENT`, latch sent/end events |
-| client sends `NACK_CHUNKS` | client missed one or more chunks | regenerate those chunks from the pending map | set repair/readout bits while repair is being generated |
-| client sends `ACK_RESPONSE` | client applied the complete update | clear pending map, release pending state, and advance acknowledged frame id | clear update/sent bits and latch `VIDEO_EVENT_FRAME_ACKED` after cleanup |
+| client connects or recovery is required | client mirror must be rebuilt | mark every video page dirty in the active map | next update is a full refresh |
+| client sends `REQUEST_FRAME` and no response is pending | client asks MIA to publish accumulated changes | rotate active dirty map to pending; already-clear other map becomes active | set `VIDEO_FRAME_REQUESTED` and latch `VIDEO_EVENT_FRAME_REQUEST` |
+| first response send completes | every dirty page chunk was sent once | keep pending map for possible repair | set `VIDEO_FRAME_SENT` and latch `VIDEO_EVENT_FRAME_SENT` |
+| client sends `NACK_CHUNKS` | client missed one or more chunks | regenerate those chunks from the pending map | no public status/event change |
+| client sends `ACK_RESPONSE` | client applied the complete update | clear pending map, release pending state, and advance acknowledged frame id | clear status bits and latch `VIDEO_EVENT_FRAME_ACKED` after cleanup |
 
 This event model defines the write timing rules. Writes before an accepted
 `REQUEST_FRAME` are named by the pending map and are intended for that update.
 Writes after the rotation go into the new active map for the next update. Because
-MIA reads live RAM, visible writes during `VIDEO_READOUT_ACTIVE` can still be
-read into the current response. Visible writes after `VIDEO_RESPONSE_SENT` but
+MIA reads live RAM, visible writes while `VIDEO_FRAME_REQUESTED` is set can still
+be read into the current response. Visible writes after `VIDEO_FRAME_SENT` but
 before `ACK_RESPONSE` can appear in repair chunks for the same response. A
-program that wants strict visual cleanliness waits until
-`VIDEO_EVENT_FRAME_ACKED` or until `VIDEO_UPDATE_ACTIVE` is clear before writing
-visible video memory.
+program that wants strict visual cleanliness waits until `VIDEO_EVENT_FRAME_ACKED`
+or until `VIDEO_STATUS` is zero before writing visible video memory.
 
 ## Core 0 Dirty-Map Rotation
 
 When a valid `REQUEST_FRAME` arrives and no response is pending:
 
-1. If `VIDEO_FULL_REFRESH_PENDING` is not set and the active dirty map is empty,
-   send `STATUS(NO_DIRTY_PAGES)` and do not assign a new frame id.
+1. If the active dirty map is empty, send `STATUS(NO_DIRTY_PAGES)` and do not
+   assign a new frame id.
 2. Derive the available map as `active_idx ^ 1`. It must already be clear.
 3. Request a core-1-safe rotation and wait for `video_rotate_done`.
 4. Set `video_pending_dirty_index` to the old active index and
    `video_pending_valid = true`.
-5. If `VIDEO_FULL_REFRESH_PENDING` is set, set every valid page bit in the
-   pending dirty map, clear padding bits beyond page 2,154, and clear
-   `VIDEO_FULL_REFRESH_PENDING`.
-6. Assign the next nonzero `FRAME_ID`.
-7. Set `VIDEO_UPDATE_ACTIVE` and `VIDEO_READOUT_ACTIVE`.
-8. Latch `VIDEO_EVENT_FRAME_REQUEST` and `VIDEO_EVENT_READOUT_START`.
-9. Scan the pending dirty map into a page index list.
+5. Assign the next nonzero `FRAME_ID`.
+6. Set `VIDEO_FRAME_REQUESTED`.
+7. Latch `VIDEO_EVENT_FRAME_REQUEST`.
+8. Scan the pending dirty map into a page index list.
 
 The pending dirty map must not be modified until the pending response is
 acknowledged, implicitly acknowledged, reset by `HELLO`, or discarded during
@@ -392,7 +379,7 @@ Session rules:
 - Any valid `HELLO` resets the video session and returns `WELCOME`.
 - Reset discards pending response state, clears pending/update status and client
   frame tracking, assigns a fresh nonzero `session_id`, records the sender
-  endpoint, and schedules a full refresh.
+  endpoint, and marks every video page dirty.
 - Session id `0` is only valid for `HELLO` and no-session status.
 - Packets with stale or unknown nonzero session ids are ignored.
 
@@ -411,8 +398,8 @@ Version 1 uses fixed packet sizing:
 #define MIA_VIDEO_CHUNK_PAYLOAD     476u
 ```
 
-Client request cadence and repair timeout are client-local policy; MIA does not
-store or enforce those values.
+Client request cadence, retry count, and repair/session-loss timeouts are
+client-local policy; MIA does not store or enforce those values.
 
 ## Pending Response State
 
@@ -452,8 +439,7 @@ On ACK:
 - Clear `video_dirty_maps[video_pending_dirty_index]`.
 - Release pending state by setting `video_pending_valid = false`.
 - Set `client_frame_id = frame_id`.
-- Clear `VIDEO_UPDATE_ACTIVE`, `VIDEO_RESPONSE_SENT`, `VIDEO_READOUT_ACTIVE`,
-  and `VIDEO_REPAIR_ACTIVE`.
+- Clear `VIDEO_FRAME_REQUESTED` and `VIDEO_FRAME_SENT`.
 - Latch `VIDEO_EVENT_FRAME_ACKED`.
 
 The pending dirty map must be cleared before status bits are cleared, before
@@ -462,7 +448,7 @@ After the event is visible to the 6502, the non-active map is already clear and
 ready for the next `REQUEST_FRAME` rotation.
 
 Duplicate/old/unknown ACKs are ignored. Future/impossible ACKs are protocol
-errors and force full refresh.
+errors and invalidate the current session.
 
 ## Packet Encoding
 
@@ -512,12 +498,12 @@ compression in v1; deterministic fixed-size page records make repair simple.
 | State | Request | MIA action |
 | --- | --- | --- |
 | no pending | `last_complete == client_frame_id` | accept request or return `NO_DIRTY_PAGES` |
-| no pending | `last_complete < client_frame_id` | ignore stale request |
-| no pending | `last_complete > client_frame_id` | protocol error, schedule full refresh |
+| no pending | `last_complete < client_frame_id` | ignore stale request; client timeout/`HELLO` handles true desync |
+| no pending | `last_complete > client_frame_id` | protocol error, invalidate session |
 | pending | same `request_id` and same base | resend/regenerate pending response |
 | pending | `last_complete == pending.frame_id` | implicit ACK, then handle request |
-| pending | `last_complete > pending.frame_id` | protocol error, schedule full refresh |
-| pending | other stale/duplicate/early request | return `RESPONSE_PENDING` |
+| pending | `last_complete > pending.frame_id` | protocol error, invalidate session |
+| pending | other stale/duplicate/early request | ignore request |
 
 `STATUS(NO_DIRTY_PAGES)` does not assign a frame id and does not require ACK.
 
@@ -536,17 +522,13 @@ When accepting a request with dirty pages:
 | --- | --- |
 | matches pending response and indexes valid | regenerate/send requested chunks |
 | old/duplicate/unknown response | ignore |
-| future/impossible response | protocol error, schedule full refresh |
-| malformed payload/index list | protocol error |
+| future/impossible response | protocol error, invalidate session |
+| malformed payload/index list | protocol error, invalidate session |
 
 Repair lifecycle:
 
-1. Latch `VIDEO_EVENT_REPAIR_REQUEST`.
-2. Set `VIDEO_REPAIR_ACTIVE` and `VIDEO_READOUT_ACTIVE`.
-3. Latch `VIDEO_EVENT_READOUT_START`.
-4. Send requested chunks using the pending page list and current RAM values.
-5. Clear `VIDEO_REPAIR_ACTIVE` and `VIDEO_READOUT_ACTIVE`.
-6. Latch `VIDEO_EVENT_READOUT_END`.
+1. Send requested chunks using the pending page list and current RAM values.
+2. Leave `VIDEO_STATUS` and `VIDEO_EVENT_STATUS` unchanged.
 
 Repair does not release pending response state. Only ACK, implicit ACK, a new
 `HELLO` session reset, or protocol-error recovery releases it.
@@ -561,25 +543,25 @@ void mia_video_force_full_refresh(void);
 
 It should:
 
-- set `VIDEO_FULL_REFRESH_PENDING`;
-- latch `VIDEO_EVENT_FULL_REFRESH`;
-- leave pending response state alone unless called as part of protocol-error
-  recovery.
+- safely mark every video page dirty in the active dirty map;
+- leave pending response state alone.
 
-It should not set all bits in the active dirty map. Core 1 can write the active
-map at any time. Instead, the next accepted `REQUEST_FRAME` rotates the active
-map into the pending role and then sets every valid page bit in that pending
-map, where core 1 can no longer modify it.
+Core 1 can write the active dirty map at any time, so core 0 must not fill that
+map concurrently with the hot write path. Use a core-1-safe coordination point:
+core 0 requests a mark-all operation, core 1 applies it between bus actions, and
+core 0 waits for completion before treating every video page as dirty.
 
 For protocol-error recovery:
 
-1. discard pending response state if any;
-2. clear the old pending dirty map before releasing it;
-3. set `video_pending_valid = false`;
-4. set `VIDEO_FULL_REFRESH_PENDING`;
-5. send `STATUS(PROTOCOL_ERROR)` if useful.
+1. send `STATUS(PROTOCOL_ERROR)` if useful and safe;
+2. discard pending response state if any;
+3. clear the old pending dirty map before releasing it;
+4. set `video_pending_valid = false`;
+5. clear video lifecycle status bits;
+6. invalidate the current session id/endpoint so only `HELLO` can restart video.
 
-The next valid `REQUEST_FRAME` generates a full refresh response.
+The next valid `HELLO` performs the normal session reset, marks every video page
+dirty, and returns `WELCOME`.
 
 ## Status and Event Helpers
 
@@ -680,9 +662,8 @@ Bound per-call work so `mia_video_service()` does not monopolize the main loop:
 
 ### Phase 3: Dirty Rotation and Page List
 
-- Implement dirty-map empty check, full-refresh pending-map marking,
-  core-1-safe active/pending rotation, ACK cleanup, and pending page list
-  generation.
+- Implement dirty-map empty check, core-1-safe full-refresh marking,
+  active/pending rotation, ACK cleanup, and pending page list generation.
 - Drive it from a temporary debug command before UDP exists.
 - Verify:
   - clean request returns no dirty pages;
@@ -704,7 +685,7 @@ Bound per-call work so `mia_video_service()` does not monopolize the main loop:
 - Add session endpoint tracking.
 - Add `cyw43_arch_poll()` and `mia_video_service()` to the main loop.
 - Confirm any valid `HELLO` resets the session, assigns a fresh session id, and
-  schedules a full refresh.
+  marks every video page dirty.
 
 ### Phase 6: Frame Responses
 
@@ -725,7 +706,7 @@ Bound per-call work so `mia_video_service()` does not monopolize the main loop:
 ### Phase 8: Recovery and Edge Cases
 
 - Implement implicit ACK via `REQUEST_FRAME(last_complete == pending.frame_id)`.
-- Implement protocol-error full refresh.
+- Implement protocol-error session invalidation.
 - Implement `HELLO` session-reset cleanup.
 - Test lost ACK, duplicate ACK, stale request, future ACK, reconnect, and full
   refresh after reconnect.
@@ -761,10 +742,10 @@ Hardware/integration tests:
 - Lost chunk triggers repair.
 - Lost ACK is handled by implicit ACK on next request.
 - Duplicate/old ACK is ignored.
-- Future ACK forces full refresh.
+- Future ACK invalidates the session; the following `HELLO` receives full refresh.
 - New `HELLO` resets the session and the client receives full refresh.
-- `VIDEO_READOUT_ACTIVE`, `VIDEO_RESPONSE_SENT`, and `VIDEO_UPDATE_ACTIVE`
-  transitions match the documented lifecycle.
+- `VIDEO_FRAME_REQUESTED` and `VIDEO_FRAME_SENT` transitions match the
+  documented lifecycle.
 - Video IRQ fires only for enabled event bits and clears when event status bits
   are write-cleared.
 
@@ -775,7 +756,7 @@ Hardware/integration tests:
 | Dirty mark slows core 1 bus path | keep helper inline/RAM-resident, no locks, no allocation, profile early |
 | Write-clear video events add hot-path branch | profile option 1 vs command-based event clear |
 | UDP send monopolizes core 0 | cap chunks per service call and yield on pbuf/UDP backpressure |
-| Repair reads newer live values | documented readout-window behavior; programmers can wait for ACK |
+| Repair reads newer live values | documented live-read behavior; programmers can wait for ACK |
 | Full refresh is too slow | expected; use only on connect/recovery and keep normal dirty updates small |
 | Wi-Fi stack setup exceeds current main loop assumptions | integrate incrementally after packet builder tests |
 | Dirty map rotation races with core 1 writes | core 0 requests rotation; core 1 performs it between bus actions |

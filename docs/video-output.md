@@ -4,7 +4,7 @@ This document defines MIA's Wi-Fi video-output architecture. The wire protocol
 is defined in [video-protocol.md](video-protocol.md), and the 6502 programming
 model is defined in [video-programmer-guide.md](video-programmer-guide.md).
 
-MIA video uses a client-paced readout model:
+MIA video uses a client-paced update model:
 
 - The client keeps a complete mirror of MIA video state.
 - MIA divides the 68,944-byte video state into 2,155 pages of 32 bytes each.
@@ -18,7 +18,7 @@ MIA video uses a client-paced readout model:
   named by the pending map.
 - While MIA is generating or repairing an update, it reads live MIA RAM.
 - The 6502 program can use status bits and IRQ events to avoid changing visible
-  memory during the readout/acknowledgement window.
+  memory while an update is outstanding.
 
 MIA does not stream raw pixels and does not run a video codec. The 6502 writes a
 compact tile/sprite state. The client renders the final pixels locally.
@@ -100,9 +100,9 @@ and read by the 6502 program.
 | ---: | ---: | --- | --- | --- |
 | `$00` | 1 | `VIDEO_VERSION` | read-only | video state layout version |
 | `$01` | 1 | `VIDEO_MODE` | read/write | video enable and renderer mode bits |
-| `$02` | 1 | `VIDEO_STATUS` | read-only | connection and update lifecycle bits |
+| `$02` | 1 | `VIDEO_STATUS` | read-only | update lifecycle bits |
 | `$03` | 1 | `LAYER_ENABLE` | read/write | background, overlay, and sprite enables |
-| `$04` | 4 | `FRAME_ID` | read-only | latest assigned update/readout frame id |
+| `$04` | 4 | `FRAME_ID` | read-only | latest assigned update frame id |
 | `$08` | 2 | `SCROLL_X` | read/write | background scroll X in pixels |
 | `$0A` | 2 | `SCROLL_Y` | read/write | background scroll Y in pixels |
 | `$0C` | 1 | `BG_ACTIVE_SET` | read/write | active 2x2 background set `0-1` |
@@ -136,17 +136,13 @@ client update request that produces `FRAME_DATA`. It wraps from `0xFFFFFFFF` to
 
 | Bit | Name | Meaning |
 | ---: | --- | --- |
-| 0 | `VIDEO_CLIENT_CONNECTED` | a client owns the video session |
-| 1 | `VIDEO_UPDATE_ACTIVE` | an accepted update is not yet acknowledged |
-| 2 | `VIDEO_READOUT_ACTIVE` | MIA is reading live video RAM for send or repair |
-| 3 | `VIDEO_RESPONSE_SENT` | initial response send finished; ACK may still be pending |
-| 4 | `VIDEO_FULL_REFRESH_PENDING` | the next update will include all video pages |
-| 5 | `VIDEO_REPAIR_ACTIVE` | repair chunks are being regenerated/sent |
+| 0 | `VIDEO_FRAME_REQUESTED` | MIA accepted an update request; ACK not received yet |
+| 1 | `VIDEO_FRAME_SENT` | initial response send finished; ACK may still be pending |
 
-`VIDEO_UPDATE_ACTIVE` is the conservative "visible memory may still affect the
-client's pending update" bit. Programs that want clean output wait for this bit
-to clear before changing visible memory. `VIDEO_READOUT_ACTIVE` is narrower: it
-means core 0 is currently reading MIA RAM.
+`VIDEO_STATUS = 0` is the all-clear state. Programs that want clean visible
+updates wait for both bits to clear before changing visible memory. The state
+`VIDEO_FRAME_SENT` without `VIDEO_FRAME_REQUESTED` is reserved and should not be
+emitted.
 
 `LAYER_ENABLE` bits:
 
@@ -422,63 +418,57 @@ dirty page list construction, packet construction, repair handling, bounded send
 scheduling, and UDP sending. Core 0 never clears the active map and never clears
 the pending map while it is retained for repair.
 
-## Readout Lifecycle
+## Update Lifecycle
 
 When the client requests an update and no response is pending, MIA performs a
 small coordinated dirty-map rotation:
 
-1. if full refresh is not pending and the active dirty map is empty, return
-   `STATUS(NO_DIRTY_PAGES)`;
+1. if the active dirty map is empty, return `STATUS(NO_DIRTY_PAGES)`;
 2. rotate the active dirty map into the pending role and the already-clear other
    map into the active role;
-3. if full refresh is pending, set every valid page bit in the pending map and
-   clear `VIDEO_FULL_REFRESH_PENDING`;
-4. assign the next nonzero `FRAME_ID`;
-5. set `VIDEO_UPDATE_ACTIVE` and `VIDEO_READOUT_ACTIVE`;
-6. emit `VIDEO_EVENT_FRAME_REQUEST` and `VIDEO_EVENT_READOUT_START`.
+3. assign the next nonzero `FRAME_ID`;
+4. set `VIDEO_FRAME_REQUESTED`;
+5. emit `VIDEO_EVENT_FRAME_REQUEST`.
 
 After the rotation, new 6502 writes are tracked in the active map for the next
 client update. Core 0 reads the pending dirty map, builds fixed page records in
 ascending page order, and sends `FRAME_DATA` chunks.
 
-When the first complete response has been sent, MIA clears
-`VIDEO_READOUT_ACTIVE`, sets `VIDEO_RESPONSE_SENT`, and emits
-`VIDEO_EVENT_FRAME_SENT` and `VIDEO_EVENT_READOUT_END`. The pending dirty map is
-still retained because the client may request repair.
+When the first complete response has been sent, MIA sets `VIDEO_FRAME_SENT` and
+emits `VIDEO_EVENT_FRAME_SENT`. The pending dirty map is still retained because
+the client may request repair.
 
 When the client acknowledges the response, MIA first clears the pending dirty
-map. Only after that cleanup does it clear `VIDEO_UPDATE_ACTIVE` and
-`VIDEO_RESPONSE_SENT`, release the pending response state, update the
-acknowledged client frame id, and emit `VIDEO_EVENT_FRAME_ACKED`. This order
-guarantees that a 6502 program observing the ACK event sees one active map for
-future writes and one already-clear map ready for the next accepted request.
+map. Only after that cleanup does it clear `VIDEO_FRAME_REQUESTED` and
+`VIDEO_FRAME_SENT`, release the pending response state, update the acknowledged
+client frame id, and emit `VIDEO_EVENT_FRAME_ACKED`. This order guarantees that
+a 6502 program observing the ACK event sees all status bits clear, one active
+map for future writes, and one already-clear map ready for the next accepted
+request.
 
-If the client requests missing chunks, MIA sets `VIDEO_REPAIR_ACTIVE` and
-`VIDEO_READOUT_ACTIVE`, regenerates those chunks from the same pending dirty map
-and current MIA RAM values, sends them, then clears the repair/readout bits.
+If the client requests missing chunks, MIA regenerates those chunks from the
+same pending dirty map and current MIA RAM values. Repair does not change
+`VIDEO_STATUS`; the update remains in the requested/sent lifecycle until ACK.
 
-## Readout Visibility Rules
+## Visibility Rules
 
 The pending dirty map freezes the list of pages for a response. It does not
 freeze the byte values in those pages. Core 0 reads live MIA RAM while sending
 or repairing an update.
 
-This means visible writes during `VIDEO_READOUT_ACTIVE` can appear in the update
-currently being generated. Visible writes after `VIDEO_RESPONSE_SENT` but before
-acknowledgement can appear in a later repair of that same update. In both cases,
-the active dirty map also records the write for the next update, so the client
-mirror converges.
+This means visible writes while `VIDEO_FRAME_REQUESTED` is set can appear in the
+update currently being generated. Visible writes after `VIDEO_FRAME_SENT` but
+before acknowledgement can appear in a later repair of that same update. In both
+cases, the active dirty map also records the write for the next update, so the
+client mirror converges.
 
 Programmers choose the timing discipline:
 
 - ignore the flags for lowest latency and possible visual artifacts;
-- avoid visible writes while `VIDEO_READOUT_ACTIVE` is set to avoid first-send
-  readout artifacts;
-- avoid visible writes while `VIDEO_UPDATE_ACTIVE` is set to also avoid repair
-  artifacts.
+- avoid visible writes while either `VIDEO_STATUS` bit is set for clean output.
 
-This is similar to classic video hardware where changing visible memory during
-display readout can produce a transient artifact, but changing inactive or
+This is similar to classic video hardware where changing visible memory while it
+is being sampled can produce a transient artifact, but changing inactive or
 off-screen state is safe.
 
 ## Video Events and IRQ
@@ -492,11 +482,6 @@ video IRQ source.
 | 0 | `VIDEO_EVENT_FRAME_REQUEST` | MIA accepted a client update request |
 | 1 | `VIDEO_EVENT_FRAME_SENT` | initial response send completed |
 | 2 | `VIDEO_EVENT_FRAME_ACKED` | client acknowledged the response |
-| 3 | `VIDEO_EVENT_CLIENT_CHANGE` | `VIDEO_CLIENT_CONNECTED` changed |
-| 4 | `VIDEO_EVENT_FULL_REFRESH` | all pages were marked dirty |
-| 5 | `VIDEO_EVENT_REPAIR_REQUEST` | client requested missing chunks |
-| 6 | `VIDEO_EVENT_READOUT_START` | MIA started reading video RAM for send/repair |
-| 7 | `VIDEO_EVENT_READOUT_END` | MIA finished the current readout/repair pass |
 
 When `(VIDEO_EVENT_STATUS & VIDEO_IRQ_ENABLE) != 0`, MIA sets
 `IRQ_VIDEO_EVENT` (`$0020`) in the normal `IRQ_STATUS` register. The 6502
@@ -511,8 +496,7 @@ explicitly retried. Repair timeout is also client-local policy.
 The 6502 program chooses how tightly to synchronize its visible writes:
 
 - free-running programs write whenever they want and tolerate artifacts;
-- readout-paced programs wait for `VIDEO_READOUT_ACTIVE` to clear;
-- ack-paced programs wait for `VIDEO_UPDATE_ACTIVE` to clear.
+- ack-paced programs wait for `VIDEO_STATUS = 0`.
 
 If the network is slow, ack-paced programs slow down because the client
 acknowledgement arrives later. This is a programming choice, not hidden firmware

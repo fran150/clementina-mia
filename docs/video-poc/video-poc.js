@@ -48,8 +48,6 @@
   const CTRL_OAM_COUNT = CONTROL + 0x14;
 
   const STATUS_NO_DIRTY_PAGES = "NO_DIRTY_PAGES";
-  const STATUS_RESPONSE_PENDING = "RESPONSE_PENDING";
-  const STATUS_RESPONSE_RESENT = "RESPONSE_RESENT";
   const STATUS_PROTOCOL_ERROR = "PROTOCOL_ERROR";
 
   const dom = {
@@ -135,7 +133,6 @@
     activeMap: 0,
     pendingMap: 1,
     pendingResponse: null,
-    fullRefreshPending: true,
     frameId: 0,
     clientFrameId: 0,
     downlinkNextFreeAt: 0,
@@ -158,6 +155,7 @@
   }));
 
   initializeVideoRam();
+  markAllActivePagesDirty();
   bindControls();
   appendPacket("status", false, "WELCOME");
   requestAnimationFrame(loop);
@@ -331,7 +329,7 @@
 
     if (pending) {
       if (requestId === pending.requestId && lastCompleteFrameId === pending.baseClientFrameId) {
-        setStatus(STATUS_RESPONSE_RESENT);
+        setStatus("FRAME_DATA retry");
         scheduleChunks(pending, allChunkIndexes(pending), true);
         return;
       }
@@ -346,11 +344,10 @@
 
       if (serialNewer(lastCompleteFrameId, pending.frameId)) {
         protocolError();
-        receiveStatus(STATUS_PROTOCOL_ERROR);
         return;
       }
 
-      receiveStatus(STATUS_RESPONSE_PENDING);
+      setStatus("REQUEST ignored: response pending");
       return;
     }
 
@@ -362,12 +359,11 @@
 
     if (serialNewer(lastCompleteFrameId, mia.clientFrameId)) {
       protocolError();
-      receiveStatus(STATUS_PROTOCOL_ERROR);
       return;
     }
 
     const activeDirty = countDirtyPages(mia.dirtyMaps[mia.activeMap]);
-    if (!mia.fullRefreshPending && activeDirty === 0) {
+    if (activeDirty === 0) {
       receiveStatus(STATUS_NO_DIRTY_PAGES);
       return;
     }
@@ -377,16 +373,13 @@
     mia.activeMap = newActive;
     mia.pendingMap = oldActive;
 
-    if (mia.fullRefreshPending) {
-      markAllPendingPagesDirty();
-      mia.fullRefreshPending = false;
-      app.fullRefreshes += 1;
-    }
-
     const pages = scanDirtyMap(mia.dirtyMaps[mia.pendingMap]);
     if (pages.length === 0) {
       receiveStatus(STATUS_NO_DIRTY_PAGES);
       return;
+    }
+    if (pages.length === PAGE_COUNT) {
+      app.fullRefreshes += 1;
     }
 
     mia.frameId = nextFrameId(mia.frameId);
@@ -470,8 +463,13 @@
   function receiveStatus(code) {
     appendPacket("status", code === STATUS_PROTOCOL_ERROR, code);
     setStatus(code);
-    if (code === STATUS_NO_DIRTY_PAGES || code === STATUS_PROTOCOL_ERROR) {
+    if (code === STATUS_NO_DIRTY_PAGES) {
       client.pending = null;
+      return;
+    }
+
+    if (code === STATUS_PROTOCOL_ERROR) {
+      restartVideoSession("HELLO after PROTOCOL_ERROR");
     }
   }
 
@@ -594,18 +592,32 @@
   }
 
   function protocolError() {
-    if (mia.pendingResponse) {
-      mia.dirtyMaps[mia.pendingMap].fill(0);
-    }
+    receiveStatus(STATUS_PROTOCOL_ERROR);
+  }
+
+  function restartVideoSession(status) {
+    app.packets = [];
+    mia.dirtyMaps[0].fill(0);
+    mia.dirtyMaps[1].fill(0);
+    mia.activeMap = 0;
+    mia.pendingMap = 1;
     mia.pendingResponse = null;
-    mia.fullRefreshPending = true;
-    setStatus(STATUS_PROTOCOL_ERROR);
+    mia.frameId = 0;
+    mia.clientFrameId = 0;
+    mia.downlinkNextFreeAt = app.now;
+    client.pending = null;
+    client.lastCompleteFrameId = 0;
+    client.nextRequestId = 1;
+    client.nextRequestAt = app.now;
+    markAllActivePagesDirty();
+    appendPacket("status", false, "HELLO");
+    appendPacket("status", false, "WELCOME");
+    setStatus(status);
   }
 
   function forceFullRefresh() {
-    mia.fullRefreshPending = true;
-    setStatus("FULL_REFRESH_PENDING");
-    appendPacket("status", false, "FULL_REFRESH_PENDING");
+    markAllActivePagesDirty();
+    setStatus("full refresh queued");
   }
 
   function allChunkIndexes(response) {
@@ -696,8 +708,8 @@
     return 8;
   }
 
-  function markAllPendingPagesDirty() {
-    const map = mia.dirtyMaps[mia.pendingMap];
+  function markAllActivePagesDirty() {
+    const map = mia.dirtyMaps[mia.activeMap];
     map.fill(0xff);
     const extraBits = DIRTY_MAP_SIZE * 8 - PAGE_COUNT;
     if (extraBits > 0) {

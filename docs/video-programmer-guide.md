@@ -9,8 +9,8 @@ The short version:
   and nametables.
 - The client requests video updates; the 6502 does not explicitly commit frames.
 - MIA marks 32-byte video pages dirty as you write them.
-- Avoid changing visible memory during MIA readout or before client
-  acknowledgement if you want artifact-free output.
+- Avoid changing visible memory while a client update is outstanding if you want
+  artifact-free output.
 - Use video status bits or IRQ events to pace strict update loops.
 
 ## Mental Model
@@ -90,9 +90,9 @@ video_force_full_refresh:
     rts
 ```
 
-A full refresh is not a frozen snapshot. It schedules the next accepted update
-to include every video page. MIA sends the current contents of those pages when
-the client requests that update.
+A full refresh is not a frozen snapshot. It marks every video page dirty, so the
+next accepted update includes every video page. MIA sends the current contents
+of those pages when the client requests that update.
 
 ## Video Control Block
 
@@ -104,7 +104,7 @@ Important fields:
 | Offset | Field | Meaning |
 | ---: | --- | --- |
 | `$01` | `VIDEO_MODE` | video enable and renderer mode bits |
-| `$02` | `VIDEO_STATUS` | connection and update lifecycle bits |
+| `$02` | `VIDEO_STATUS` | update lifecycle bits |
 | `$03` | `LAYER_ENABLE` | background, overlay, sprite enables |
 | `$04-$07` | `FRAME_ID` | latest assigned client update id |
 | `$08-$09` | `SCROLL_X` | background scroll X |
@@ -123,28 +123,17 @@ request that produces an update, and wraps from `0xFFFFFFFF` to `1`.
 
 | Bit | Name | Meaning |
 | ---: | --- | --- |
-| 0 | `VIDEO_CLIENT_CONNECTED` | a client owns the video session |
-| 1 | `VIDEO_UPDATE_ACTIVE` | an accepted update is not yet acknowledged |
-| 2 | `VIDEO_READOUT_ACTIVE` | MIA is reading live video RAM for send or repair |
-| 3 | `VIDEO_RESPONSE_SENT` | initial response send finished; ACK may still be pending |
-| 4 | `VIDEO_FULL_REFRESH_PENDING` | the next update will include all video pages |
-| 5 | `VIDEO_REPAIR_ACTIVE` | repair chunks are being regenerated/sent |
+| 0 | `VIDEO_FRAME_REQUESTED` | MIA accepted an update request; ACK not received yet |
+| 1 | `VIDEO_FRAME_SENT` | initial response send finished; ACK may still be pending |
 
-The most conservative clean-output rule is:
+The clean-output rule is:
 
 ```text
-do not change visible memory while VIDEO_UPDATE_ACTIVE is set
+do not change visible memory while VIDEO_STATUS is nonzero
 ```
 
-That waits until the client has acknowledged the update, so later repairs cannot
-pick up newer visible values. A lower-latency rule is:
-
-```text
-do not change visible memory while VIDEO_READOUT_ACTIVE is set
-```
-
-That avoids artifacts during the first send but allows repair-time artifacts if
-the network loses chunks.
+That waits until the client has acknowledged the update, so later repair chunks
+cannot pick up newer visible values.
 
 ## Fast Video Indexes
 
@@ -246,7 +235,7 @@ MIA and the client loop through this lifecycle:
 ```text
 nothing pending
 client requests update
-MIA rotates active dirty set to pending and starts readout
+MIA rotates active dirty set to pending and sends the update
 MIA sends dirty page records
 MIA finishes first send
 client repairs missing chunks if needed
@@ -259,9 +248,9 @@ nothing pending
 During the lifecycle:
 
 - `VIDEO_EVENT_FRAME_REQUEST` fires when MIA accepts the request.
-- `VIDEO_UPDATE_ACTIVE` is set from accepted request until ACK.
-- `VIDEO_READOUT_ACTIVE` is set while MIA is reading video RAM for send/repair.
+- `VIDEO_FRAME_REQUESTED` is set from accepted request until ACK.
 - `VIDEO_EVENT_FRAME_SENT` fires when the first complete send has finished.
+- `VIDEO_FRAME_SENT` is set from first complete send until ACK.
 - `VIDEO_EVENT_FRAME_ACKED` fires after the client acknowledges the update and
   MIA has already cleared the retained dirty set used for repair.
 
@@ -270,12 +259,12 @@ Changing visible memory at different points has different tradeoffs:
 | When you write visible memory | Result |
 | --- | --- |
 | before request | included in the next update |
-| during `VIDEO_READOUT_ACTIVE` | may appear partially in the current update |
-| after first send but before ACK | may appear in repair chunks for that update |
+| while `VIDEO_FRAME_REQUESTED` is set and `VIDEO_FRAME_SENT` is clear | may appear partially in the current update |
+| while both status bits are set | may appear in repair chunks for that update |
 | after ACK | belongs cleanly to a later update |
 
 Writes to inactive or non-visible resources are safe as long as they cannot
-affect the update currently being read. For example, loading an unused CHR bank
+affect the update currently being sent. For example, loading an unused CHR bank
 is safe until the same visible update selects that bank.
 
 ## Free-Running Mode
@@ -298,36 +287,6 @@ reading it, but the mirror converges on later updates.
 Use this mode when local responsiveness matters more than remote display
 cleanliness.
 
-## Readout-Paced Mode
-
-In readout-paced mode, the game avoids visible writes while MIA is actively
-reading video RAM.
-
-```asm
-VIDX_VIDEO_STATUS     = $87
-VIDEO_READOUT_ACTIVE = %00000100
-
-wait_readout_clear:
-    lda #VIDX_VIDEO_STATUS
-    sta $FFE1
-
-wait_loop:
-    lda $FFE0
-    and #VIDEO_READOUT_ACTIVE
-    bne wait_loop
-    rts
-
-main_loop:
-    jsr wait_readout_clear
-    jsr read_input
-    jsr update_game
-    jsr draw_visible_video_state
-    jmp main_loop
-```
-
-This avoids the most direct readout artifacts. It does not prevent repair chunks
-from seeing newer visible values if packets are lost after the first send.
-
 ## Ack-Paced Mode
 
 In ack-paced mode, the game avoids visible writes until the client has applied
@@ -335,7 +294,7 @@ and acknowledged the previous update.
 
 ```asm
 VIDX_VIDEO_STATUS    = $87
-VIDEO_UPDATE_ACTIVE = %00000010
+VIDEO_FRAME_BUSY    = %00000011
 
 wait_update_clear:
     lda #VIDX_VIDEO_STATUS
@@ -343,7 +302,7 @@ wait_update_clear:
 
 wait_loop:
     lda $FFE0
-    and #VIDEO_UPDATE_ACTIVE
+    and #VIDEO_FRAME_BUSY
     bne wait_loop
     rts
 
@@ -371,11 +330,6 @@ Video event bits live in the video control block:
 | 0 | `VIDEO_EVENT_FRAME_REQUEST` | MIA accepted a client update request |
 | 1 | `VIDEO_EVENT_FRAME_SENT` | initial response send completed |
 | 2 | `VIDEO_EVENT_FRAME_ACKED` | client acknowledged the response |
-| 3 | `VIDEO_EVENT_CLIENT_CHANGE` | client connected or disconnected |
-| 4 | `VIDEO_EVENT_FULL_REFRESH` | all pages were marked dirty |
-| 5 | `VIDEO_EVENT_REPAIR_REQUEST` | client requested missing chunks |
-| 6 | `VIDEO_EVENT_READOUT_START` | MIA started reading video RAM |
-| 7 | `VIDEO_EVENT_READOUT_END` | MIA finished the current readout pass |
 
 `VIDEO_IRQ_ENABLE` selects which event bits raise the video IRQ. Latched events
 remain set until the program clears them by writing `1` bits to
@@ -386,7 +340,8 @@ When an enabled video event is pending, MIA sets `IRQ_VIDEO_EVENT` (`$0020`) in
 the 6502 IRQ line.
 
 For a clean client-paced loop, enable `VIDEO_EVENT_FRAME_ACKED`. For a lower
-latency loop, enable `VIDEO_EVENT_FRAME_SENT` or `VIDEO_EVENT_READOUT_END`.
+latency loop, enable `VIDEO_EVENT_FRAME_SENT` and accept possible repair-time
+artifacts.
 
 ## Performance Tips
 
@@ -404,22 +359,21 @@ Expensive patterns:
 
 - rewriting all CHR banks every frame;
 - clearing and rebuilding large nametable regions every frame;
-- changing visible CHR data during readout;
+- changing visible CHR data while an update is outstanding;
 - ack-pacing game logic over an unreliable network when responsiveness matters.
 
 Build complete logical changes before the next clean point when possible. For
-ack-paced loops, start visible writes after `VIDEO_EVENT_FRAME_ACKED`; for
-readout-paced loops, start after `VIDEO_EVENT_READOUT_END`.
+ack-paced loops, start visible writes after `VIDEO_EVENT_FRAME_ACKED`.
 
 ## Troubleshooting
 
 - Client shows old graphics after connect: force a full refresh or reconnect the
   client.
-- One-frame visual tearing: avoid visible writes while `VIDEO_READOUT_ACTIVE` is
-  set.
-- Repair-time artifacts: avoid visible writes while `VIDEO_UPDATE_ACTIVE` is
-  set, or improve the Wi-Fi link.
+- One-frame visual tearing: avoid visible writes while `VIDEO_STATUS` is
+  nonzero.
+- Repair-time artifacts: wait for `VIDEO_EVENT_FRAME_ACKED` before visible
+  writes, or improve the Wi-Fi link.
 - Slow game in ack-paced mode: the client/network is the limiter; use
-  readout-paced or free-running mode if responsiveness matters more.
+  free-running mode if responsiveness matters more.
 - Large updates miss 30 FPS: reduce dirty page count, lower client FPS, or avoid
   large CHR/nametable uploads during steady-state play.
