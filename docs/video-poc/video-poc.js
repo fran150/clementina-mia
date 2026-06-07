@@ -13,6 +13,9 @@
   const PAGE_SIZE = 32;
   const PAGE_SHIFT = 5;
   const PAGE_COUNT = 2155;
+  const FIRST_SYNC_PAGE = 1;
+  const SYNC_PAGE_COUNT = PAGE_COUNT - FIRST_SYNC_PAGE;
+  const SYNC_START = FIRST_SYNC_PAGE * PAGE_SIZE;
   const DIRTY_MAP_SIZE = 270;
   const HEADER_SIZE = 32;
   const PAGE_RECORD_SIZE = 34;
@@ -23,7 +26,8 @@
   const SIM_STEP_MS = 2;
   const MAX_SIM_CATCHUP_MS = 250;
 
-  const CONTROL = 0x00000;
+  const LOCAL_CONTROL = 0x00000;
+  const RENDER_CONTROL = 0x00020;
   const PALETTE = 0x00100;
   const CHR = 0x00200;
   const BG_NT = 0x0c200;
@@ -32,20 +36,21 @@
   const OV_ATTR = 0x10468;
   const OAM = 0x10850;
 
-  const CTRL_VIDEO_MODE = CONTROL + 0x01;
-  const CTRL_LAYER_ENABLE = CONTROL + 0x03;
-  const CTRL_FRAME_ID = CONTROL + 0x04;
-  const CTRL_SCROLL_X = CONTROL + 0x08;
-  const CTRL_SCROLL_Y = CONTROL + 0x0a;
-  const CTRL_BG_ACTIVE_SET = CONTROL + 0x0c;
-  const CTRL_BG_SCROLL_MODE = CONTROL + 0x0d;
-  const CTRL_BG_CHR_BANK = CONTROL + 0x0e;
-  const CTRL_BG_ALT_CHR_BANK = CONTROL + 0x0f;
-  const CTRL_OVERLAY_CHR_BANK = CONTROL + 0x10;
-  const CTRL_OVERLAY_ALT_CHR_BANK = CONTROL + 0x11;
-  const CTRL_SPRITE_CHR_BANK = CONTROL + 0x12;
-  const CTRL_BACKDROP = CONTROL + 0x13;
-  const CTRL_OAM_COUNT = CONTROL + 0x14;
+  const CTRL_VIDEO_VERSION = LOCAL_CONTROL + 0x00;
+  const CTRL_FRAME_ID = LOCAL_CONTROL + 0x04;
+  const CTRL_VIDEO_MODE = RENDER_CONTROL + 0x00;
+  const CTRL_LAYER_ENABLE = RENDER_CONTROL + 0x01;
+  const CTRL_SCROLL_X = RENDER_CONTROL + 0x02;
+  const CTRL_SCROLL_Y = RENDER_CONTROL + 0x04;
+  const CTRL_BG_ACTIVE_SET = RENDER_CONTROL + 0x06;
+  const CTRL_BG_SCROLL_MODE = RENDER_CONTROL + 0x07;
+  const CTRL_BG_CHR_BANK = RENDER_CONTROL + 0x08;
+  const CTRL_BG_ALT_CHR_BANK = RENDER_CONTROL + 0x09;
+  const CTRL_OVERLAY_CHR_BANK = RENDER_CONTROL + 0x0a;
+  const CTRL_OVERLAY_ALT_CHR_BANK = RENDER_CONTROL + 0x0b;
+  const CTRL_SPRITE_CHR_BANK = RENDER_CONTROL + 0x0c;
+  const CTRL_BACKDROP = RENDER_CONTROL + 0x0d;
+  const CTRL_OAM_COUNT = RENDER_CONTROL + 0x0e;
 
   const STATUS_NO_DIRTY_PAGES = "NO_DIRTY_PAGES";
   const STATUS_PROTOCOL_ERROR = "PROTOCOL_ERROR";
@@ -291,6 +296,7 @@
       frameId: 0,
       chunkCount: 0,
       chunks: new Map(),
+      retriesWithoutResponse: 0,
       deadline: repairDeadline(app.now),
     };
     appendPacket("status", false, "REQUEST_FRAME");
@@ -303,6 +309,12 @@
     }
 
     if (pending.frameId === 0) {
+      pending.retriesWithoutResponse += 1;
+      if (pending.retriesWithoutResponse >= 3) {
+        restartVideoSession("HELLO after no response");
+        return;
+      }
+
       pending.deadline = repairDeadline(now);
       appendPacket("status", false, "REQUEST retry");
       handleRequestFrame(pending.requestId, pending.lastCompleteFrameId);
@@ -342,7 +354,7 @@
         return;
       }
 
-      if (serialNewer(lastCompleteFrameId, pending.frameId)) {
+      if (unsignedNewer(lastCompleteFrameId, pending.frameId)) {
         protocolError();
         return;
       }
@@ -353,11 +365,10 @@
 
     if (lastCompleteFrameId < mia.clientFrameId) {
       setStatus("stale REQUEST ignored");
-      client.pending = null;
       return;
     }
 
-    if (serialNewer(lastCompleteFrameId, mia.clientFrameId)) {
+    if (unsignedNewer(lastCompleteFrameId, mia.clientFrameId)) {
       protocolError();
       return;
     }
@@ -378,7 +389,7 @@
       receiveStatus(STATUS_NO_DIRTY_PAGES);
       return;
     }
-    if (pages.length === PAGE_COUNT) {
+    if (pages.length === SYNC_PAGE_COUNT) {
       app.fullRefreshes += 1;
     }
 
@@ -411,7 +422,7 @@
       return;
     }
 
-    if (pending && serialNewer(frameId, pending.frameId)) {
+    if (pending && unsignedNewer(frameId, pending.frameId)) {
       protocolError();
     }
   }
@@ -420,7 +431,7 @@
     const pending = mia.pendingResponse;
 
     if (!pending || requestId !== pending.requestId || frameId !== pending.frameId) {
-      if (pending && serialNewer(frameId, pending.frameId)) {
+      if (pending && unsignedNewer(frameId, pending.frameId)) {
         protocolError();
       }
       return;
@@ -482,7 +493,11 @@
 
     for (const chunk of orderedChunks) {
       for (const record of chunk) {
-        if (record.pageIndex <= lastPage || record.pageIndex >= PAGE_COUNT) {
+        if (
+          record.pageIndex < FIRST_SYNC_PAGE ||
+          record.pageIndex <= lastPage ||
+          record.pageIndex >= PAGE_COUNT
+        ) {
           client.pending = null;
           protocolError();
           return;
@@ -628,9 +643,8 @@
     return frameId === 0xffffffff ? 1 : frameId + 1;
   }
 
-  function serialNewer(a, b) {
-    const diff = (a - b) >>> 0;
-    return diff > 0 && diff < 0x80000000;
+  function unsignedNewer(a, b) {
+    return (a >>> 0) > (b >>> 0);
   }
 
   function frameDelta(newer, older) {
@@ -638,7 +652,7 @@
   }
 
   function markDirty(offset) {
-    if (offset < 0 || offset >= VIDEO_SIZE) {
+    if (offset < SYNC_START || offset >= VIDEO_SIZE) {
       return;
     }
     const page = offset >> PAGE_SHIFT;
@@ -671,7 +685,11 @@
 
   function countDirtyPages(map) {
     let count = 0;
-    for (const byte of map) {
+    for (let i = 0; i < map.length; i += 1) {
+      let byte = map[i];
+      if (i === 0) {
+        byte &= 0xfe;
+      }
       count += popCount8(byte);
     }
     return count;
@@ -687,10 +705,13 @@
     const pages = [];
     for (let byteIndex = 0; byteIndex < DIRTY_MAP_SIZE; byteIndex += 1) {
       let bits = map[byteIndex];
+      if (byteIndex === 0) {
+        bits &= 0xfe;
+      }
       while (bits !== 0) {
         const bit = trailingZero8(bits);
         const page = byteIndex * 8 + bit;
-        if (page < PAGE_COUNT) {
+        if (page >= FIRST_SYNC_PAGE && page < PAGE_COUNT) {
           pages.push(page);
         }
         bits &= bits - 1;
@@ -711,6 +732,7 @@
   function markAllActivePagesDirty() {
     const map = mia.dirtyMaps[mia.activeMap];
     map.fill(0xff);
+    map[0] &= 0xfe;
     const extraBits = DIRTY_MAP_SIZE * 8 - PAGE_COUNT;
     if (extraBits > 0) {
       map[DIRTY_MAP_SIZE - 1] &= 0xff >>> extraBits;
@@ -718,7 +740,7 @@
   }
 
   function initializeVideoRam() {
-    cpuWrite(CONTROL, 1);
+    cpuWrite(CTRL_VIDEO_VERSION, 1);
     cpuWrite(CTRL_VIDEO_MODE, 1);
     cpuWrite(CTRL_LAYER_ENABLE, 0x07);
     cpuWrite(CTRL_BG_ACTIVE_SET, 0);

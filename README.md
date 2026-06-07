@@ -19,6 +19,16 @@ MIA starts in loader mode. During initialization it writes a tiny 6502 program i
 
 In normal mode, register reads and writes operate as the interface described below. The main loop also services requested `PHI2` speed changes and reset requests.
 
+## Wi-Fi video output
+
+The video design is documented under `docs/`. MIA uses a client-paced remote
+video model: the 6502 writes video state into MIA RAM, and a host client mirrors
+the syncable render state and renders the pixels. Page 0 of the video region is
+local MIA/6502 control state and is not sent to the client. That local page
+includes `LAST_RESPONSE_DIRTY_PAGES`, which lets 6502 programs detect when the
+latest stable video update result was large, such as after a full refresh or a
+slow Wi-Fi period.
+
 ## Register Map
 
 MIA exposes 32 internal registers. The 6502 sees them at `$FFE0-$FFFF`; internally only the low 5 address bits are used.
@@ -145,6 +155,9 @@ Unassigned command ids are no-ops.
 | 2 | `IRQ_IDXB_WRAPPED` | The active index in window B wrapped and its `WRAP_IRQ` flag was enabled. |
 | 3 | `IRQ_COMMAND` | Reserved for command-triggered interrupts. |
 | 4 | `IRQ_SPEED_CHANGED` | A requested `PHI2` speed change was applied. |
+| 5 | `IRQ_VIDEO_FRAME_REQUEST` | Video client update request accepted. |
+| 6 | `IRQ_VIDEO_FRAME_SENT` | Initial video response send completed. |
+| 7 | `IRQ_VIDEO_FRAME_ACKED` | Video client acknowledged the response. |
 | 15 | `IRQ_TRIGGERED` | Aggregate state maintained by MIA when any masked IRQ flag is pending. |
 
 ## Status
@@ -156,6 +169,8 @@ Unassigned command ids are no-ops.
 | 2 | `MIA_STAT_CMD_RUNNING` | Command handler is executing queued commands. |
 | 3 | `MIA_STAT_DMA_RUNNING` | MIA RAM DMA copy is in progress. |
 | 4 | `MIA_STAT_SPEED_CHANGING` | A `PHI2` speed change has been requested and not yet applied. |
+| 5 | `MIA_STAT_VIDEO_FRAME_REQUESTED` | Video client update request accepted; ACK not received yet. |
+| 6 | `MIA_STAT_VIDEO_FRAME_SENT` | Initial video response send finished; ACK may still be pending. |
 
 ## Errors
 

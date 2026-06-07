@@ -2,38 +2,45 @@
 
 This guide describes how a Clementina 6502 program uses MIA Wi-Fi video output.
 
-The short version:
-
-- Write video state through MIA's indexed RAM windows.
-- Use fast video indexes for hot registers such as scroll, banks, OAM, palettes,
-  and nametables.
-- The client requests video updates; the 6502 does not explicitly commit frames.
-- MIA marks 32-byte video pages dirty as you write them.
-- Avoid changing visible memory while a client update is outstanding if you want
-  artifact-free output.
-- Use video status bits or IRQ events to pace strict update loops.
-
 ## Mental Model
 
-MIA behaves like a remote video processor. Your program writes tile maps,
-character graphics, palettes, sprites, scroll values, and overlay text into MIA
-RAM. The client mirrors that state and renders the pixels on a host computer.
+MIA is the 6502-facing half of a remote video system: it stores video state and
+publishes changed memory pages via Wi-Fi, while a remote client maintains a
+copy of the VRAM and does the rendering.
 
-You are not drawing pixels into a framebuffer. You are updating graphics state.
-MIA tracks which 32-byte pages of that graphics state changed. When the client
-requests an update, MIA sends the dirty pages to the client and starts tracking
-new writes for the following update.
+Your program writes tile maps, character graphics, palettes, sprites, scroll
+values, and overlay text into MIA VRAM. MIA then synchronizes those changes to
+the remote client on request.
 
-The mirrored video region is 68,944 bytes. MIA divides it into 2,155 pages of
-32 bytes each and tracks those pages with a 270-byte dirty map. Each bit in that
-map means "this page changed." Two maps are used: one collects your current
-writes, while the other names the pages being sent or repaired for the active
-client update.
+The video region is 68,944 bytes. MIA divides it into 2,155 absolute pages of
+32 bytes each. Page 0 (`$00000-$0001F`) is local control and diagnostic state
+for MIA and the 6502; it is never sent to the client and writes there do not
+dirty video state. The syncable client mirror starts at page 1 (`$00020`) and contains
+2,154 pages. When your program writes a byte in the syncable region, the
+containing page is marked changed. A later client request sends changed pages so
+the client's mirror can catch up. Writing several bytes in the same page still
+produces one changed page for the next update, while spreading changes over
+many pages makes the update larger.
+
+When the client requests an update, MIA snapshots the list of pages that changed
+up to that point and starts building a response by reading those pages from live
+MIA RAM. If your program changes visible memory while MIA is building that
+response, the client may render unwanted artifacts because some bytes can be
+read before the change and others after it. After MIA has sent the update, but
+before the client acknowledges it, MIA may re-read those same pages if packets
+were lost and the client requests repair. Artifacts are less likely in this
+period, but visible writes can still appear in repair chunks. Once the client
+acknowledges the update, any part of VRAM can be changed without artifact risk
+until the next client request is accepted.
+
+MIA exposes status flags and IRQ-capable video events for these lifecycle
+points. Programs can ignore them and run freely, poll them when they need a
+clean update point, or use IRQs to do other work while waiting. Those options
+are described below.
 
 This is similar to classic video hardware in one important way: if you change
 visible video memory while the display system is reading it, you can get a
-temporary artifact. MIA exposes status bits and IRQ events so your program can
-choose how strict it wants to be.
+temporary artifact.
 
 ## MIA Registers
 
@@ -56,11 +63,12 @@ MIA occupies `$FFE0-$FFFF`.
 | `IRQ_MASK` | `$FFEE-$FFEF` | interrupt mask |
 | `IRQ_STATUS` | `$FFF0-$FFF1` | interrupt status |
 
-Video status lives in the video control block, not in `MIA_STATUS`. Use
-`VIDX_VIDEO_STATUS` to read it quickly.
+Video lifecycle status lives in the general `MIA_STATUS` register. Use bits
+`MIA_STAT_VIDEO_FRAME_REQUESTED` and `MIA_STAT_VIDEO_FRAME_SENT` to decide
+whether an update is being built, sent, repaired, or held for ACK.
 
-The video event IRQ source is `IRQ_VIDEO_EVENT = $0020`. Enable that bit in
-`IRQ_MASK` to let video events drive the 6502 IRQ line.
+Video lifecycle events use normal `IRQ_STATUS` bits. Enable the corresponding
+bits in `IRQ_MASK` to let selected video events drive the 6502 IRQ line.
 
 ## Video Commands
 
@@ -69,67 +77,89 @@ Video commands use the normal command registers.
 | Command | Id | Purpose |
 | --- | ---: | --- |
 | `VIDEO_ENABLE` | `$40` | initialize video state and fast video indexes |
-| `VIDEO_FORCE_FULL_REFRESH` | `$42` | mark all video pages dirty for the next client update |
+| `VIDEO_FORCE_FULL_REFRESH` | `$42` | mark all syncable video pages dirty for the next client update |
 | `VIDEO_SET_MODE` | `$43` | update `VIDEO_MODE` bits |
 
-There is no frame commit command in the current video model. The client
-requests updates, and MIA publishes the pages that were dirty at the moment the
-request was accepted.
-
-Forcing a full refresh:
+Code example of 6502 forcing a full refresh on the client:
 
 ```asm
 VIDEO_FORCE_FULL_REFRESH = $42
 
 video_force_full_refresh:
-    stz $FFE6       ; CMD_PARAM1
-    stz $FFE7       ; CMD_PARAM2
-    stz $FFE8       ; CMD_PARAM3
     lda #VIDEO_FORCE_FULL_REFRESH
     sta $FFE9       ; CMD_TRIGGER
     rts
 ```
 
-A full refresh is not a frozen snapshot. It marks every video page dirty, so the
-next accepted update includes every video page. MIA sends the current contents
-of those pages when the client requests that update.
+A full refresh marks every syncable video page dirty, so the next accepted
+update includes the whole client mirror. MIA sends the current contents of
+those pages when the client requests that update. This can take much longer to
+send than an ordinary dirty update. While that response is outstanding, new
+writes are still tracked for the following update; if the program keeps
+changing a lot of video state, the next update may also become large. After
+`IRQ_VIDEO_FRAME_SENT`, read `LAST_RESPONSE_DIRTY_PAGES` to detect when MIA
+sent a large update: a full refresh reports `2,154`, while ordinary gameplay
+updates should usually be much smaller.
 
-## Video Control Block
+## Video Control Pages
 
-The video control block starts at MIA RAM offset `$00000`. The full layout is in
+The video control area starts at MIA RAM offset `$00000`. The full layout is in
 [video-output.md](video-output.md).
 
-Important fields:
+Page 0 is local control and diagnostic state. MIA and the 6502 can read and
+write this page, but the client never receives it and writes there do not mark
+video pages dirty.
+
+Important local fields:
 
 | Offset | Field | Meaning |
 | ---: | --- | --- |
-| `$01` | `VIDEO_MODE` | video enable and renderer mode bits |
-| `$02` | `VIDEO_STATUS` | update lifecycle bits |
-| `$03` | `LAYER_ENABLE` | background, overlay, sprite enables |
+| `$00` | `VIDEO_VERSION` | video state layout version |
 | `$04-$07` | `FRAME_ID` | latest assigned client update id |
-| `$08-$09` | `SCROLL_X` | background scroll X |
-| `$0A-$0B` | `SCROLL_Y` | background scroll Y |
-| `$0C` | `BG_ACTIVE_SET` | active 2x2 background set |
-| `$0D` | `BG_SCROLL_MODE` | background plane mode |
-| `$0E-$12` | bank selectors | bg, bg alt, overlay, overlay alt, sprite |
-| `$14-$15` | `OAM_ACTIVE_COUNT` | active sprite record count |
-| `$18` | `VIDEO_IRQ_ENABLE` | enabled video event IRQ sources |
-| `$19` | `VIDEO_EVENT_STATUS` | pending video events; write `1` bits to clear |
+| `$08-$09` | `LAST_RESPONSE_DIRTY_PAGES` | dirty page count for the latest stable update result |
+
+Page 1 is syncable render control state. The client mirrors this page and uses
+it while rendering.
+
+Important render fields:
+
+| Offset | Field | Meaning |
+| ---: | --- | --- |
+| `$20` | `VIDEO_MODE` | video enable and renderer mode bits |
+| `$21` | `LAYER_ENABLE` | background, overlay, sprite enables |
+| `$22-$23` | `SCROLL_X` | background scroll X |
+| `$24-$25` | `SCROLL_Y` | background scroll Y |
+| `$26` | `BG_ACTIVE_SET` | active 2x2 background set |
+| `$27` | `BG_SCROLL_MODE` | background plane mode |
+| `$28-$2C` | bank selectors | bg, bg alt, overlay, overlay alt, sprite |
+| `$2E-$2F` | `OAM_ACTIVE_COUNT` | number of OAM records the renderer evaluates |
+
+`OAM_ACTIVE_COUNT` limits sprite evaluation to the first N OAM records. Any
+record outside that range is ignored even if its per-sprite `DISABLE` bit is
+clear.
 
 `FRAME_ID` starts at `0` for a session, increments when MIA accepts a client
 request that produces an update, and wraps from `0xFFFFFFFF` to `1`.
 
-`VIDEO_STATUS` bits:
+`LAST_RESPONSE_DIRTY_PAGES` is `0` after reset or when the latest stable update
+result was `STATUS(NO_DIRTY_PAGES)`. For an update that sends video data, the
+field becomes stable after the first complete response send finishes, just
+before `IRQ_VIDEO_FRAME_SENT` is published. While MIA is still building or
+sending that response, the field still contains the previous stable value. Use
+it with `MIA_STATUS` or video IRQ events to notice when Wi-Fi or a full refresh
+has made updates unusually large.
+
+General `MIA_STATUS` video lifecycle bits:
 
 | Bit | Name | Meaning |
 | ---: | --- | --- |
-| 0 | `VIDEO_FRAME_REQUESTED` | MIA accepted an update request; ACK not received yet |
-| 1 | `VIDEO_FRAME_SENT` | initial response send finished; ACK may still be pending |
+| 5 | `MIA_STAT_VIDEO_FRAME_REQUESTED` | MIA accepted an update request; ACK not received yet |
+| 6 | `MIA_STAT_VIDEO_FRAME_SENT` | initial response send finished; ACK may still be pending |
 
 The clean-output rule is:
 
 ```text
-do not change visible memory while VIDEO_STATUS is nonzero
+do not change visible memory while either MIA_STATUS video lifecycle bit is set
 ```
 
 That waits until the client has acknowledged the update, so later repair chunks
@@ -149,8 +179,6 @@ and wraps at its limit.
 | `$83` | `VIDX_BANK_SELECT` | 5 | write bg, bg alt, overlay, overlay alt, sprite banks |
 | `$84` | `VIDX_LAYER_ENABLE` | 1 | write layer enable flags |
 | `$85` | `VIDX_OAM_COUNT` | 2 | write active sprite count low, high, repeat |
-| `$86` | `VIDX_FRAME_FLAGS` | 1 | write render frame flags |
-| `$87` | `VIDX_VIDEO_STATUS` | 1 | read video status |
 | `$88` | `VIDX_PALETTE` | 256 | stream palette bytes |
 | `$89` | `VIDX_OAM` | 1,280 | stream sprite records |
 | `$8A` | `VIDX_OVERLAY_NT` | 1,000 | stream overlay nametable |
@@ -225,43 +253,49 @@ A program normally initializes video in this order:
 8. enter the main loop.
 
 The first client update after connection is a full refresh because MIA marks
-every video page dirty. Large startup writes affect startup transfer time, not
-steady-state bandwidth.
+every syncable video page dirty. Large startup writes affect startup transfer
+time, not steady-state bandwidth.
 
 ## Update Lifecycle
 
 MIA and the client loop through this lifecycle:
 
 ```text
-nothing pending
+all clear
 client requests update
-MIA rotates active dirty set to pending and sends the update
+MIA accepts the request and starts building the response
 MIA sends dirty page records
 MIA finishes first send
-client repairs missing chunks if needed
+client requests missing chunks if needed
 client applies the complete update
 client ACKs the frame
-MIA clears the retained pending dirty set
-nothing pending
+MIA reports ACK and returns to all clear
 ```
 
-During the lifecycle:
+If no syncable video pages changed, MIA returns `STATUS(NO_DIRTY_PAGES)`. That
+does not assign a new `FRAME_ID`, does not require an ACK, and leaves the video
+lifecycle all clear.
 
-- `VIDEO_EVENT_FRAME_REQUEST` fires when MIA accepts the request.
-- `VIDEO_FRAME_REQUESTED` is set from accepted request until ACK.
-- `VIDEO_EVENT_FRAME_SENT` fires when the first complete send has finished.
-- `VIDEO_FRAME_SENT` is set from first complete send until ACK.
-- `VIDEO_EVENT_FRAME_ACKED` fires after the client acknowledges the update and
-  MIA has already cleared the retained dirty set used for repair.
+During an update that sends data:
+
+- both `MIA_STATUS` video lifecycle bits clear means all clear; no update is
+  being sent, repaired, or held for acknowledgement.
+- `IRQ_VIDEO_FRAME_REQUEST` is set when MIA accepts the request.
+- `MIA_STAT_VIDEO_FRAME_REQUESTED` is set from accepted request until ACK.
+- `IRQ_VIDEO_FRAME_SENT` is set when the first complete send has finished; at
+  this point `LAST_RESPONSE_DIRTY_PAGES` is stable for that response.
+- `MIA_STAT_VIDEO_FRAME_SENT` is set from first complete send until ACK.
+- `IRQ_VIDEO_FRAME_ACKED` is set after the client acknowledges the update and
+  MIA has returned to the all-clear state.
 
 Changing visible memory at different points has different tradeoffs:
 
 | When you write visible memory | Result |
 | --- | --- |
-| before request | included in the next update |
-| while `VIDEO_FRAME_REQUESTED` is set and `VIDEO_FRAME_SENT` is clear | may appear partially in the current update |
+| while all clear, before a request is accepted | included cleanly in the next update |
+| while `MIA_STAT_VIDEO_FRAME_REQUESTED` is set and `MIA_STAT_VIDEO_FRAME_SENT` is clear | may appear partially in the current update |
 | while both status bits are set | may appear in repair chunks for that update |
-| after ACK | belongs cleanly to a later update |
+| after ACK, when all clear again | belongs cleanly to a later update |
 
 Writes to inactive or non-visible resources are safe as long as they cannot
 affect the update currently being sent. For example, loading an unused CHR bank
@@ -279,10 +313,10 @@ main_loop:
     jmp main_loop
 ```
 
-The simulation keeps its own pace. MIA keeps marking dirty pages. If the client
-or network falls behind, the next response includes the accumulated dirty pages.
-The client may see transient artifacts if visible memory changes while MIA is
-reading it, but the mirror converges on later updates.
+The program keeps its own pace. MIA keeps marking changed pages. If the client
+or network falls behind, the next accepted response includes the accumulated
+changed pages. The client may see transient artifacts if visible memory changes
+while MIA is reading it, but the mirror converges on later updates.
 
 Use this mode when local responsiveness matters more than remote display
 cleanliness.
@@ -293,16 +327,13 @@ In ack-paced mode, the game avoids visible writes until the client has applied
 and acknowledged the previous update.
 
 ```asm
-VIDX_VIDEO_STATUS    = $87
-VIDEO_FRAME_BUSY    = %00000011
+MIA_STATUS_L         = $FFEA
+MIA_STAT_VIDEO_BUSY  = %01100000
 
 wait_update_clear:
-    lda #VIDX_VIDEO_STATUS
-    sta $FFE1
-
 wait_loop:
-    lda $FFE0
-    and #VIDEO_FRAME_BUSY
+    lda MIA_STATUS_L
+    and #MIA_STAT_VIDEO_BUSY
     bne wait_loop
     rts
 
@@ -318,29 +349,25 @@ This is the cleanest mode for visible updates. If Wi-Fi stalls or the client
 stops acknowledging, the game can slow down or appear unresponsive. That is the
 program's choice, similar to synchronizing tightly to a slow display device.
 
-## Video Event IRQ
+## Video IRQ Events
 
 MIA can raise an IRQ when selected video events occur. This lets a program do
 other work while waiting for a client update point.
 
-Video event bits live in the video control block:
+Video event bits live in the normal `IRQ_STATUS` register:
 
 | Bit | Event | Meaning |
 | ---: | --- | --- |
-| 0 | `VIDEO_EVENT_FRAME_REQUEST` | MIA accepted a client update request |
-| 1 | `VIDEO_EVENT_FRAME_SENT` | initial response send completed |
-| 2 | `VIDEO_EVENT_FRAME_ACKED` | client acknowledged the response |
+| 5 | `IRQ_VIDEO_FRAME_REQUEST` | MIA accepted a client update request |
+| 6 | `IRQ_VIDEO_FRAME_SENT` | initial response send completed |
+| 7 | `IRQ_VIDEO_FRAME_ACKED` | client acknowledged the response |
 
-`VIDEO_IRQ_ENABLE` selects which event bits raise the video IRQ. Latched events
-remain set until the program clears them by writing `1` bits to
-`VIDEO_EVENT_STATUS`.
+`IRQ_MASK` selects which pending event bits raise the physical IRQ line. Pending
+video event bits are cleared through the normal `IRQ_STATUS` mechanism, the same
+as other MIA IRQ sources.
 
-When an enabled video event is pending, MIA sets `IRQ_VIDEO_EVENT` (`$0020`) in
-`IRQ_STATUS`. The normal `IRQ_MASK` register controls whether that source drives
-the 6502 IRQ line.
-
-For a clean client-paced loop, enable `VIDEO_EVENT_FRAME_ACKED`. For a lower
-latency loop, enable `VIDEO_EVENT_FRAME_SENT` and accept possible repair-time
+For a clean client-paced loop, enable `IRQ_VIDEO_FRAME_ACKED`. For a lower
+latency loop, enable `IRQ_VIDEO_FRAME_SENT` and accept possible repair-time
 artifacts.
 
 ## Performance Tips
@@ -363,15 +390,15 @@ Expensive patterns:
 - ack-pacing game logic over an unreliable network when responsiveness matters.
 
 Build complete logical changes before the next clean point when possible. For
-ack-paced loops, start visible writes after `VIDEO_EVENT_FRAME_ACKED`.
+ack-paced loops, start visible writes after `IRQ_VIDEO_FRAME_ACKED`.
 
 ## Troubleshooting
 
 - Client shows old graphics after connect: force a full refresh or reconnect the
   client.
-- One-frame visual tearing: avoid visible writes while `VIDEO_STATUS` is
-  nonzero.
-- Repair-time artifacts: wait for `VIDEO_EVENT_FRAME_ACKED` before visible
+- One-frame visual tearing: avoid visible writes while either `MIA_STATUS`
+  video lifecycle bit is set.
+- Repair-time artifacts: wait for `IRQ_VIDEO_FRAME_ACKED` before visible
   writes, or improve the Wi-Fi link.
 - Slow game in ack-paced mode: the client/network is the limiter; use
   free-running mode if responsiveness matters more.

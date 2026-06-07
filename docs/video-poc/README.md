@@ -7,14 +7,17 @@ It models:
 
 - one active client session,
 - one outstanding update response,
-- a 68,944-byte MIA video RAM region and a complete client mirror,
+- a 68,944-byte MIA video RAM region, with page 0 local-only and a complete
+  client mirror of syncable render state,
 - two 270-byte dirty maps, active and pending,
 - fixed 34-byte dirty page records,
 - a 32-byte protocol header inside the fixed 512-byte UDP payload,
 - deterministic `FRAME_DATA` chunk order,
 - `NACK_CHUNKS` repair from the retained pending page list,
 - `ACK_RESPONSE` cleanup and lost-ACK implicit acknowledgement,
-- full refresh by setting every pending page dirty on the next accepted request.
+- no-response request retry followed by `HELLO` session recovery,
+- full refresh by marking every syncable video page dirty before the next
+  accepted request.
 
 Open `index.html` in a browser. The left canvas is live MIA RAM and the right
 canvas is the client mirror after protocol updates have been applied.

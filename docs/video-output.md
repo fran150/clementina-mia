@@ -6,10 +6,11 @@ model is defined in [video-programmer-guide.md](video-programmer-guide.md).
 
 MIA video uses a client-paced update model:
 
-- The client keeps a complete mirror of MIA video state.
-- MIA divides the 68,944-byte video state into 2,155 pages of 32 bytes each.
-- MIA tracks those pages with a 270-byte dirty map, where each bit represents
-  one video page.
+- The client keeps a complete mirror of MIA's syncable render state.
+- MIA divides the 68,944-byte video region into 2,155 pages of 32 bytes each.
+- Page 0 is local MIA/6502 control state and is never marked dirty or sent.
+- MIA tracks the 2,154 syncable pages with a 270-byte dirty map, where each
+  syncable page keeps its absolute page bit and bit 0 is reserved.
 - The client requests updates at the pace its display and network can sustain.
 - MIA keeps two dirty maps: one active map for new 6502 writes, and one pending
   map for the update currently being generated or repaired.
@@ -72,12 +73,14 @@ notifications to core 0.
 
 ## Video Memory Map
 
-The video state occupies the first 68,944 bytes of MIA RAM. All offsets are byte
-offsets from the start of MIA RAM.
+The video region occupies the first 68,944 bytes of MIA RAM. All offsets are
+byte offsets from the start of MIA RAM.
 
 | Offset | Size | Region | Purpose |
 | ---: | ---: | --- | --- |
-| `$00000` | 256 B | `CONTROL` | mode, status, frame id, scroll, active banks, flags |
+| `$00000` | 32 B | `LOCAL_CONTROL` | MIA/6502 local control, counters, and diagnostics; never sent to the client |
+| `$00020` | 32 B | `RENDER_CONTROL` | mode, scroll, layer enables, and active banks |
+| `$00040` | 192 B | `CONTROL_RESERVED` | reserved; sent as zero if included in a full refresh |
 | `$00100` | 256 B | `PALETTE` | 16 palette banks, 8 RGB565 colors each |
 | `$00200` | 49,152 B | `CHR` | 8 banks, 256 characters per bank, 24 bytes per character |
 | `$0C200` | 8,000 B | `BG_NT` | 8 background nametables, 40x25 bytes each |
@@ -87,43 +90,64 @@ offsets from the start of MIA RAM.
 | `$10850` | 1,280 B | `OAM` | 256 sprite records, 5 bytes each |
 | `$10D50` | - | end | first byte after video state |
 
-The full client mirror is 68,944 bytes, or 67.3 KiB. A full refresh sends all
-2,155 dirty pages and is appropriate for startup and recovery. Normal updates
-are expected to dirty a much smaller subset of the mirror.
+The syncable client mirror uses absolute MIA video offsets from `$00020` through
+`$10D4F`. A full refresh sends all 2,154 syncable pages and is appropriate for
+startup and recovery. Normal updates are expected to dirty a much smaller
+subset of the mirror.
 
-## Control Block
+## Local Control Page
 
-The control block is little-endian. Fields marked read-only are written by MIA
-and read by the 6502 program.
+Page 0 (`$00000-$0001F`) is local to MIA and the 6502 program. It is never
+marked dirty and is never sent in `FRAME_DATA`. The page is little-endian.
+Fields marked read-only are written by MIA and read by the 6502 program.
+Local counters and diagnostic fields belong here; fields sampled by the client
+renderer belong in the syncable render control page. Video lifecycle level bits
+live in the general `MIA_STATUS` register, and video lifecycle events use the
+normal `IRQ_STATUS`/`IRQ_MASK` registers.
 
 | Offset | Size | Field | Access | Meaning |
 | ---: | ---: | --- | --- | --- |
 | `$00` | 1 | `VIDEO_VERSION` | read-only | video state layout version |
-| `$01` | 1 | `VIDEO_MODE` | read/write | video enable and renderer mode bits |
-| `$02` | 1 | `VIDEO_STATUS` | read-only | update lifecycle bits |
-| `$03` | 1 | `LAYER_ENABLE` | read/write | background, overlay, and sprite enables |
+| `$01` | 3 | reserved | - | zero |
 | `$04` | 4 | `FRAME_ID` | read-only | latest assigned update frame id |
-| `$08` | 2 | `SCROLL_X` | read/write | background scroll X in pixels |
-| `$0A` | 2 | `SCROLL_Y` | read/write | background scroll Y in pixels |
-| `$0C` | 1 | `BG_ACTIVE_SET` | read/write | active 2x2 background set `0-1` |
-| `$0D` | 1 | `BG_SCROLL_MODE` | read/write | background plane mode `0-3` |
-| `$0E` | 1 | `BG_CHR_BANK` | read/write | primary background CHR bank `0-7` |
-| `$0F` | 1 | `BG_ALT_CHR_BANK` | read/write | alternate background CHR bank `0-7` |
-| `$10` | 1 | `OVERLAY_CHR_BANK` | read/write | primary overlay CHR bank `0-7` |
-| `$11` | 1 | `OVERLAY_ALT_CHR_BANK` | read/write | alternate overlay CHR bank `0-7` |
-| `$12` | 1 | `SPRITE_CHR_BANK` | read/write | sprite CHR bank `0-7` |
-| `$13` | 1 | `BACKDROP_PALETTE` | read/write | backdrop palette/color selection |
-| `$14` | 2 | `OAM_ACTIVE_COUNT` | read/write | active sprite record count; `0` means none |
-| `$16` | 1 | `FRAME_FLAGS` | read/write | render flags sampled by the client |
-| `$17` | 1 | reserved | - | zero |
-| `$18` | 1 | `VIDEO_IRQ_ENABLE` | read/write | enabled video event IRQ sources |
-| `$19` | 1 | `VIDEO_EVENT_STATUS` | read/write-1-clear | pending video event bits |
-| `$1A` | 6 | reserved | - | zero |
-| `$20` | 224 | reserved | - | zero |
+| `$08` | 2 | `LAST_RESPONSE_DIRTY_PAGES` | read-only | dirty page count for the latest stable update result |
+| `$0A` | 22 | reserved | - | zero |
 
 `FRAME_ID` starts at `0` for a new session and increments when MIA accepts a
 client update request that produces `FRAME_DATA`. It wraps from `0xFFFFFFFF` to
 `1`; `0` is reserved for "no update applied yet."
+
+`LAST_RESPONSE_DIRTY_PAGES` is updated only at a stable point. For a
+`FRAME_DATA` response, MIA updates it after the first complete response send has
+finished and before setting `MIA_STAT_VIDEO_FRAME_SENT` and
+`IRQ_VIDEO_FRAME_SENT`. Until then, it still contains the previous stable value.
+If a request produces `STATUS(NO_DIRTY_PAGES)`, MIA writes `0` when returning
+that status because no response is being built. A full refresh reports `2,154`.
+Programs can use this field with the video lifecycle flags or events to detect
+large updates and decide whether to slow visible writes until the client catches
+up.
+
+## Render Control Page
+
+Page 1 (`$00020-$0003F`) is syncable render state. The client mirrors this page
+and uses it while rendering.
+
+| Offset | Size | Field | Access | Meaning |
+| ---: | ---: | --- | --- | --- |
+| `$20` | 1 | `VIDEO_MODE` | read/write | video enable and renderer mode bits |
+| `$21` | 1 | `LAYER_ENABLE` | read/write | background, overlay, and sprite enables |
+| `$22` | 2 | `SCROLL_X` | read/write | background scroll X in pixels |
+| `$24` | 2 | `SCROLL_Y` | read/write | background scroll Y in pixels |
+| `$26` | 1 | `BG_ACTIVE_SET` | read/write | active 2x2 background set `0-1` |
+| `$27` | 1 | `BG_SCROLL_MODE` | read/write | background plane mode `0-3` |
+| `$28` | 1 | `BG_CHR_BANK` | read/write | primary background CHR bank `0-7` |
+| `$29` | 1 | `BG_ALT_CHR_BANK` | read/write | alternate background CHR bank `0-7` |
+| `$2A` | 1 | `OVERLAY_CHR_BANK` | read/write | primary overlay CHR bank `0-7` |
+| `$2B` | 1 | `OVERLAY_ALT_CHR_BANK` | read/write | alternate overlay CHR bank `0-7` |
+| `$2C` | 1 | `SPRITE_CHR_BANK` | read/write | sprite CHR bank `0-7` |
+| `$2D` | 1 | `BACKDROP_PALETTE` | read/write | backdrop palette/color selection |
+| `$2E` | 2 | `OAM_ACTIVE_COUNT` | read/write | number of OAM records the renderer evaluates; `0` means none |
+| `$30` | 16 | reserved | - | zero |
 
 `VIDEO_MODE` bits:
 
@@ -132,17 +156,17 @@ client update request that produces `FRAME_DATA`. It wraps from `0xFFFFFFFF` to
 | 0 | `VIDEO_MODE_ENABLE` | video service enabled |
 | 1 | `VIDEO_MODE_ALT_BANKS` | background and overlay alt-bank selection enabled |
 
-`VIDEO_STATUS` bits:
+General `MIA_STATUS` video lifecycle bits:
 
 | Bit | Name | Meaning |
 | ---: | --- | --- |
-| 0 | `VIDEO_FRAME_REQUESTED` | MIA accepted an update request; ACK not received yet |
-| 1 | `VIDEO_FRAME_SENT` | initial response send finished; ACK may still be pending |
+| 5 | `MIA_STAT_VIDEO_FRAME_REQUESTED` | MIA accepted an update request; ACK not received yet |
+| 6 | `MIA_STAT_VIDEO_FRAME_SENT` | initial response send finished; ACK may still be pending |
 
-`VIDEO_STATUS = 0` is the all-clear state. Programs that want clean visible
-updates wait for both bits to clear before changing visible memory. The state
-`VIDEO_FRAME_SENT` without `VIDEO_FRAME_REQUESTED` is reserved and should not be
-emitted.
+Both bits clear is the all-clear video lifecycle state. Programs that want clean
+visible updates wait for both bits to clear in `MIA_STATUS` before changing
+visible memory. The state `MIA_STAT_VIDEO_FRAME_SENT` without
+`MIA_STAT_VIDEO_FRAME_REQUESTED` is reserved and should not be emitted.
 
 `LAYER_ENABLE` bits:
 
@@ -151,6 +175,10 @@ emitted.
 | 0 | background enabled |
 | 1 | overlay enabled |
 | 2 | sprites enabled |
+
+`OAM_ACTIVE_COUNT` is a render limit, not a per-sprite enable flag. The client
+evaluates only OAM records `0` through `OAM_ACTIVE_COUNT - 1`, capped at `256`.
+Records outside that range are ignored even if their `DISABLE` bit is clear.
 
 ## Graphics Model
 
@@ -297,6 +325,10 @@ OAM stores 256 sprite records. Each record is 5 bytes:
 | `3` | `ATTR` | palette and render attributes |
 | `4` | `EXT` | extended coordinates and flags |
 
+The renderer only evaluates the first `OAM_ACTIVE_COUNT` records, capped at
+`256`. OAM records outside that prefix are not rendered and are not tested for
+visibility.
+
 `ATTR` layout:
 
 | Bits | Name | Meaning |
@@ -348,14 +380,12 @@ over exactly their field size, so repeated writes need no address preparation.
 
 | Index | Name | Address Range | Length | Use |
 | ---: | --- | ---: | ---: | --- |
-| `$80` | `VIDX_SCROLL_X` | `$00008-$00009` | 2 | write `SCROLL_X` low, high, repeat |
-| `$81` | `VIDX_SCROLL_Y` | `$0000A-$0000B` | 2 | write `SCROLL_Y` low, high, repeat |
-| `$82` | `VIDX_BG_PLANE` | `$0000C-$0000D` | 2 | write `BG_ACTIVE_SET`, `BG_SCROLL_MODE`, repeat |
-| `$83` | `VIDX_BANK_SELECT` | `$0000E-$00012` | 5 | write bg, bg alt, overlay, overlay alt, sprite banks |
-| `$84` | `VIDX_LAYER_ENABLE` | `$00003-$00003` | 1 | write layer enable flags |
-| `$85` | `VIDX_OAM_COUNT` | `$00014-$00015` | 2 | write active sprite count low, high, repeat |
-| `$86` | `VIDX_FRAME_FLAGS` | `$00016-$00016` | 1 | write render frame flags |
-| `$87` | `VIDX_VIDEO_STATUS` | `$00002-$00002` | 1 | read `VIDEO_STATUS` |
+| `$80` | `VIDX_SCROLL_X` | `$00022-$00023` | 2 | write `SCROLL_X` low, high, repeat |
+| `$81` | `VIDX_SCROLL_Y` | `$00024-$00025` | 2 | write `SCROLL_Y` low, high, repeat |
+| `$82` | `VIDX_BG_PLANE` | `$00026-$00027` | 2 | write `BG_ACTIVE_SET`, `BG_SCROLL_MODE`, repeat |
+| `$83` | `VIDX_BANK_SELECT` | `$00028-$0002C` | 5 | write bg, bg alt, overlay, overlay alt, sprite banks |
+| `$84` | `VIDX_LAYER_ENABLE` | `$00021-$00021` | 1 | write layer enable flags |
+| `$85` | `VIDX_OAM_COUNT` | `$0002E-$0002F` | 2 | write active sprite count low, high, repeat |
 | `$88` | `VIDX_PALETTE` | `$00100-$001FF` | 256 | stream palette bytes |
 | `$89` | `VIDX_OAM` | `$10850-$10D4F` | 1,280 | stream sprite records |
 | `$8A` | `VIDX_OVERLAY_NT` | `$10080-$10467` | 1,000 | stream overlay nametable |
@@ -385,13 +415,15 @@ setup.
 
 MIA tracks dirty video state in 32-byte pages. A write through an indexed window
 into video memory sets the matching dirty page bit in the active dirty map.
-Writes outside the video state range do not create video dirty bits.
+Writes to page 0 or outside the video state range do not create video dirty
+bits.
 
 For the 68,944-byte video state range:
 
 ```text
 ceil(68,944 B / 32 B) = 2,155 pages
-2,155 bits = 270 bytes
+2,154 syncable pages, using absolute page indexes 1-2,154
+2,155 absolute page bits = 270 bytes, with bit 0 reserved
 ```
 
 MIA keeps two 270-byte dirty maps:
@@ -409,6 +441,7 @@ The core 1 write-side operation is bounded:
 
 ```text
 MIA_RAM[offset] = value
+if (offset < 32 || offset >= 68,944) return
 page = offset >> 5
 active_dirty[page >> 3] |= 1 << (page & 7)
 ```
@@ -423,32 +456,40 @@ the pending map while it is retained for repair.
 When the client requests an update and no response is pending, MIA performs a
 small coordinated dirty-map rotation:
 
-1. if the active dirty map is empty, return `STATUS(NO_DIRTY_PAGES)`;
+1. if the active dirty map has no syncable page bits set, return
+   `STATUS(NO_DIRTY_PAGES)`;
 2. rotate the active dirty map into the pending role and the already-clear other
    map into the active role;
-3. assign the next nonzero `FRAME_ID`;
-4. set `VIDEO_FRAME_REQUESTED`;
-5. emit `VIDEO_EVENT_FRAME_REQUEST`.
+3. scan the pending dirty map into a page list;
+4. assign the next nonzero `FRAME_ID`;
+5. set `MIA_STAT_VIDEO_FRAME_REQUESTED`;
+6. set `IRQ_VIDEO_FRAME_REQUEST` in `IRQ_STATUS`.
 
 After the rotation, new 6502 writes are tracked in the active map for the next
 client update. Core 0 reads the pending dirty map, builds fixed page records in
 ascending page order, and sends `FRAME_DATA` chunks.
 
-When the first complete response has been sent, MIA sets `VIDEO_FRAME_SENT` and
-emits `VIDEO_EVENT_FRAME_SENT`. The pending dirty map is still retained because
-the client may request repair.
+If the request returns `STATUS(NO_DIRTY_PAGES)`, MIA writes `0` to
+`LAST_RESPONSE_DIRTY_PAGES` and does not assign a new `FRAME_ID`.
+
+When the first complete response has been sent, MIA updates
+`LAST_RESPONSE_DIRTY_PAGES` from the sent page count, sets
+`MIA_STAT_VIDEO_FRAME_SENT`, and sets `IRQ_VIDEO_FRAME_SENT` in `IRQ_STATUS`.
+The pending dirty map is still retained because the client may request repair.
 
 When the client acknowledges the response, MIA first clears the pending dirty
-map. Only after that cleanup does it clear `VIDEO_FRAME_REQUESTED` and
-`VIDEO_FRAME_SENT`, release the pending response state, update the acknowledged
-client frame id, and emit `VIDEO_EVENT_FRAME_ACKED`. This order guarantees that
-a 6502 program observing the ACK event sees all status bits clear, one active
-map for future writes, and one already-clear map ready for the next accepted
-request.
+map. Only after that cleanup does it clear `MIA_STAT_VIDEO_FRAME_REQUESTED` and
+`MIA_STAT_VIDEO_FRAME_SENT`, release the pending response state, update the
+acknowledged client frame id, and set `IRQ_VIDEO_FRAME_ACKED` in `IRQ_STATUS`.
+This order
+guarantees that a 6502 program observing the ACK event sees all lifecycle status
+bits clear, one active map for future writes, and one already-clear map ready
+for the next accepted request.
 
 If the client requests missing chunks, MIA regenerates those chunks from the
 same pending dirty map and current MIA RAM values. Repair does not change
-`VIDEO_STATUS`; the update remains in the requested/sent lifecycle until ACK.
+the `MIA_STATUS` lifecycle bits; the update remains in the requested/sent
+lifecycle until ACK.
 
 ## Visibility Rules
 
@@ -456,16 +497,17 @@ The pending dirty map freezes the list of pages for a response. It does not
 freeze the byte values in those pages. Core 0 reads live MIA RAM while sending
 or repairing an update.
 
-This means visible writes while `VIDEO_FRAME_REQUESTED` is set can appear in the
-update currently being generated. Visible writes after `VIDEO_FRAME_SENT` but
-before acknowledgement can appear in a later repair of that same update. In both
-cases, the active dirty map also records the write for the next update, so the
-client mirror converges.
+This means visible writes while `MIA_STAT_VIDEO_FRAME_REQUESTED` is set can
+appear in the update currently being generated. Visible writes after
+`MIA_STAT_VIDEO_FRAME_SENT` is set but before acknowledgement can appear in a
+later repair of that same update. In both cases, the active dirty map also
+records the write for the next update, so the client mirror converges.
 
 Programmers choose the timing discipline:
 
 - ignore the flags for lowest latency and possible visual artifacts;
-- avoid visible writes while either `VIDEO_STATUS` bit is set for clean output.
+- avoid visible writes while either `MIA_STATUS` video lifecycle bit is set for
+  clean output.
 
 This is similar to classic video hardware where changing visible memory while it
 is being sampled can produce a transient artifact, but changing inactive or
@@ -473,19 +515,19 @@ off-screen state is safe.
 
 ## Video Events and IRQ
 
-Video events are latched in `VIDEO_EVENT_STATUS`. Writing `1` to a bit clears
-that event bit. `VIDEO_IRQ_ENABLE` selects which latched events assert the MIA
-video IRQ source.
+Video lifecycle events are ordinary pending bits in the general `IRQ_STATUS`
+register. `IRQ_MASK` selects which pending events drive the physical IRQ line.
+Programs clear video event bits through the same `IRQ_STATUS` mechanism used for
+other MIA IRQ sources.
 
 | Bit | Event | Meaning |
 | ---: | --- | --- |
-| 0 | `VIDEO_EVENT_FRAME_REQUEST` | MIA accepted a client update request |
-| 1 | `VIDEO_EVENT_FRAME_SENT` | initial response send completed |
-| 2 | `VIDEO_EVENT_FRAME_ACKED` | client acknowledged the response |
+| 5 | `IRQ_VIDEO_FRAME_REQUEST` | MIA accepted a client update request |
+| 6 | `IRQ_VIDEO_FRAME_SENT` | initial response send completed |
+| 7 | `IRQ_VIDEO_FRAME_ACKED` | client acknowledged the response |
 
-When `(VIDEO_EVENT_STATUS & VIDEO_IRQ_ENABLE) != 0`, MIA sets
-`IRQ_VIDEO_EVENT` (`$0020`) in the normal `IRQ_STATUS` register. The 6502
-enables delivery with the normal `IRQ_MASK` register.
+MIA sets these bits with the normal IRQ helper. If the corresponding bit is set
+in `IRQ_MASK`, MIA also sets `IRQ_TRIGGERED` and drives `IRQB` low.
 
 ## Client Pacing
 
@@ -496,7 +538,7 @@ explicitly retried. Repair timeout is also client-local policy.
 The 6502 program chooses how tightly to synchronize its visible writes:
 
 - free-running programs write whenever they want and tolerate artifacts;
-- ack-paced programs wait for `VIDEO_STATUS = 0`.
+- ack-paced programs wait for the `MIA_STATUS` video lifecycle bits to clear.
 
 If the network is slow, ack-paced programs slow down because the client
 acknowledgement arrives later. This is a programming choice, not hidden firmware
@@ -509,11 +551,11 @@ inside that payload, leaving 480 bytes for response payload. A fixed page record
 is 34 bytes, so every full packet carries 14 page records, or 476 response
 bytes.
 
-A full refresh has one page record for every video page:
+A full refresh has one page record for every syncable video page:
 
 ```text
-2,155 records * 34 bytes = 73,270 bytes
-ceil(2,155 / 14) = 154 chunks at the fixed payload size
+2,154 records * 34 bytes = 73,236 bytes
+ceil(2,154 / 14) = 154 chunks at the fixed payload size
 ```
 
 Normal updates are expected to be much smaller. Bandwidth becomes limiting when

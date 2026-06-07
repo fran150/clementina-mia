@@ -9,24 +9,29 @@ bus, and provides 128 KiB of internal RAM through indexed memory windows. The
 video service uses that adapter role to give Clementina Wi-Fi video output
 without adding a framebuffer or video encoder to the 6502 side.
 
-At a high level, MIA behaves like a remote video processor. A 6502 program
-writes graphics state into MIA RAM: control registers, palettes, character
-graphics, background and overlay nametables, attributes, and sprite records. A
-host client keeps a complete mirror of that video state and renders the final
-320x200 image locally. MIA does not stream raw pixels and does not run a video
-codec.
+At a high level, MIA is the 6502-facing transmitter and state owner for a
+remote video system. A 6502 program writes graphics state into MIA RAM: render
+control registers, palettes, character graphics, background and overlay
+nametables, attributes, and sprite records. A host client keeps a complete
+mirror of the syncable render state and renders the final 320x200 image
+locally. MIA does not stream raw pixels and does not run a video codec.
 
 The video state occupies the first 68,944 bytes of MIA's 128 KiB RAM. That
-region starts with a 256-byte control block, followed by palette data, CHR tile
-graphics, background nametables and attributes, overlay tables, and OAM sprite
-records. The full layout is defined in [video-output.md](video-output.md); this
-protocol treats that memory region as the state mirrored by the client.
+region starts with a 32-byte local control page that is visible to the 6502 but
+is never sent to the client. Syncable render state begins at offset `$00020`
+with the render control page, followed by reserved syncable control space,
+palette data, CHR tile graphics, background nametables and attributes, overlay
+tables, and OAM sprite records. The full layout is defined in
+[video-output.md](video-output.md); this protocol treats offsets `$00020`
+through `$10D4F` as the state mirrored by the client.
 
 For update tracking, MIA divides that 68,944-byte video region into 32-byte
-pages. There are 2,155 video pages, so one dirty map is 2,155 bits, or 270
-bytes. Each bit represents one video page. When the 6502 writes anywhere inside
-the video region, MIA writes the byte to live RAM and sets the matching dirty
-bit. Rewriting another byte in the same page only sets the same bit again.
+absolute pages. There are 2,155 addressable video pages, so one dirty map is
+2,155 bits, or 270 bytes. Page 0 is local control state; bit 0 is reserved and
+ignored. The 2,154 syncable pages use absolute page indexes `1-2154`. When the
+6502 writes inside the syncable render state, MIA writes the byte to live RAM
+and sets the matching dirty bit. Rewriting another byte in the same page only
+sets the same bit again. Writes to page 0 do not create dirty video pages.
 
 MIA maintains two dirty maps in parallel. One is the `active` that keeps track
 of the updates the 6502 is doing. The other is `pending` which is the one being
@@ -36,8 +41,8 @@ The protocol is client-paced. The client requests video updates at the rate it
 can display and receive them.
 
 The 6502 can change any byte in VRAM. MIA does not send anything at write time;
-it only records that the corresponding 32-byte page "is dirty" in the `active`
-map and must eventually be published to the client.
+for syncable video memory, it records that the corresponding 32-byte page "is
+dirty" in the `active` map and must eventually be published to the client.
 
 When the client is ready for another video update, it sends `REQUEST_FRAME`. If
 no response is already pending, MIA accepts the request and rotates the
@@ -58,9 +63,9 @@ pending map to regenerate the requested chunks in the same deterministic page
 order. Only after the client has received and applied the complete update does
 it send `ACK_RESPONSE`. MIA handles that acknowledgement by clearing the pending
 map first (this is needed so when it becomes active doesn't have any pages
-marked as dirty), then publishing the acknowledgement status/events to the 6502
-side. After this cleanup the pending map is ready to become active on the next
-accepted `REQUEST_FRAME`.
+marked as dirty), then publishing the acknowledgement through `MIA_STATUS` and
+`IRQ_STATUS`. After this cleanup the pending map is ready to become active on
+the next accepted `REQUEST_FRAME`.
 
 So the 6502 programmer will observe the following lifecycle in a typical frame
 to frame update:
@@ -104,8 +109,9 @@ network updates or repair delays, but if the network falls behind the displayed
 video can lag or feel jumpy.
 
 The protocol serves one active client at a time. On connection and on
-unrecoverable mismatch, MIA marks every video page dirty. The next accepted
-update rebuilds the client mirror; no separate snapshot packet type is required.
+unrecoverable mismatch, MIA marks every syncable video page dirty. The next
+accepted update rebuilds the client mirror; no separate snapshot packet type is
+required.
 
 ## Transport
 
@@ -131,13 +137,14 @@ Fixed wire constants:
 | --- | ---: | --- |
 | Protocol header | 32 B | every packet starts with this header |
 | Dirty page size | 32 B | last page is padded on the wire |
-| Video page count | 2,155 | `ceil(68,944 / 32)` |
-| Dirty map size | 270 B | `ceil(2,155 / 8)` |
+| Addressable video page count | 2,155 | `ceil(68,944 / 32)` |
+| Syncable video page count | 2,154 | absolute page indexes `1-2154`; page 0 is local only |
+| Dirty map size | 270 B | `ceil(2,155 / 8)`; bit 0 is reserved |
 | Dirty map count | 2 | one active set and one pending response set |
 | Page record size | 34 B | 2-byte page index plus 32 data bytes |
 | Application UDP payload | 512 B | includes the 32-byte protocol header |
 | Response bytes per packet | 476 B | 14 page records at the fixed UDP payload size |
-| Full refresh payload | 73,270 B | all 2,155 page records |
+| Full refresh payload | 73,236 B | all 2,154 syncable page records |
 | Full refresh chunks | 154 | at the fixed UDP payload size |
 
 Client-local policy:
@@ -239,7 +246,7 @@ Startup:
 ```text
 client -> MIA: HELLO
 MIA    -> client: WELCOME(session_id)
-MIA marks every video page dirty
+MIA marks every syncable video page dirty
 client -> MIA: REQUEST_FRAME(last_complete_frame_id = 0)
 MIA    -> client: FRAME_DATA chunks for full refresh
 client -> MIA: ACK_RESPONSE(frame_id)
@@ -279,7 +286,8 @@ handles the new request normally.
 
 Version 1 does not support session resume. Any valid `HELLO` resets the video
 session: MIA discards pending response state if any exists, assigns a fresh
-nonzero `session_id`, marks every video page dirty, and returns `WELCOME`.
+nonzero `session_id`, marks every syncable video page dirty, and returns
+`WELCOME`.
 Stale packets from an older session id are ignored.
 
 ## Client-To-MIA Packets
@@ -301,8 +309,8 @@ Client-to-MIA packets are control and reliability messages:
 
 `HELLO` starts or resets the active video session. It has no payload. The client
 sends it with `session_id = 0`. Any valid `HELLO` causes MIA to discard pending
-response state, assign a fresh nonzero `session_id`, mark every video page
-dirty, and reply with `WELCOME`.
+response state, assign a fresh nonzero `session_id`, mark every syncable video
+page dirty, and reply with `WELCOME`.
 
 ### REQUEST_FRAME
 
@@ -356,9 +364,9 @@ and updates its local mirror.
 `WELCOME` accepts a client session. It has no payload. The assigned session token
 is carried in the header `session_id` field.
 
-After `WELCOME`, every video page is dirty. The next accepted `REQUEST_FRAME`
-produces a normal `FRAME_DATA` response whose pending dirty map contains every
-video page.
+After `WELCOME`, every syncable video page is dirty. The next accepted
+`REQUEST_FRAME` produces a normal `FRAME_DATA` response whose pending dirty map
+contains every syncable video page.
 
 ### FRAME_DATA
 
@@ -373,7 +381,7 @@ Each page record is fixed-size:
 
 | Offset | Size | Field | Description |
 | ---: | ---: | --- | --- |
-| 0 | 2 | `page_index` | video page index, `0-2154` |
+| 0 | 2 | `page_index` | syncable video page index, `1-2154`; page 0 is never sent |
 | 2 | 32 | `page_data` | bytes read from MIA RAM for that page |
 
 The video address for a page record is:
@@ -410,9 +418,9 @@ last_record  = min(first_record + records_per_chunk, dirty_page_count) - 1
 ```
 
 The client validates that page indexes are strictly increasing across the
-complete response, within range, and present only once. The client applies a
-response only after it has received every chunk for that response. It then sends
-`ACK_RESPONSE`.
+complete response, within the syncable range, and present only once. Page index
+0 is malformed. The client applies a response only after it has received every
+chunk for that response. It then sends `ACK_RESPONSE`.
 
 ### STATUS
 
@@ -439,7 +447,7 @@ Status codes:
 
 | Code | Name | Meaning |
 | ---: | --- | --- |
-| `0` | `NO_DIRTY_PAGES` | request accepted but no video pages were dirty |
+| `0` | `NO_DIRTY_PAGES` | request accepted but no syncable video pages were dirty |
 | `1` | `PROTOCOL_ERROR` | malformed packet or impossible state |
 
 ## Update Semantics
@@ -449,27 +457,27 @@ memory; the client side asks MIA to publish those changes. Dirty maps are the
 bridge between those two timelines: a write records that a 32-byte page changed,
 and a client request turns the accumulated dirty pages into a response.
 
-MIA exposes this lifecycle to the 6502 through two status bits and three
-IRQ-capable events in the video control block. `VIDEO_STATUS = 0` means all
-clear: no update is currently retained for send, repair, or acknowledgement.
-`VIDEO_FRAME_REQUESTED` is set after MIA accepts a `REQUEST_FRAME` and remains
-set until the matching ACK. `VIDEO_FRAME_SENT` is set after the initial send
-finishes and also remains set until ACK. `VIDEO_EVENT_FRAME_REQUEST`,
-`VIDEO_EVENT_FRAME_SENT`, and `VIDEO_EVENT_FRAME_ACKED` are latched
-write-1-clear events. When any latched video event is also enabled in
-`VIDEO_IRQ_ENABLE`, MIA sets the aggregate `IRQ_VIDEO_EVENT` bit in the normal
-`IRQ_STATUS` register. The existing `IRQ_MASK`/`IRQ_STATUS` mechanism then
-decides whether the 6502 IRQ line is asserted. The exact control-block layout is
-defined in [video-output.md](video-output.md).
+MIA exposes this lifecycle to the 6502 through two level bits in the general
+`MIA_STATUS` register and three IRQ-capable events in the local video control
+page. When `MIA_STAT_VIDEO_FRAME_REQUESTED` and `MIA_STAT_VIDEO_FRAME_SENT` are
+both clear, no update is currently retained for send, repair, or
+acknowledgement. `MIA_STAT_VIDEO_FRAME_REQUESTED` is set after MIA accepts a
+`REQUEST_FRAME` and remains set until the matching ACK.
+`MIA_STAT_VIDEO_FRAME_SENT` is set after the initial send finishes and also
+remains set until ACK. `IRQ_VIDEO_FRAME_REQUEST`, `IRQ_VIDEO_FRAME_SENT`, and
+`IRQ_VIDEO_FRAME_ACKED` are latched event bits in the normal `IRQ_STATUS`
+register. The existing `IRQ_MASK`/`IRQ_STATUS` mechanism decides which pending
+events assert the 6502 IRQ line. The exact control-page layout is defined in
+[video-output.md](video-output.md).
 
 | Event | Meaning | Dirty-map effect | Programmer-visible effect |
 | --- | --- | --- | --- |
-| 6502 writes video memory | live MIA RAM changed | set the page bit in the active map | no packet is sent yet |
-| client sends `REQUEST_FRAME` with no pending response | client asks for the next update | active map becomes pending; already-clear other map becomes active | set `VIDEO_FRAME_REQUESTED`; latch `VIDEO_EVENT_FRAME_REQUEST` |
-| first `FRAME_DATA` send completes | every chunk was sent once | pending map is retained for possible repair | set `VIDEO_FRAME_SENT`; latch `VIDEO_EVENT_FRAME_SENT` |
+| 6502 writes syncable video memory | live MIA RAM changed | set the page bit in the active map | no packet is sent yet |
+| client sends `REQUEST_FRAME` with no pending response | client asks for the next update | active map becomes pending; already-clear other map becomes active | set `MIA_STAT_VIDEO_FRAME_REQUESTED`; set `IRQ_VIDEO_FRAME_REQUEST` |
+| first `FRAME_DATA` send completes | every chunk was sent once | pending map is retained for possible repair | set `MIA_STAT_VIDEO_FRAME_SENT`; set `IRQ_VIDEO_FRAME_SENT` |
 | client sends `NACK_CHUNKS` | some chunks were missed | requested chunks are regenerated from the pending map | status bits stay unchanged |
-| client sends `ACK_RESPONSE` | client applied the complete update | pending map is cleared before it is released | clear `VIDEO_FRAME_REQUESTED` and `VIDEO_FRAME_SENT`; latch `VIDEO_EVENT_FRAME_ACKED` after cleanup |
-| reconnect or protocol-error restart | client mirror must be rebuilt | `HELLO` marks all video page bits dirty | next update is a full refresh |
+| client sends `ACK_RESPONSE` | client applied the complete update | pending map is cleared before it is released | clear `MIA_STAT_VIDEO_FRAME_REQUESTED` and `MIA_STAT_VIDEO_FRAME_SENT`; set `IRQ_VIDEO_FRAME_ACKED` after cleanup |
+| reconnect or protocol-error restart | client mirror must be rebuilt | `HELLO` marks all syncable video page bits dirty | next update is a full refresh |
 
 MIA tracks two dirty-map roles:
 
@@ -479,8 +487,8 @@ MIA tracks two dirty-map roles:
 | pending | dirty-page list for the current response, retained for repair |
 
 Each write through an indexed window into the video memory range sets one bit in
-the active dirty map. Rewriting the same page sets the same bit again; MIA keeps
-only one dirty record per page per response.
+the active dirty map, except writes to page 0. Rewriting the same syncable page
+sets the same bit again; MIA keeps only one dirty record per page per response.
 
 When no response is pending, only the active map can contain unsent page bits.
 The other map is clear and ready for the next accepted request. Accepting a
@@ -490,7 +498,8 @@ writes.
 
 When MIA accepts a `REQUEST_FRAME`, the dirty maps move through these steps:
 
-1. if the active dirty map is empty, MIA returns `STATUS(NO_DIRTY_PAGES)`;
+1. if the active dirty map has no syncable page bits set, MIA returns
+   `STATUS(NO_DIRTY_PAGES)`;
 2. otherwise, MIA rotates the active map into the pending role and the
    already-clear other map into the active role;
 3. MIA assigns a new nonzero `frame_id`;
@@ -503,8 +512,8 @@ time, `NACK_CHUNKS` and same-request retries regenerate chunks from the same
 pending dirty map and the same deterministic page order.
 
 When `ACK_RESPONSE` is accepted, MIA clears the pending map before clearing
-`VIDEO_FRAME_REQUESTED`, clearing `VIDEO_FRAME_SENT`, latching
-`VIDEO_EVENT_FRAME_ACKED`, or triggering the video IRQ. A 6502 program that sees
+`MIA_STAT_VIDEO_FRAME_REQUESTED`, clearing `MIA_STAT_VIDEO_FRAME_SENT`, setting
+`IRQ_VIDEO_FRAME_ACKED`, or triggering the video IRQ. A 6502 program that sees
 the acknowledgement event therefore sees a coherent all-clear state: new writes
 are still tracked in the active map, there is no pending response, and the other
 map has already been cleared for the next request.
@@ -566,9 +575,9 @@ When a response is pending:
 
 After `STATUS(PROTOCOL_ERROR)`, the client discards the current video session and
 sends `HELLO`. MIA handles that `HELLO` as a normal session reset: it discards
-pending response state, assigns a fresh `session_id`, marks every video page
-dirty, and returns `WELCOME`. The next valid `REQUEST_FRAME` produces a full
-refresh.
+pending response state, assigns a fresh `session_id`, marks every syncable video
+page dirty, and returns `WELCOME`. The next valid `REQUEST_FRAME` produces a
+full refresh.
 
 ## Repairs
 
@@ -605,8 +614,9 @@ invalidates the current video session, and waits for the client to restart with
 ## Full Refresh
 
 A full refresh is a normal `FRAME_DATA` response whose pending dirty map has
-every video page bit set. MIA creates one by setting every video page bit in the
-active dirty map before the next accepted `REQUEST_FRAME`.
+every syncable video page bit set. MIA creates one by setting page bits `1`
+through `2154` in the active dirty map before the next accepted
+`REQUEST_FRAME`.
 
 It is used:
 
@@ -631,7 +641,7 @@ Control packets have fixed payload lengths except `NACK_CHUNKS`:
 | `REQUEST_FRAME` | 4 |
 | `ACK_RESPONSE` | 0 |
 | `NACK_CHUNKS` | `4 + 2 * missing_count` |
-| `STATUS` | 16 |
+| `STATUS` | 2 |
 
 `FRAME_DATA` `payload_len` must be a nonzero multiple of 34. It must contain no
 more than 14 page records. `chunk_count` must be nonzero,
@@ -648,8 +658,8 @@ A receiver rejects a packet or response as malformed when any of these are true:
 - `session_id` is missing or wrong for packets that require an active session;
 - a packet that must have no payload has a nonzero `payload_len`;
 - a multi-byte field is out of range;
-- `FRAME_DATA` page indexes are out of range, duplicated, or not strictly
-  increasing across the complete response;
+- `FRAME_DATA` page indexes are page 0, out of range, duplicated, or not
+  strictly increasing across the complete response;
 - `FRAME_DATA` chunk metadata disagrees across chunks for the same response;
 - a control packet uses a nonzero unused header field that must be zero.
 
