@@ -49,11 +49,11 @@ MIA occupies `$FFE0-$FFFF`.
 | Register | Address | Use |
 | --- | ---: | --- |
 | `IDXA_PORT` | `$FFE0` | read/write through selected index A |
-| `IDXA_SELECTOR` | `$FFE1` | select index descriptor for window A |
-| `CFG_SELECTOR` | `$FFE2` | select configuration field |
+| `IDXA_SELECT` | `$FFE1` | select index descriptor for window A |
+| `CFG_SELECT` | `$FFE2` | select configuration field |
 | `CFG_PORT` | `$FFE3` | read/write selected configuration field |
 | `IDXB_PORT` | `$FFE4` | read/write through selected index B |
-| `IDXB_SELECTOR` | `$FFE5` | select index descriptor for window B |
+| `IDXB_SELECT` | `$FFE5` | select index descriptor for window B |
 | `CMD_PARAM1` | `$FFE6` | command parameter 1 |
 | `CMD_PARAM2` | `$FFE7` | command parameter 2 |
 | `CMD_PARAM3` | `$FFE8` | command parameter 3 |
@@ -67,6 +67,11 @@ Video lifecycle status lives in the general `MIA_STATUS` register. Use bits
 `MIA_STAT_VIDEO_FRAME_REQUESTED` and `MIA_STAT_VIDEO_FRAME_SENT` to decide
 whether an update is being built, sent, repaired, or held for ACK.
 
+| Bit | Name | Meaning |
+| ---: | --- | --- |
+| 5 | `MIA_STAT_VIDEO_FRAME_REQUESTED` | MIA accepted an update request; ACK not received yet |
+| 6 | `MIA_STAT_VIDEO_FRAME_SENT` | initial response send finished; ACK may still be pending |
+
 Video lifecycle events use normal `IRQ_STATUS` bits. Enable the corresponding
 bits in `IRQ_MASK` to let selected video events drive the 6502 IRQ line.
 
@@ -76,7 +81,7 @@ Video commands use the normal command registers.
 
 | Command | Id | Purpose |
 | --- | ---: | --- |
-| `VIDEO_ENABLE` | `$40` | initialize video state and fast video indexes |
+| `VIDEO_ENABLE` | `$40` | initialize video state and video indexes |
 | `VIDEO_FORCE_FULL_REFRESH` | `$42` | mark all syncable video pages dirty for the next client update |
 | `VIDEO_SET_MODE` | `$43` | update `VIDEO_MODE` bits |
 
@@ -127,16 +132,65 @@ Important render fields:
 | ---: | --- | --- |
 | `$20` | `VIDEO_MODE` | video enable and renderer mode bits |
 | `$21` | `LAYER_ENABLE` | background, overlay, sprite enables |
-| `$22-$23` | `SCROLL_X` | background scroll X |
-| `$24-$25` | `SCROLL_Y` | background scroll Y |
-| `$26` | `BG_ACTIVE_SET` | active 2x2 background set |
-| `$27` | `BG_SCROLL_MODE` | background plane mode |
+| `$22` | `BG_VIEWPORT_MODE` | selects viewport mapping within the active set |
+| `$23` | `BG_ACTIVE_SET` | selects background set 0 or 1; explained below |
+| `$24-$25` | `SCROLL_X` | viewport X position in the active background plane |
+| `$26-$27` | `SCROLL_Y` | viewport Y position in the active background plane |
 | `$28-$2C` | bank selectors | bg, bg alt, overlay, overlay alt, sprite |
-| `$2E-$2F` | `OAM_ACTIVE_COUNT` | number of OAM records the renderer evaluates |
+| `$2D` | `CHR_1BPP_MASK` | CHR banks decoded as 1bpp instead of 3bpp |
+| `$2E` | `CHR_1BPP_PLANES` | 1bpp plane selectors for background, sprite, and overlay |
+| `$2F` | `BACKDROP_COLOR` | palette bank and color index used for the backdrop |
+| `$30` | `OAM_LAST_INDEX` | last OAM record index evaluated when sprites are enabled |
 
-`OAM_ACTIVE_COUNT` limits sprite evaluation to the first N OAM records. Any
-record outside that range is ignored even if its per-sprite `DISABLE` bit is
-clear.
+`CHR_1BPP_MASK` lets a CHR bank act as three independent monochrome tile tables.
+When a selected bank's bit is set, the client decodes only one plane from that
+bank and produces color index `0` or `1`. `CHR_1BPP_PLANES` selects which plane
+background, sprites, and overlay use when their selected bank is in 1bpp mode.
+
+`CHR_1BPP_PLANES` layout:
+
+| Bits | Meaning |
+| ---: | --- |
+| `0-1` | background 1bpp plane selector `0-2`; `3` reserved |
+| `2-3` | sprite 1bpp plane selector `0-2`; `3` reserved |
+| `4-5` | overlay 1bpp plane selector `0-2`; `3` reserved |
+| `6-7` | reserved, write zero |
+
+`BACKDROP_COLOR` uses bits `0-2` as the color index and bits `3-6` as the
+palette bank. Bit `7` is reserved and should be written as zero.
+
+`BG_ACTIVE_SET` chooses which 2x2 background table set is rendered: set `0`
+uses tables `0-3`, and set `1` uses tables `4-7`. The inactive set is not
+rendered, so it can be used as staging space for a later room, menu, page flip,
+or transition.
+
+`BG_VIEWPORT_MODE` values:
+
+| Value | Background plane |
+| ---: | --- |
+| `0` | single 40x25 viewport using the top-left table |
+| `1` | horizontal 80x25 plane using `T0 T1` |
+| `2` | vertical 40x50 plane using `T0` above `T2` |
+| `3` | horizontal 160x25 plane using `T0 T1 T2 T3` |
+| `4` | vertical 40x100 plane using `T0`, `T1`, `T2`, `T3` |
+| `5` | four-way 80x50 plane using `T0 T1` above `T2 T3` |
+
+`T0-T3` refer to the tables in the active set. In active set `0`, they are
+tables `0-3`; in active set `1`, they are tables `4-7`. Viewport coordinates
+wrap inside the selected plane: horizontal modes wrap from the last table back
+to `T0`, vertical modes wrap from the last table back to `T0`, and mode `5`
+wraps across the 2x2 plane in both directions.
+
+`SCROLL_X` and `SCROLL_Y` select the viewport's top-left pixel within that
+plane. In horizontal mode, `SCROLL_X` selects both the nametable column and the
+pixel inside that column that appears at the left edge of the screen.
+
+`OAM_LAST_INDEX` is a render limit, not a per-sprite enable flag. When sprites
+are enabled in `LAYER_ENABLE`, the client evaluates OAM records `0` through
+`OAM_LAST_INDEX`, inclusive. To render no sprites, clear the sprite bit in
+`LAYER_ENABLE`. Records after `OAM_LAST_INDEX` are ignored even if their
+per-sprite `DISABLE` bit is clear. Sprites outside this range are not drawn
+even if their OAM record would otherwise mark them as visible.
 
 `FRAME_ID` starts at `0` for a session, increments when MIA accepts a client
 request that produces an update, and wraps from `0xFFFFFFFF` to `1`.
@@ -149,13 +203,6 @@ sending that response, the field still contains the previous stable value. Use
 it with `MIA_STATUS` or video IRQ events to notice when Wi-Fi or a full refresh
 has made updates unusually large.
 
-General `MIA_STATUS` video lifecycle bits:
-
-| Bit | Name | Meaning |
-| ---: | --- | --- |
-| 5 | `MIA_STAT_VIDEO_FRAME_REQUESTED` | MIA accepted an update request; ACK not received yet |
-| 6 | `MIA_STAT_VIDEO_FRAME_SENT` | initial response send finished; ACK may still be pending |
-
 The clean-output rule is:
 
 ```text
@@ -165,43 +212,69 @@ do not change visible memory while either MIA_STATUS video lifecycle bit is set
 That waits until the client has acknowledged the update, so later repair chunks
 cannot pick up newer visible values.
 
-## Fast Video Indexes
+## Video Indexes
 
-Fast video indexes are preconfigured by `VIDEO_ENABLE`. Select one index, then
-stream bytes through `IDXA_PORT` or `IDXB_PORT`. Each index steps after a write
-and wraps at its limit.
+MIA RAM is accessed through index descriptors. An index descriptor names a RAM
+address range and defines how the address steps and wraps after each read or
+write. The 6502 has two active index windows:
 
-| Index | Name | Length | Use |
-| ---: | --- | ---: | --- |
-| `$80` | `VIDX_SCROLL_X` | 2 | write `SCROLL_X` low, high, repeat |
-| `$81` | `VIDX_SCROLL_Y` | 2 | write `SCROLL_Y` low, high, repeat |
-| `$82` | `VIDX_BG_PLANE` | 2 | write active background set and scroll mode |
-| `$83` | `VIDX_BANK_SELECT` | 5 | write bg, bg alt, overlay, overlay alt, sprite banks |
-| `$84` | `VIDX_LAYER_ENABLE` | 1 | write layer enable flags |
-| `$85` | `VIDX_OAM_COUNT` | 2 | write active sprite count low, high, repeat |
-| `$88` | `VIDX_PALETTE` | 256 | stream palette bytes |
-| `$89` | `VIDX_OAM` | 1,280 | stream sprite records |
-| `$8A` | `VIDX_OVERLAY_NT` | 1,000 | stream overlay nametable |
-| `$8B` | `VIDX_OVERLAY_ATTR` | 1,000 | stream overlay attributes |
-| `$90-$97` | `VIDX_CHR_BANK_0-7` | 6,144 | stream one CHR bank |
-| `$A0-$A7` | `VIDX_BG_NT_0-7` | 1,000 | stream one background nametable |
-| `$A8-$AF` | `VIDX_BG_ATTR_0-7` | 1,000 | stream one background attribute table |
+| Window | Select Register | Data Port |
+| --- | ---: | ---: |
+| A | `IDXA_SELECT` (`$FFE1`) | `IDXA_PORT` (`$FFE0`) |
+| B | `IDXB_SELECT` (`$FFE5`) | `IDXB_PORT` (`$FFE4`) |
 
-This is the fast path for frequently changed fields. You do not configure an
-address, limit, step, or wrap mode for these indexes; MIA has already done it.
+To use an index, write its id to one of the select registers, then stream bytes
+through the matching data port. The selected descriptor decides where those
+bytes land in MIA RAM and when the address wraps.
+
+Video indexes are preconfigured by `VIDEO_ENABLE`. They cover common video
+fields and buffers, so programs do not need to configure address, limit, step,
+or wrap behavior for normal video output. Each video index below steps forward
+after a read or write and wraps at its limit.
+
+| Index | Name | Address Range | Length | Use |
+| ---: | --- | ---: | ---: | --- |
+| `$70` | `VIDX_LOCAL_CONTROL` | `$00000-$0001F` | 32 | read local control page; never syncs |
+| `$71` | `VIDX_FRAME_ID` | `$00004-$00007` | 4 | read latest frame id |
+| `$72` | `VIDX_LAST_RESPONSE_DIRTY_PAGES` | `$00008-$00009` | 2 | read latest stable dirty-page count |
+| `$73-$7F` | reserved local-control indexes | - | - | reserved |
+| `$80` | `VIDX_RENDER_CONTROL` | `$00020-$0003F` | 32 | stream render control page |
+| `$81` | `VIDX_LAYER_ENABLE` | `$00021-$00021` | 1 | write layer enable flags |
+| `$82` | `VIDX_BG_VIEWPORT` | `$00022-$00023` | 2 | write viewport mode and active background set |
+| `$83` | `VIDX_SCROLL_X` | `$00024-$00025` | 2 | write viewport X low, high, repeat |
+| `$84` | `VIDX_SCROLL_Y` | `$00026-$00027` | 2 | write viewport Y low, high, repeat |
+| `$85` | `VIDX_BANK_SELECT` | `$00028-$0002C` | 5 | write bg, bg alt, overlay, overlay alt, sprite banks |
+| `$86` | `VIDX_CHR_1BPP` | `$0002D-$0002E` | 2 | write `CHR_1BPP_MASK`, `CHR_1BPP_PLANES`, repeat |
+| `$87` | `VIDX_BACKDROP_COLOR` | `$0002F-$0002F` | 1 | write backdrop color selector |
+| `$88` | `VIDX_OAM_LAST` | `$00030-$00030` | 1 | write last evaluated OAM index |
+| `$89-$8F` | reserved render-control indexes | - | - | reserved |
+| `$90-$9F` | `VIDX_PALETTE_0-15` | `$00100 + n * $10` | 16 | stream one palette bank |
+| `$A0-$A7` | `VIDX_CHR_BANK_0-7` | bank base | 6,144 | stream one CHR bank |
+| `$A8-$AF` | `VIDX_BG_NT_0-7` | table base | 1,000 | stream one background nametable |
+| `$B0-$B7` | `VIDX_BG_ATTR_0-7` | table base | 1,000 | stream one background attribute table |
+| `$B8` | `VIDX_OVERLAY_NT` | `$10080-$10467` | 1,000 | stream overlay nametable |
+| `$B9` | `VIDX_OVERLAY_ATTR` | `$10468-$1084F` | 1,000 | stream overlay attributes |
+| `$BA-$BF` | reserved video indexes | - | - | reserved |
+| `$C0-$DF` | `VIDX_OAM_SPRITE_0-31` | `$10850 + n * 5` | 5 | stream one OAM sprite record |
+| `$E0-$FF` | reserved video indexes | - | - | reserved |
+
+These indexes are the normal path for frequently changed video fields. The
+default OAM sprite indexes cover the first 32 sprite records. Programs that
+need bulk OAM writes or records beyond 31 can use the general-purpose index
+configuration path.
 
 ## Two-Byte Register Writes
 
 The wrapped indexes make 16-bit video registers cheap to update.
 
 ```asm
-VIDX_SCROLL_X = $80
+VIDX_SCROLL_X = $83
 IDXA_PORT     = $FFE0
-IDXA_SELECTOR = $FFE1
+IDXA_SELECT   = $FFE1
 
 select_scroll_x:
     lda #VIDX_SCROLL_X
-    sta IDXA_SELECTOR
+    sta IDXA_SELECT
     rts
 
 write_scroll_x:
@@ -218,24 +291,28 @@ write the same two bytes again without reselecting or reconfiguring the index.
 Use both windows for common paired updates:
 
 ```asm
-VIDX_SCROLL_X = $80
-VIDX_SCROLL_Y = $81
+VIDX_SCROLL_X = $83
+VIDX_SCROLL_Y = $84
+IDXA_PORT     = $FFE0
+IDXA_SELECT   = $FFE1
+IDXB_PORT     = $FFE4
+IDXB_SELECT   = $FFE5
 
     lda #VIDX_SCROLL_X
-    sta $FFE1           ; index A = scroll X
+    sta IDXA_SELECT     ; index window A = scroll X
     lda #VIDX_SCROLL_Y
-    sta $FFE5           ; index B = scroll Y
+    sta IDXB_SELECT     ; index window B = scroll Y
 
 update_scroll:
     lda scroll_x
-    sta $FFE0
+    sta IDXA_PORT
     lda scroll_x+1
-    sta $FFE0
+    sta IDXA_PORT
 
     lda scroll_y
-    sta $FFE4
+    sta IDXB_PORT
     lda scroll_y+1
-    sta $FFE4
+    sta IDXB_PORT
     rts
 ```
 
@@ -244,11 +321,11 @@ update_scroll:
 A program normally initializes video in this order:
 
 1. issue `VIDEO_ENABLE`,
-2. load palettes through `VIDX_PALETTE`,
+2. load palettes through `VIDX_PALETTE_0-15`,
 3. load CHR banks through `VIDX_CHR_BANK_0-7`,
 4. fill background nametables and attributes,
 5. fill overlay nametable and attributes,
-6. initialize OAM,
+6. initialize OAM sprite records,
 7. set scroll, layer flags, and active banks,
 8. enter the main loop.
 

@@ -40,17 +40,17 @@
   const CTRL_FRAME_ID = LOCAL_CONTROL + 0x04;
   const CTRL_VIDEO_MODE = RENDER_CONTROL + 0x00;
   const CTRL_LAYER_ENABLE = RENDER_CONTROL + 0x01;
-  const CTRL_SCROLL_X = RENDER_CONTROL + 0x02;
-  const CTRL_SCROLL_Y = RENDER_CONTROL + 0x04;
-  const CTRL_BG_ACTIVE_SET = RENDER_CONTROL + 0x06;
-  const CTRL_BG_SCROLL_MODE = RENDER_CONTROL + 0x07;
+  const CTRL_BG_VIEWPORT_MODE = RENDER_CONTROL + 0x02;
+  const CTRL_BG_ACTIVE_SET = RENDER_CONTROL + 0x03;
+  const CTRL_SCROLL_X = RENDER_CONTROL + 0x04;
+  const CTRL_SCROLL_Y = RENDER_CONTROL + 0x06;
   const CTRL_BG_CHR_BANK = RENDER_CONTROL + 0x08;
   const CTRL_BG_ALT_CHR_BANK = RENDER_CONTROL + 0x09;
   const CTRL_OVERLAY_CHR_BANK = RENDER_CONTROL + 0x0a;
   const CTRL_OVERLAY_ALT_CHR_BANK = RENDER_CONTROL + 0x0b;
   const CTRL_SPRITE_CHR_BANK = RENDER_CONTROL + 0x0c;
-  const CTRL_BACKDROP = RENDER_CONTROL + 0x0d;
-  const CTRL_OAM_COUNT = RENDER_CONTROL + 0x0e;
+  const CTRL_BACKDROP_COLOR = RENDER_CONTROL + 0x0f;
+  const CTRL_OAM_LAST_INDEX = RENDER_CONTROL + 0x10;
 
   const STATUS_NO_DIRTY_PAGES = "NO_DIRTY_PAGES";
   const STATUS_PROTOCOL_ERROR = "PROTOCOL_ERROR";
@@ -743,15 +743,15 @@
     cpuWrite(CTRL_VIDEO_VERSION, 1);
     cpuWrite(CTRL_VIDEO_MODE, 1);
     cpuWrite(CTRL_LAYER_ENABLE, 0x07);
+    cpuWrite(CTRL_BG_VIEWPORT_MODE, 5);
     cpuWrite(CTRL_BG_ACTIVE_SET, 0);
-    cpuWrite(CTRL_BG_SCROLL_MODE, 3);
     cpuWrite(CTRL_BG_CHR_BANK, 0);
     cpuWrite(CTRL_BG_ALT_CHR_BANK, 3);
     cpuWrite(CTRL_OVERLAY_CHR_BANK, 1);
     cpuWrite(CTRL_OVERLAY_ALT_CHR_BANK, 4);
     cpuWrite(CTRL_SPRITE_CHR_BANK, 2);
-    cpuWrite(CTRL_BACKDROP, 0);
-    writeU16(CTRL_OAM_COUNT, spriteMeta.length);
+    cpuWrite(CTRL_BACKDROP_COLOR, 0);
+    cpuWrite(CTRL_OAM_LAST_INDEX, Math.min(255, Math.max(0, spriteMeta.length - 1)));
 
     loadPalettes();
     loadCharacterBanks();
@@ -1042,7 +1042,8 @@
   }
 
   function drawFrame(memory, rgba) {
-    const backdrop = readPaletteColor(memory, 0, memory[CTRL_BACKDROP] & 0x07);
+    const backdropColor = memory[CTRL_BACKDROP_COLOR];
+    const backdrop = readPaletteColor(memory, (backdropColor >> 3) & 0x0f, backdropColor & 0x07);
     for (let i = 0; i < rgba.length; i += 4) {
       rgba[i] = backdrop[0];
       rgba[i + 1] = backdrop[1];
@@ -1061,6 +1062,8 @@
   }
 
   function drawBackground(memory, rgba) {
+    const viewportMode = memory[CTRL_BG_VIEWPORT_MODE];
+    const activeSet = memory[CTRL_BG_ACTIVE_SET] & 0x01;
     const scrollX = readU16(memory, CTRL_SCROLL_X);
     const scrollY = readU16(memory, CTRL_SCROLL_Y);
     const coarseX = Math.floor(scrollX / TILE_SIZE);
@@ -1071,10 +1074,8 @@
     const rows = Math.ceil((HEIGHT + fineY) / TILE_SIZE) + 1;
 
     for (let ty = 0; ty < rows; ty += 1) {
-      const worldRow = positiveMod(coarseY + ty, WORLD_ROWS);
       for (let tx = 0; tx < cols; tx += 1) {
-        const worldCol = positiveMod(coarseX + tx, WORLD_COLS);
-        const { table, local } = bgTableAndLocal(worldCol, worldRow);
+        const { table, local } = bgTableAndLocal(viewportMode, activeSet, coarseX + tx, coarseY + ty);
         const tile = memory[BG_NT + table * 1000 + local];
         const attr = memory[BG_ATTR + table * 1000 + local];
         const bank = attr & 0x80 ? memory[CTRL_BG_ALT_CHR_BANK] : memory[CTRL_BG_CHR_BANK];
@@ -1096,9 +1097,9 @@
   }
 
   function drawSprites(memory, rgba) {
-    const count = Math.min(readU16(memory, CTRL_OAM_COUNT), 256);
+    const lastIndex = memory[CTRL_OAM_LAST_INDEX];
     const bank = memory[CTRL_SPRITE_CHR_BANK];
-    for (let i = 0; i < count; i += 1) {
+    for (let i = 0; i <= lastIndex; i += 1) {
       const base = OAM + i * 5;
       const ext = memory[base + 4];
       if (ext & 0x08) {
@@ -1160,11 +1161,37 @@
     ];
   }
 
-  function bgTableAndLocal(col, row) {
-    const table = (row >= 25 ? 2 : 0) + (col >= 40 ? 1 : 0);
+  function bgTableAndLocal(mode, activeSet, col, row) {
+    const normalizedMode = mode <= 5 ? mode : 0;
+    const plane = [
+      { cols: 40, rows: 25 },
+      { cols: 80, rows: 25 },
+      { cols: 40, rows: 50 },
+      { cols: 160, rows: 25 },
+      { cols: 40, rows: 100 },
+      { cols: 80, rows: 50 },
+    ][normalizedMode];
+    const wrappedCol = positiveMod(col, plane.cols);
+    const wrappedRow = positiveMod(row, plane.rows);
+
+    let table;
+    if (normalizedMode === 1) {
+      table = Math.floor(wrappedCol / 40);
+    } else if (normalizedMode === 2) {
+      table = wrappedRow >= 25 ? 2 : 0;
+    } else if (normalizedMode === 3) {
+      table = Math.floor(wrappedCol / 40);
+    } else if (normalizedMode === 4) {
+      table = Math.floor(wrappedRow / 25);
+    } else if (normalizedMode === 5) {
+      table = (wrappedRow >= 25 ? 2 : 0) + (wrappedCol >= 40 ? 1 : 0);
+    } else {
+      table = 0;
+    }
+
     return {
-      table,
-      local: (row % 25) * 40 + (col % 40),
+      table: activeSet * 4 + table,
+      local: (wrappedRow % 25) * 40 + (wrappedCol % 40),
     };
   }
 

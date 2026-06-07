@@ -103,12 +103,15 @@ Page 1 (`$00020-$0003F`) is syncable render control state:
 | ---: | --- |
 | `$20` | `VIDEO_MODE` |
 | `$21` | `LAYER_ENABLE` |
-| `$22-$23` | `SCROLL_X` |
-| `$24-$25` | `SCROLL_Y` |
-| `$26` | `BG_ACTIVE_SET` |
-| `$27` | `BG_SCROLL_MODE` |
+| `$22` | `BG_VIEWPORT_MODE` |
+| `$23` | `BG_ACTIVE_SET` |
+| `$24-$25` | `SCROLL_X` |
+| `$26-$27` | `SCROLL_Y` |
 | `$28-$2C` | bank selectors |
-| `$2E-$2F` | `OAM_ACTIVE_COUNT` |
+| `$2D` | `CHR_1BPP_MASK` |
+| `$2E` | `CHR_1BPP_PLANES` |
+| `$2F` | `BACKDROP_COLOR` |
+| `$30` | `OAM_LAST_INDEX` |
 
 Add video lifecycle bits to [src/mia/etc/status.h](../src/mia/etc/status.h).
 These are level bits in the general `MIA_STATUS` register, not fields in video
@@ -138,14 +141,14 @@ Add video command handlers in the command table:
 
 | Command | Id | Core 0 handler |
 | --- | ---: | --- |
-| `VIDEO_ENABLE` | `$40` | initialize video control state and fast video indexes |
+| `VIDEO_ENABLE` | `$40` | initialize video control state and video indexes |
 | `VIDEO_FORCE_FULL_REFRESH` | `$42` | mark every syncable video page dirty for the next update |
 | `VIDEO_SET_MODE` | `$43` | update `VIDEO_MODE` bits |
 
 Suggested command behavior:
 
 - `VIDEO_ENABLE` clears video state, initializes the video control pages,
-  configures fast video index descriptors, clears both dirty maps, and marks
+  configures video index descriptors, clears both dirty maps, and marks
   every syncable video page dirty in the active map.
 - `VIDEO_FORCE_FULL_REFRESH` marks every syncable video page dirty in the active
   map and leaves pending response state alone. The next accepted response is
@@ -155,30 +158,40 @@ Suggested command behavior:
 
 Do not implement `VIDEO_COMMIT_FRAME`; it belongs to the older protocol model.
 
-## Fast Video Index Setup
+## Video Index Setup
 
-`VIDEO_ENABLE` should configure the fast indexes listed in
+`VIDEO_ENABLE` should configure the video indexes listed in
 [video-output.md](video-output.md):
 
 | Index | Range | Length |
 | ---: | ---: | ---: |
-| `$80` | `$00022-$00023` | 2 |
-| `$81` | `$00024-$00025` | 2 |
-| `$82` | `$00026-$00027` | 2 |
-| `$83` | `$00028-$0002C` | 5 |
-| `$84` | `$00021-$00021` | 1 |
-| `$85` | `$0002E-$0002F` | 2 |
-| `$88` | `$00100-$001FF` | 256 |
-| `$89` | `$10850-$10D4F` | 1,280 |
-| `$8A` | `$10080-$10467` | 1,000 |
-| `$8B` | `$10468-$1084F` | 1,000 |
-| `$90-$97` | CHR banks | 6,144 each |
-| `$A0-$A7` | background nametables | 1,000 each |
-| `$A8-$AF` | background attributes | 1,000 each |
+| `$70` | `$00000-$0001F` | 32 |
+| `$71` | `$00004-$00007` | 4 |
+| `$72` | `$00008-$00009` | 2 |
+| `$73-$7F` | reserved local-control indexes | - |
+| `$80` | `$00020-$0003F` | 32 |
+| `$81` | `$00021-$00021` | 1 |
+| `$82` | `$00022-$00023` | 2 |
+| `$83` | `$00024-$00025` | 2 |
+| `$84` | `$00026-$00027` | 2 |
+| `$85` | `$00028-$0002C` | 5 |
+| `$86` | `$0002D-$0002E` | 2 |
+| `$87` | `$0002F-$0002F` | 1 |
+| `$88` | `$00030-$00030` | 1 |
+| `$89-$8F` | reserved render-control indexes | - |
+| `$90-$9F` | palette banks, `$00100 + n * $10` | 16 each |
+| `$A0-$A7` | CHR banks | 6,144 each |
+| `$A8-$AF` | background nametables | 1,000 each |
+| `$B0-$B7` | background attributes | 1,000 each |
+| `$B8` | `$10080-$10467` | 1,000 |
+| `$B9` | `$10468-$1084F` | 1,000 |
+| `$BA-$BF` | reserved video indexes | - |
+| `$C0-$DF` | OAM sprite records, `$10850 + n * 5` | 5 each |
+| `$E0-$FF` | reserved video indexes | - |
 
-All fast indexes should use step-on-write and wrap. Video lifecycle status is
-read through the normal `MIA_STATUS` register, so no fast video status index is
-needed.
+All video indexes should use forward step-on-read, forward step-on-write, and
+wrap. Video lifecycle status is read through the normal `MIA_STATUS` register,
+so no video status index is needed.
 
 ## Dirty Tracking Hot Path
 
