@@ -29,6 +29,17 @@ includes `LAST_RESPONSE_DIRTY_PAGES`, which lets 6502 programs detect when the
 latest stable video update result was large, such as after a full refresh or a
 slow Wi-Fi period.
 
+The firmware includes the real UDP video service. Build with Wi-Fi credentials
+in the environment to let the Pico 2 W join your network:
+
+```sh
+MIA_WIFI_SSID="your-ssid" MIA_WIFI_PASSWORD="your-password" make build
+```
+
+The video service listens on UDP port `6502` by default. Override it with
+`MIA_VIDEO_UDP_PORT` at build time if needed. If no SSID is provided, the
+firmware still builds and runs, but UDP video waits for network configuration.
+
 ## Register Map
 
 MIA exposes 32 internal registers. The 6502 sees them at `$FFE0-$FFFF`; internally only the low 5 address bits are used.

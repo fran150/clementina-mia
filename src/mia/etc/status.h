@@ -9,6 +9,8 @@
 #define MIA_STAT_CMD_RUNNING         (1u << 2)  // Defines if a command is running
 #define MIA_STAT_DMA_RUNNING         (1u << 3)  // Determines if DMA is running
 #define MIA_STAT_SPEED_CHANGING      (1u << 4)  // PHI2 speed change is pending
+#define MIA_STAT_VIDEO_FRAME_REQUESTED (1u << 5) // Video update request accepted and waiting for ACK
+#define MIA_STAT_VIDEO_FRAME_SENT    (1u << 6)  // Initial video response send finished and waiting for ACK
 
 // Sets the status flag
 static inline __force_inline void mia_status_set_flag(uint16_t flag) {

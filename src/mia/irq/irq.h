@@ -12,6 +12,9 @@
 #define IRQ_IDXB_WRAPPED         (1u << 2)
 #define IRQ_COMMAND              (1u << 3)
 #define IRQ_SPEED_CHANGED        (1u << 4)
+#define IRQ_VIDEO_FRAME_REQUEST  (1u << 5)
+#define IRQ_VIDEO_FRAME_SENT     (1u << 6)
+#define IRQ_VIDEO_FRAME_ACKED    (1u << 7)
 #define IRQ_TRIGGERED            (1u << 15)
 
 // Configures the IRQ pin as output for the MIA to drive

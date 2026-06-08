@@ -23,6 +23,8 @@
 #include "rom/kernel_data.h"
 #include "sys/reset.h"
 #include "sys/speed.h"
+#include "video/video.h"
+#include "video/video_dirty.h"
 
 #include "sys.pio.h"
 
@@ -96,6 +98,7 @@ void mia_reset_runtime_state(void) {
     mia_irq_init();
     mia_status_clear_flag(MIA_STAT_MASTER_MODE); // 0 - Bootloader mode
     mia_speed_reset_runtime_state();
+    mia_video_reset_runtime_state();
     fast_loader_init();
     mia_set_watch_address(0xFFE1);
     mia_drain_action_fifo();
@@ -105,6 +108,8 @@ void mia_reset_runtime_state(void) {
 __attribute__((optimize("O1"))) static void __no_inline_not_in_flash_func(act_loop)(void) {
     // In here we bypass the usual SDK calls as needed for performance.
     while (true) {
+        mia_video_core1_poll();
+
         // If PIO send and action in the RX FIFO
         if (!(MIA_ACT_PIO->fstat & (1u << (PIO_FSTAT_RXEMPTY_LSB + MIA_ACT_SM)))) {
             // Get the pins data (CS | R/W | 5 Address bits | 8 Data bits)
@@ -530,6 +535,8 @@ void mia_init(void)
     mia_command_init();
     // Init the mia memory
     mia_mem_init();
+    // Init video UDP/session state after memory is available.
+    mia_video_init();
 
     // Safety check for compiler alignment
     assert(!((uintptr_t)mia_regs & 0x1F));

@@ -7,6 +7,7 @@
 #include "sys/mia.h"
 #include "sys/reset.h"
 #include "hardware/gpio_mapping.h"
+#include "video/video.h"
 
 void configure_debug_leds() {
     printf("Debug led mode initialized...\n");
@@ -124,11 +125,14 @@ int main(void) {
     }
 
     printf("Initializing MIA...\n\n");
+    mia_video_wifi_init();
     mia_init();
 
     while (true) {
         mia_handle_reset_request();
         mia_service();
+        cyw43_arch_poll();
+        mia_video_service();
         update_onboard_led_blink();
 
         option = read_character_from_console();

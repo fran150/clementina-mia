@@ -6,6 +6,7 @@
 #include "mem/dma.h"
 #include "mem/indexes.h"
 #include "mem/regs.h"
+#include "video/video.h"
 
 #define UNUSED(x) (void)(x)
 
@@ -89,6 +90,22 @@ void command_copy_indexes(uint8_t param[]) {
     mia_dma_transfer_init(idx[from].current_addr, idx[to].current_addr, count);
 }
 
+void command_video_enable(uint8_t param[]) {
+    UNUSED(param);
+
+    mia_video_enable();
+}
+
+void command_video_force_full_refresh(uint8_t param[]) {
+    UNUSED(param);
+
+    mia_video_force_full_refresh();
+}
+
+void command_video_set_mode(uint8_t param[]) {
+    mia_video_set_mode(param[0]);
+}
+
 /**************************************************************************************************
  * Init and crosscore messaging handling
  **************************************************************************************************/
@@ -139,6 +156,10 @@ void mia_command_init() {
     commands[0x07] = command_peek_from_index_to_b;
 
     commands[0x10] = command_copy_indexes;
+
+    commands[0x40] = command_video_enable;
+    commands[0x42] = command_video_force_full_refresh;
+    commands[0x43] = command_video_set_mode;
 
     // Clear the FIFO IRQ
     multicore_fifo_clear_irq();

@@ -66,6 +66,7 @@ add_executable(mia
     src/mia/sys/mia.c
     src/mia/sys/reset.c
     src/mia/sys/speed.c
+    src/mia/video/video.c
     ${KERNEL_DATA_FILE}  # Add generated kernel data
 )
 
@@ -83,6 +84,7 @@ target_include_directories(mia PRIVATE
     src/mia/mem
     src/mia/rom
     src/mia/sys
+    src/mia/video
     ${CMAKE_BINARY_DIR}/generated  # Include generated files directory
 )
 
@@ -120,3 +122,15 @@ target_compile_definitions(mia PRIVATE
     CYW43_PIO_CLOCK_DIV_DYNAMIC=1
     CYW43_HOST_NAME="MIA-Clementina"
 )
+
+if(DEFINED ENV{MIA_WIFI_SSID})
+    target_compile_definitions(mia PRIVATE MIA_WIFI_SSID="$ENV{MIA_WIFI_SSID}")
+endif()
+
+if(DEFINED ENV{MIA_WIFI_PASSWORD})
+    target_compile_definitions(mia PRIVATE MIA_WIFI_PASSWORD="$ENV{MIA_WIFI_PASSWORD}")
+endif()
+
+if(DEFINED ENV{MIA_VIDEO_UDP_PORT})
+    target_compile_definitions(mia PRIVATE MIA_VIDEO_UDP_PORT=$ENV{MIA_VIDEO_UDP_PORT})
+endif()

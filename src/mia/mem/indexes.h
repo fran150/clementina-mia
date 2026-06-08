@@ -8,6 +8,7 @@
 
 #include "mem/mem.h"
 #include "irq/irq.h"
+#include "video/video_dirty.h"
 
 // Memory index structure (16 bytes per index)
 typedef union {
@@ -65,7 +66,9 @@ static inline __force_inline uint8_t __not_in_flash_func(index_read)(uint8_t ind
 // Writes the value to the RAM memory to where the specified index is pointing to. 
 // This command does not affect the index state
 static inline __force_inline void __not_in_flash_func(index_write)(uint8_t index_id, uint8_t value) {
-    mem[idx[index_id].current_addr & MIA_RAM_MASK] = value;
+    uint32_t offset = idx[index_id].current_addr & MIA_RAM_MASK;
+    mem[offset] = value;
+    mia_video_mark_dirty(offset);
 }
 
 // Steps the index according to it's configuration and reads the value in RAM to where the index ends up pointing to.
@@ -110,8 +113,10 @@ static inline __force_inline uint8_t __not_in_flash_func(index_step_and_read)(ui
 static inline __force_inline void __not_in_flash_func(index_write_and_step)(uint8_t index_id, uint8_t value, index_win_t win) {
     volatile index_t *restrict entry = &idx[index_id];
     uint32_t flags = entry->flags;
+    uint32_t write_offset = entry->current_addr & MIA_RAM_MASK;
 
-    mem[entry->current_addr & MIA_RAM_MASK] = value;
+    mem[write_offset] = value;
+    mia_video_mark_dirty(write_offset);
 
     uint32_t is_enabled = (flags >> IDX_FLAG_W_STP_ENA) & 1;
     uint32_t is_backward = (flags >> IDX_FLAG_STP_DIR) & 1;
