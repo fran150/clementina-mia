@@ -65,6 +65,7 @@ static uint32_t video_next_seq_value;
 static uint32_t video_last_peer_seq;
 static uint8_t video_rx_packet[MIA_VIDEO_UDP_PAYLOAD_SIZE];
 static uint8_t video_tx_packet[MIA_VIDEO_UDP_PAYLOAD_SIZE];
+static bool video_enable = false;
 
 static void video_clear_dirty_map(uint8_t map_index);
 static void video_clear_dirty_maps(void);
@@ -187,7 +188,7 @@ void mia_video_reset_runtime_state(void) {
 }
 
 void mia_video_service(void) {
-    if (!video_udp_ready || !video_session.active || !video_response.valid) {
+    if (!video_udp_ready || !video_session.active || !video_response.valid || !video_enable) {
         return;
     }
 
@@ -237,6 +238,8 @@ void mia_video_enable(void) {
     video_configure_indexes();
     mia_status_clear_flag(MIA_STAT_VIDEO_FRAME_REQUESTED | MIA_STAT_VIDEO_FRAME_SENT);
     mia_video_force_full_refresh();
+
+    video_enable = true;
 }
 
 void mia_video_force_full_refresh(void) {

@@ -99,6 +99,11 @@ void mia_reset_runtime_state(void) {
     mia_status_clear_flag(MIA_STAT_MASTER_MODE); // 0 - Bootloader mode
     mia_speed_reset_runtime_state();
     mia_video_reset_runtime_state();
+
+    // Pre-initialize video indices so they are ready the moment the 6502
+    // is released from reset, preventing races with VIDEO_ENABLE.
+    mia_video_enable();
+
     fast_loader_init();
     mia_set_watch_address(0xFFE1);
     mia_drain_action_fifo();
@@ -483,10 +488,15 @@ static void mia_enter_normal_mode(void) {
     REGS(0xFFFC) = kernel_target_address & 0xFF;
     REGS(0xFFFD) = kernel_target_address >> 8;
 
+    // Ensure indices are initialized even if reset_runtime_state wasn't
+    // the path taken to get here.
+    mia_video_enable();
+
     // Enter normal mode and watch index A's data port again for read-side effects.
     mia_state = mia_state_normal;
     mia_status_set_flag(MIA_STAT_MASTER_MODE);
-    mia_set_watch_address(0xFFE1);
+    __dmb(); // Ensure memory writes to regs/state are visible to Core 1
+    mia_set_watch_address(0xFFE0);
     mia_drain_action_fifo();
 
     // Keep reset low for the configured number of PHI2 cycles, then release it

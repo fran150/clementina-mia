@@ -93,7 +93,7 @@ void command_copy_indexes(uint8_t param[]) {
 void command_video_enable(uint8_t param[]) {
     UNUSED(param);
 
-    mia_video_enable();
+    //mia_video_enable();
 }
 
 void command_video_force_full_refresh(uint8_t param[]) {
