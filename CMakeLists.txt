@@ -63,6 +63,8 @@ add_executable(mia
     src/mia/mem/indexes.c
     src/mia/mem/mem.c
     src/mia/mem/regs.c
+    src/mia/misc/con.c
+    src/mia/misc/led.c
     src/mia/sys/mia.c
     src/mia/sys/reset.c
     src/mia/sys/speed.c
@@ -82,6 +84,7 @@ target_include_directories(mia PRIVATE
     src/mia/hardware
     src/mia/irq
     src/mia/mem
+    src/mia/misc
     src/mia/rom
     src/mia/sys
     src/mia/video
