@@ -13,9 +13,12 @@
 
 #define CON_LINE_MAX 80
 
-static char   line_buf[CON_LINE_MAX];
-static int    line_len      = 0;
-static bool   prompt_shown  = false;
+typedef enum { CON_MODE_NORMAL, CON_MODE_MONITOR } con_mode_t;
+
+static char      line_buf[CON_LINE_MAX];
+static int       line_len     = 0;
+static bool      prompt_shown = false;
+static con_mode_t con_mode    = CON_MODE_NORMAL;
 
 // ---- Status display ------------------------------------------------------
 
@@ -29,13 +32,13 @@ static void print_status(void) {
     printf("  Status: 0x%04X", st);
 
     bool any = false;
-    if (st & MIA_STAT_MASTER_MODE)           { printf(any?",":" ("); printf("NORMAL");      any=true; }
-    if (st & MIA_STAT_ERRORS)                { printf(any?",":" ("); printf("ERRORS");      any=true; }
-    if (st & MIA_STAT_CMD_RUNNING)           { printf(any?",":" ("); printf("CMD");         any=true; }
-    if (st & MIA_STAT_DMA_RUNNING)           { printf(any?",":" ("); printf("DMA");         any=true; }
-    if (st & MIA_STAT_SPEED_CHANGING)        { printf(any?",":" ("); printf("SPEED");       any=true; }
-    if (st & MIA_STAT_VIDEO_FRAME_REQUESTED) { printf(any?",":" ("); printf("VID_REQ");     any=true; }
-    if (st & MIA_STAT_VIDEO_FRAME_SENT)      { printf(any?",":" ("); printf("VID_SENT");    any=true; }
+    if (st & MIA_STAT_MASTER_MODE)           { printf(any ? "," : " ("); printf("NORMAL");   any = true; }
+    if (st & MIA_STAT_ERRORS)                { printf(any ? "," : " ("); printf("ERRORS");   any = true; }
+    if (st & MIA_STAT_CMD_RUNNING)           { printf(any ? "," : " ("); printf("CMD");      any = true; }
+    if (st & MIA_STAT_DMA_RUNNING)           { printf(any ? "," : " ("); printf("DMA");      any = true; }
+    if (st & MIA_STAT_SPEED_CHANGING)        { printf(any ? "," : " ("); printf("SPEED");    any = true; }
+    if (st & MIA_STAT_VIDEO_FRAME_REQUESTED) { printf(any ? "," : " ("); printf("VID_REQ");  any = true; }
+    if (st & MIA_STAT_VIDEO_FRAME_SENT)      { printf(any ? "," : " ("); printf("VID_SENT"); any = true; }
     if (any) printf(")");
     printf("\n");
 
@@ -49,7 +52,6 @@ static void con_dispatch(const char *line) {
     while (*line == ' ' || *line == '\t') line++;
     if (!*line) return;
 
-    // Extract first word only so trailing spaces don't break matching
     char cmd[16] = {0};
     int ci = 0;
     const char *p = line;
@@ -59,7 +61,8 @@ static void con_dispatch(const char *line) {
         printf("Rebooting to BOOTSEL...\n");
         reset_usb_boot(0, 0);
     } else if (strcmp(cmd, "monitor") == 0) {
-        monitor_run();
+        con_mode = CON_MODE_MONITOR;
+        monitor_print_banner();
     } else if (strcmp(cmd, "status") == 0) {
         print_status();
     } else if (strcmp(cmd, "?") == 0 || strcmp(cmd, "help") == 0) {
@@ -71,29 +74,9 @@ static void con_dispatch(const char *line) {
 
 // ---- Public API ----------------------------------------------------------
 
-void con_read_line(char *buf, int max_len) {
-    int len = 0;
-    while (true) {
-        int c = getchar();
-        if (c == '\r' || c == '\n') {
-            buf[len] = '\0';
-            printf("\n");
-            return;
-        } else if ((c == '\b' || c == 127) && len > 0) {
-            len--;
-            printf("\b \b");
-            fflush(stdout);
-        } else if (c >= 0x20 && c < 0x7F && len < max_len - 1) {
-            buf[len++] = (char)c;
-            printf("%c", (char)c);
-            fflush(stdout);
-        }
-    }
-}
-
 void con_process(void) {
     if (!prompt_shown) {
-        printf("> ");
+        printf(con_mode == CON_MODE_MONITOR ? "MON> " : "> ");
         fflush(stdout);
         prompt_shown = true;
     }
@@ -104,7 +87,16 @@ void con_process(void) {
     if (c == '\r' || c == '\n') {
         printf("\n");
         line_buf[line_len] = '\0';
-        con_dispatch(line_buf);
+
+        if (con_mode == CON_MODE_MONITOR) {
+            if (!monitor_exec_line(line_buf)) {
+                con_mode = CON_MODE_NORMAL;
+                printf("Exiting monitor.\n");
+            }
+        } else {
+            con_dispatch(line_buf);
+        }
+
         line_len     = 0;
         prompt_shown = false;
     } else if ((c == '\b' || c == 127) && line_len > 0) {

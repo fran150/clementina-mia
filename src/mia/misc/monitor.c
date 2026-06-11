@@ -4,7 +4,6 @@
 #include <stdint.h>
 
 #include "monitor.h"
-#include "con.h"
 #include "mem/mem.h"
 #include "video/video_dirty.h"
 
@@ -118,10 +117,8 @@ static uint32_t disassemble_one(uint32_t addr) {
     uint8_t op2 = (size >= 3 && addr + 2 < MIA_RAM_SIZE) ? mem[addr + 2] : 0;
     uint16_t word = (uint16_t)(op1 | ((uint16_t)op2 << 8));
 
-    // Address
     printf("$%05X: ", addr);
 
-    // Bytes (3 slots, each "XX " or "   ")
     for (int i = 0; i < 3; i++) {
         if (i < size) {
             uint8_t b = (i == 0) ? opcode : (i == 1) ? op1 : op2;
@@ -131,10 +128,9 @@ static uint32_t disassemble_one(uint32_t addr) {
         }
     }
 
-    // Mnemonic (left-aligned in 5 chars to accommodate RMB0..BBS7)
+    // Mnemonic left-aligned in 5 chars (accommodates RMB0..BBS7)
     printf("%-5s", mnem);
 
-    // Operand
     switch (mode) {
         case AM_IMP: break;
         case AM_ACC: printf("A"); break;
@@ -179,17 +175,13 @@ void monitor_dump(uint32_t addr, uint32_t len) {
     for (uint32_t row = row_start; row < end; row += 16) {
         printf("$%05X: ", row);
 
-        // Hex bytes — extra space between byte 7 and 8
         for (int i = 0; i < 16; i++) {
             if (i == 8) printf(" ");
             uint32_t a = row + (uint32_t)i;
-            if (a < addr || a >= end)
-                printf("   ");
-            else
-                printf("%02X ", mem[a]);
+            if (a < addr || a >= end) printf("   ");
+            else                      printf("%02X ", mem[a]);
         }
 
-        // ASCII column
         printf(" ");
         for (int i = 0; i < 16; i++) {
             uint32_t a = row + (uint32_t)i;
@@ -219,9 +211,8 @@ void monitor_poke(uint32_t addr, const uint8_t *bytes, uint32_t count) {
     }
 }
 
-// ---- Interactive monitor loop --------------------------------------------
+// ---- Interactive command dispatch ----------------------------------------
 
-#define MON_LINE_MAX       80
 #define MON_DEFAULT_DUMP   128
 #define MON_DEFAULT_DISASM 16
 
@@ -233,7 +224,7 @@ static const char *skip_ws(const char *p) {
     return p;
 }
 
-// Parse next hex token from *p, advance *p past it. Accepts optional '$' prefix.
+// Parse next hex token from *p, advancing it. Accepts optional '$' prefix.
 static bool next_hex(const char **p, uint32_t *out) {
     const char *s = skip_ws(*p);
     if (*s == '$') s++;
@@ -243,9 +234,9 @@ static bool next_hex(const char **p, uint32_t *out) {
     bool found = false;
     while (1) {
         char c = *s;
-        if      (c >= '0' && c <= '9') { val = (val << 4) | (uint32_t)(c - '0');       }
-        else if (c >= 'a' && c <= 'f') { val = (val << 4) | (uint32_t)(c - 'a' + 10);  }
-        else if (c >= 'A' && c <= 'F') { val = (val << 4) | (uint32_t)(c - 'A' + 10);  }
+        if      (c >= '0' && c <= '9') { val = (val << 4) | (uint32_t)(c - '0');      }
+        else if (c >= 'a' && c <= 'f') { val = (val << 4) | (uint32_t)(c - 'a' + 10); }
+        else if (c >= 'A' && c <= 'F') { val = (val << 4) | (uint32_t)(c - 'A' + 10); }
         else break;
         s++;
         found = true;
@@ -265,12 +256,17 @@ static void print_help(void) {
     printf("  quit              Return to console\n");
 }
 
-// Execute one monitor command line. Returns false when the user types quit.
-static bool monitor_exec(const char *line) {
+void monitor_print_banner(void) {
+    printf("\n65C02 Monitor  [MIA RAM: %uKB, $00000-$%05X]\n",
+           MIA_RAM_SIZE / 1024, MIA_RAM_SIZE - 1);
+    print_help();
+    printf("\n");
+}
+
+bool monitor_exec_line(const char *line) {
     const char *p = skip_ws(line);
     if (!*p) return true;
 
-    // Extract command word (up to 7 chars), lowercased
     char cmd[8] = {0};
     int ci = 0;
     while (*p && *p != ' ' && *p != '\t' && ci < 7) {
@@ -286,8 +282,7 @@ static bool monitor_exec(const char *line) {
     }
 
     if (strcmp(cmd, "m") == 0) {
-        uint32_t addr = last_dump_addr;
-        uint32_t len  = MON_DEFAULT_DUMP;
+        uint32_t addr = last_dump_addr, len = MON_DEFAULT_DUMP;
         next_hex(&p, &addr);
         next_hex(&p, &len);
         if (addr >= MIA_RAM_SIZE) { printf("Address out of range (max $%05X)\n", MIA_RAM_SIZE - 1); return true; }
@@ -297,8 +292,7 @@ static bool monitor_exec(const char *line) {
     }
 
     if (strcmp(cmd, "u") == 0) {
-        uint32_t addr  = last_disasm_addr;
-        uint32_t count = MON_DEFAULT_DISASM;
+        uint32_t addr = last_disasm_addr, count = MON_DEFAULT_DISASM;
         next_hex(&p, &addr);
         next_hex(&p, &count);
         if (addr >= MIA_RAM_SIZE) { printf("Address out of range (max $%05X)\n", MIA_RAM_SIZE - 1); return true; }
@@ -309,13 +303,11 @@ static bool monitor_exec(const char *line) {
     if (strcmp(cmd, "e") == 0) {
         uint32_t addr;
         if (!next_hex(&p, &addr)) { printf("Usage: e ADDR BYTE [BYTE ...]\n"); return true; }
-        uint32_t cur = addr;
-        uint32_t val;
+        uint32_t cur = addr, val;
         while (next_hex(&p, &val)) {
             if (cur >= MIA_RAM_SIZE) { printf("Address overflow at $%05X\n", cur); break; }
             uint8_t b = (uint8_t)val;
-            monitor_poke(cur, &b, 1);
-            cur++;
+            monitor_poke(cur++, &b, 1);
         }
         if (cur == addr) printf("Usage: e ADDR BYTE [BYTE ...]\n");
         return true;
@@ -323,21 +315,4 @@ static bool monitor_exec(const char *line) {
 
     printf("Unknown command '%s'. Type ? for help.\n", cmd);
     return true;
-}
-
-void monitor_run(void) {
-    printf("\n65C02 Monitor  [MIA RAM: %uKB, $00000-$%05X]\n",
-           MIA_RAM_SIZE / 1024, MIA_RAM_SIZE - 1);
-    print_help();
-    printf("\n");
-
-    char line[MON_LINE_MAX];
-    while (true) {
-        printf("MON> ");
-        fflush(stdout);
-        con_read_line(line, sizeof(line));
-        if (!monitor_exec(line)) break;
-    }
-
-    printf("Exiting monitor.\n");
 }

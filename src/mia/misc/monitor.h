@@ -1,6 +1,7 @@
 #ifndef _MIA_MISC_MONITOR_H_
 #define _MIA_MISC_MONITOR_H_
 
+#include <stdbool.h>
 #include <stdint.h>
 
 // Dump len bytes of MIA RAM starting at addr in hex+ASCII format.
@@ -13,7 +14,11 @@ uint32_t monitor_disassemble(uint32_t addr, uint32_t count);
 // Write bytes into MIA RAM at addr, marking video dirty as needed.
 void monitor_poke(uint32_t addr, const uint8_t *bytes, uint32_t count);
 
-// Enter the interactive monitor loop (blocking until the user types quit).
-void monitor_run(void);
+// Print the monitor welcome banner and command summary.
+void monitor_print_banner(void);
+
+// Execute one monitor command line.
+// Returns false when the user types quit (signals exit from monitor mode).
+bool monitor_exec_line(const char *line);
 
 #endif
