@@ -104,7 +104,7 @@ static const struct { const char *mnem; addr_mode_t mode; } opcodes[256] = {
 
 static uint32_t disassemble_one(uint32_t addr) {
     if (addr >= MIA_RAM_SIZE) {
-        printf("$%05X: [out of range]\n", addr);
+        printf("$%05lX: [out of range]\n", (unsigned long)addr);
         return addr + 1;
     }
 
@@ -117,7 +117,7 @@ static uint32_t disassemble_one(uint32_t addr) {
     uint8_t op2 = (size >= 3 && addr + 2 < MIA_RAM_SIZE) ? mem[addr + 2] : 0;
     uint16_t word = (uint16_t)(op1 | ((uint16_t)op2 << 8));
 
-    printf("$%05X: ", addr);
+    printf("$%05lX: ", (unsigned long)addr);
 
     for (int i = 0; i < 3; i++) {
         if (i < size) {
@@ -128,7 +128,6 @@ static uint32_t disassemble_one(uint32_t addr) {
         }
     }
 
-    // Mnemonic left-aligned in 5 chars (accommodates RMB0..BBS7)
     printf("%-5s", mnem);
 
     switch (mode) {
@@ -173,7 +172,7 @@ void monitor_dump(uint32_t addr, uint32_t len) {
     uint32_t row_start = addr & ~0xFu;
 
     for (uint32_t row = row_start; row < end; row += 16) {
-        printf("$%05X: ", row);
+        printf("$%05lX: ", (unsigned long)row);
 
         for (int i = 0; i < 16; i++) {
             if (i == 8) printf(" ");
@@ -224,7 +223,6 @@ static const char *skip_ws(const char *p) {
     return p;
 }
 
-// Parse next hex token from *p, advancing it. Accepts optional '$' prefix.
 static bool next_hex(const char **p, uint32_t *out) {
     const char *s = skip_ws(*p);
     if (*s == '$') s++;
@@ -305,7 +303,7 @@ bool monitor_exec_line(const char *line) {
         if (!next_hex(&p, &addr)) { printf("Usage: e ADDR BYTE [BYTE ...]\n"); return true; }
         uint32_t cur = addr, val;
         while (next_hex(&p, &val)) {
-            if (cur >= MIA_RAM_SIZE) { printf("Address overflow at $%05X\n", cur); break; }
+            if (cur >= MIA_RAM_SIZE) { printf("Address overflow at $%05lX\n", (unsigned long)cur); break; }
             uint8_t b = (uint8_t)val;
             monitor_poke(cur++, &b, 1);
         }

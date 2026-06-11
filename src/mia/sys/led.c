@@ -1,11 +1,10 @@
 #include <stdio.h>
 #include "pico/stdlib.h"
-
 #include "pico/cyw43_arch.h"
 
 #include "led.h"
 
-void configure_onboard_led() {
+void configure_onboard_led(void) {
     printf("Onboard led initialized...\n");
     cyw43_arch_init();
     cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 0);

@@ -3,9 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "pico/cyw43_arch.h"
 #include "pico/stdlib.h"
-#include "lwip/netif.h"
 #include "lwip/pbuf.h"
 #include "lwip/udp.h"
 
@@ -14,10 +12,6 @@
 #include "mem/indexes.h"
 #include "mem/mem.h"
 #include "video_packets.h"
-
-#ifndef MIA_WIFI_PASSWORD
-#define MIA_WIFI_PASSWORD ""
-#endif
 
 #define MIA_VIDEO_MAX_CHUNKS 154u
 #define MIA_VIDEO_SEND_BUDGET 4u
@@ -97,36 +91,6 @@ static void video_handle_ack_response(const mia_video_header_t *header, const ip
 static void video_handle_nack_chunks(const mia_video_header_t *header, const uint8_t *payload, const ip_addr_t *addr, uint16_t port);
 static void video_handle_client_status(const mia_video_header_t *header, const uint8_t *payload);
 static void video_udp_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr, u16_t port);
-
-bool mia_video_wifi_init(void) {
-#ifdef MIA_WIFI_SSID
-    if (MIA_WIFI_SSID[0] == '\0') {
-        printf("MIA video Wi-Fi SSID is empty; UDP video will wait for a network.\n");
-        return false;
-    }
-
-    cyw43_arch_enable_sta_mode();
-
-    uint32_t auth = strlen(MIA_WIFI_PASSWORD) == 0 ? CYW43_AUTH_OPEN : CYW43_AUTH_WPA2_AES_PSK;
-    printf("Connecting Wi-Fi for MIA video: %s\n", MIA_WIFI_SSID);
-    int rc = cyw43_arch_wifi_connect_timeout_ms(MIA_WIFI_SSID, MIA_WIFI_PASSWORD, auth, 30000);
-    if (rc != 0) {
-        printf("MIA video Wi-Fi connection failed: %d\n", rc);
-        return false;
-    }
-
-    if (netif_default != NULL) {
-        printf("MIA video Wi-Fi connected at %s\n", ip4addr_ntoa(netif_ip4_addr(netif_default)));
-    } else {
-        printf("MIA video Wi-Fi connected\n");
-    }
-
-    return true;
-#else
-    printf("MIA video Wi-Fi credentials not configured; set MIA_WIFI_SSID and MIA_WIFI_PASSWORD at build time.\n");
-    return false;
-#endif
-}
 
 void mia_video_init(void) {
     mia_video_reset_runtime_state();

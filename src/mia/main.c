@@ -1,13 +1,13 @@
 #include "pico/stdlib.h"
+#include "pico/cyw43_arch.h"
 
 #include <stdio.h>
 
-#include "pico/cyw43_arch.h"
-
 #include "sys/mia.h"
-#include "mia/misc/led.h"
-#include "mia/misc/con.h"
+#include "sys/led.h"
 #include "sys/reset.h"
+#include "con/con.h"
+#include "net/wifi.h"
 #include "video/video.h"
 
 
@@ -20,7 +20,7 @@ int main(void) {
     configure_onboard_led();
 
     printf("Initializing MIA...\n\n");
-    mia_video_wifi_init();
+    mia_net_wifi_init();
     mia_init();
 
     printf("MIA ready. Type 'help' for commands.\n");

@@ -1,5 +1,5 @@
-#ifndef _MIA_MISC_MONITOR_H_
-#define _MIA_MISC_MONITOR_H_
+#ifndef _MIA_CON_MONITOR_H_
+#define _MIA_CON_MONITOR_H_
 
 #include <stdbool.h>
 #include <stdint.h>

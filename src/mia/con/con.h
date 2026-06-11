@@ -1,5 +1,5 @@
-#ifndef _MIA_MISC_CON_H_
-#define _MIA_MISC_CON_H_
+#ifndef _MIA_CON_CON_H_
+#define _MIA_CON_CON_H_
 
 // Non-blocking console poll — call from the main loop each iteration.
 // Accumulates typed characters, handles backspace, and dispatches the

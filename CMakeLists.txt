@@ -45,7 +45,7 @@ file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/generated")
 # Custom command to generate kernel_data.c from kernel.bin
 add_custom_command(
     OUTPUT ${KERNEL_DATA_FILE}
-    COMMAND ${CMAKE_COMMAND} 
+    COMMAND ${CMAKE_COMMAND}
         -DKERNEL_BIN_FILE=${KERNEL_BIN_FILE}
         -DKERNEL_DATA_FILE=${KERNEL_DATA_FILE}
         -P ${CMAKE_SOURCE_DIR}/scripts/generate_kernel_data.cmake
@@ -63,9 +63,11 @@ add_executable(mia
     src/mia/mem/indexes.c
     src/mia/mem/mem.c
     src/mia/mem/regs.c
-    src/mia/misc/con.c
-    src/mia/misc/monitor.c
-    src/mia/misc/led.c
+    src/mia/con/con.c
+    src/mia/con/con_cmds.c
+    src/mia/con/monitor.c
+    src/mia/net/wifi.c
+    src/mia/sys/led.c
     src/mia/sys/mia.c
     src/mia/sys/reset.c
     src/mia/sys/speed.c
@@ -82,10 +84,11 @@ target_include_directories(mia PRIVATE
     src/mia
     src/mia/etc
     src/mia/cmds
+    src/mia/con
     src/mia/hardware
     src/mia/irq
     src/mia/mem
-    src/mia/misc
+    src/mia/net
     src/mia/rom
     src/mia/sys
     src/mia/video
@@ -133,6 +136,23 @@ endif()
 
 if(DEFINED ENV{MIA_WIFI_PASSWORD})
     target_compile_definitions(mia PRIVATE MIA_WIFI_PASSWORD="$ENV{MIA_WIFI_PASSWORD}")
+endif()
+
+# MIA_WIFI_MODE: sta (default when SSID is set), ap, or off.
+# Translated to an integer constant so C can compare it without string macros.
+if(DEFINED ENV{MIA_WIFI_MODE})
+    string(TOLOWER "$ENV{MIA_WIFI_MODE}" _wifi_mode)
+    if(_wifi_mode STREQUAL "ap")
+        target_compile_definitions(mia PRIVATE MIA_WIFI_DEFAULT_MODE=2)
+    elseif(_wifi_mode STREQUAL "off")
+        target_compile_definitions(mia PRIVATE MIA_WIFI_DEFAULT_MODE=0)
+    else()
+        target_compile_definitions(mia PRIVATE MIA_WIFI_DEFAULT_MODE=1)
+    endif()
+elseif(DEFINED ENV{MIA_WIFI_SSID})
+    target_compile_definitions(mia PRIVATE MIA_WIFI_DEFAULT_MODE=1)
+else()
+    target_compile_definitions(mia PRIVATE MIA_WIFI_DEFAULT_MODE=0)
 endif()
 
 if(DEFINED ENV{MIA_VIDEO_UDP_PORT})

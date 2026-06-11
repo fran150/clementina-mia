@@ -10,7 +10,6 @@
 #define MIA_VIDEO_UDP_PORT 6502u
 #endif
 
-bool mia_video_wifi_init(void);
 void mia_video_init(void);
 void mia_video_reset_runtime_state(void);
 void mia_video_service(void);
