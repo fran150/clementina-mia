@@ -12,6 +12,7 @@
 #include "mem/indexes.h"
 #include "mem/mem.h"
 #include "video_packets.h"
+#include "petscii_font.h"
 
 #define MIA_VIDEO_MAX_CHUNKS 154u
 #define MIA_VIDEO_SEND_BUDGET 4u
@@ -188,9 +189,19 @@ void mia_video_service(void) {
     }
 }
 
+static void video_load_default_font(void) {
+    // Preload CHR bank 0 with the PETSCII font so 1bpp text works out of the
+    // box: plane 0 = uppercase/graphics set, plane 1 = lowercase/uppercase set.
+    // Bytes are already in MIA pixel order (see petscii_font.h).
+    uint8_t *bank0 = &mem[MIA_VIDEO_CHR_OFFSET];
+    memcpy(bank0 + 0x000u, mia_petscii_font_plane0, MIA_PETSCII_FONT_PLANE_SIZE);
+    memcpy(bank0 + 0x800u, mia_petscii_font_plane1, MIA_PETSCII_FONT_PLANE_SIZE);
+}
+
 void mia_video_enable(void) {
     memset(mem, 0, MIA_VIDEO_STATE_SIZE);
     mem[MIA_VIDEO_LOCAL_VERSION_OFFSET] = MIA_VIDEO_LAYOUT_VERSION;
+    video_load_default_font();
     video_set_frame_id(0);
     video_set_last_response_dirty_pages(0);
 

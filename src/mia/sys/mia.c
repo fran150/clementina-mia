@@ -220,9 +220,15 @@ __attribute__((optimize("O1"))) static void __no_inline_not_in_flash_func(act_lo
 
                         case CASE_WRITE(0xFFE9):
                             // Pack: [ID (8 bits) | P1 (8 bits) | P2 (8 bits) | P3 (8 bits)]
-                            uint32_t msg = (mia_regs->cmd_trigger << 24) | 
-                                        (mia_regs->cmd_param1 << 16)  | 
-                                        (mia_regs->cmd_param2 << 8)   | 
+                            // Use the just-written trigger value from the action FIFO
+                            // (data) rather than mia_regs->cmd_trigger: the register
+                            // block is committed by a separate, asynchronous write DMA
+                            // that may not have landed this same-cycle byte yet. The
+                            // params were written in earlier cycles, so reading them
+                            // back from the register block is safe.
+                            uint32_t msg = (data << 24) |
+                                        (mia_regs->cmd_param1 << 16)  |
+                                        (mia_regs->cmd_param2 << 8)   |
                                         mia_regs->cmd_param3;
                             
                             // Non-blocking push: if the queue is full, core 1 keeps moving.
