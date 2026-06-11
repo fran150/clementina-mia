@@ -64,6 +64,7 @@ add_executable(mia
     src/mia/mem/mem.c
     src/mia/mem/regs.c
     src/mia/misc/con.c
+    src/mia/misc/monitor.c
     src/mia/misc/led.c
     src/mia/sys/mia.c
     src/mia/sys/reset.c
