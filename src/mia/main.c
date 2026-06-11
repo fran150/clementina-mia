@@ -19,11 +19,11 @@ int main(void) {
 
     configure_onboard_led();
 
-    char option = read_character_from_console();
-
     printf("Initializing MIA...\n\n");
     mia_video_wifi_init();
     mia_init();
+
+    printf("MIA ready. Type 'help' for commands.\n");
 
     while (true) {
         mia_handle_reset_request();
@@ -32,8 +32,7 @@ int main(void) {
         mia_video_service();
         update_onboard_led_blink();
 
-        option = read_character_from_console();
-        eval_reboot_to_bootsel(option);
+        con_process();
 
         tight_loop_contents();
     }
