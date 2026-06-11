@@ -46,6 +46,40 @@ static void print_status(void) {
     printf("  IDXB:   index %u\n", mia_regs->idxb_selector);
 }
 
+// ---- Speed command -------------------------------------------------------
+
+static void con_cmd_speed(const char *args) {
+    while (*args == ' ' || *args == '\t') args++;
+
+    if (!*args) {
+        printf("PHI2: %lu Hz\n", (unsigned long)mia_applied_phi2_hz);
+        printf("Usage: speed HZ  (range: %u-%u, e.g. speed 1000000)\n",
+               MIA_MIN_PHI2_HZ, MIA_MAX_PHI2_HZ);
+        return;
+    }
+
+    uint32_t hz = 0;
+    bool found = false;
+    while (*args >= '0' && *args <= '9') {
+        uint32_t d = (uint32_t)(*args - '0');
+        // Saturate on overflow rather than wrapping
+        if (hz > (UINT32_MAX - d) / 10) { hz = MIA_MAX_PHI2_HZ + 1u; break; }
+        hz = hz * 10 + d;
+        args++;
+        found = true;
+    }
+
+    if (!found) {
+        printf("Invalid value. Usage: speed HZ  (e.g. speed 1000000)\n");
+        return;
+    }
+
+    mia_staged_phi2_hz = hz;
+    mia_speed_commit();
+    printf("PHI2 speed requested: %lu Hz (use 'status' to confirm applied value)\n",
+           (unsigned long)hz);
+}
+
 // ---- Normal-mode command dispatch ----------------------------------------
 
 static void con_dispatch(const char *line) {
@@ -65,10 +99,12 @@ static void con_dispatch(const char *line) {
         monitor_print_banner();
     } else if (strcmp(cmd, "status") == 0) {
         print_status();
+    } else if (strcmp(cmd, "speed") == 0) {
+        con_cmd_speed(p);
     } else if (strcmp(cmd, "?") == 0 || strcmp(cmd, "help") == 0) {
-        printf("Commands: monitor, status, quit\n");
+        printf("Commands: monitor, status, speed, quit\n");
     } else {
-        printf("Unknown command '%s'. Try: monitor, status, quit\n", cmd);
+        printf("Unknown command '%s'. Try: monitor, status, speed, quit\n", cmd);
     }
 }
 
