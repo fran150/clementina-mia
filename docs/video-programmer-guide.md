@@ -61,7 +61,34 @@ MIA occupies `$FFE0-$FFFF`.
 | `MIA_STATUS` | `$FFEA-$FFEB` | general MIA status |
 | `MIA_ERROR` | `$FFEC-$FFED` | error queue |
 | `IRQ_MASK` | `$FFEE-$FFEF` | interrupt mask |
-| `IRQ_STATUS` | `$FFF0-$FFF1` | interrupt status |
+| `IRQ_STATUS` | `$FFF0-$FFF1` | interrupt status; read-to-clear |
+
+`IRQ_STATUS` is read-to-clear. Reading `$FFF0` clears all `IRQ_STATUS` bits and
+deasserts the IRQ line. If high-byte flags are needed, read `$FFF1` first (passive,
+no side effect), then `$FFF0` to acknowledge. Bit 15 (`IRQ_TRIGGERED`) is a
+summary that MIA sets while any enabled source is pending; it is cleared along
+with the rest of `IRQ_STATUS` on the `$FFF0` read.
+
+### ISR convention
+
+The recommended ISR sequence is:
+
+```asm
+my_irq_handler:
+    PHA                 ; save A
+    LDA $FFF1           ; sample high-byte flags (passive, no side effect)
+    PHA
+    LDA $FFF0           ; sample low-byte flags AND acknowledge (clears all bits, deasserts pin)
+    ; A = low byte of IRQ_STATUS, stack top+1 = high byte
+    ; test bits and branch to source handlers...
+    PLA                 ; restore
+    PLA
+    RTI
+```
+
+The 6502 sets the I-flag automatically on interrupt entry, so no new interrupt can be taken until `RTI`. If a new source fires during the ISR, MIA re-asserts the pin after `RTI` and the handler runs again immediately.
+
+`IRQ_MASK` controls which sources drive the pin. Writing a byte to `$FFEE` (low) or `$FFEF` (high) takes effect immediately — if a pending source's mask bit is enabled, the pin asserts at that instant.
 
 Video lifecycle status lives in the general `MIA_STATUS` register. Use bits
 `MIA_STAT_VIDEO_FRAME_REQUESTED` and `MIA_STAT_VIDEO_FRAME_SENT` to decide
@@ -81,9 +108,12 @@ Video commands use the normal command registers.
 
 | Command | Id | Purpose |
 | --- | ---: | --- |
-| `VIDEO_ENABLE` | `$40` | initialize video state and video indexes |
 | `VIDEO_FORCE_FULL_REFRESH` | `$42` | mark all syncable video pages dirty for the next client update |
 | `VIDEO_SET_MODE` | `$43` | update `VIDEO_MODE` bits |
+
+MIA initializes video state and indexes automatically while the 6502 is held in
+reset, before releasing it, so the CPU never observes uninitialized video state
+and there is no CPU-issued enable command.
 
 Code example of 6502 forcing a full refresh on the client:
 
@@ -227,7 +257,7 @@ To use an index, write its id to one of the select registers, then stream bytes
 through the matching data port. The selected descriptor decides where those
 bytes land in MIA RAM and when the address wraps.
 
-Video indexes are preconfigured by `VIDEO_ENABLE`. They cover common video
+Video indexes are preconfigured by MIA during reset. They cover common video
 fields and buffers, so programs do not need to configure address, limit, step,
 or wrap behavior for normal video output. Each video index below steps forward
 after a read or write and wraps at its limit.
@@ -318,16 +348,17 @@ update_scroll:
 
 ## Loading Initial Video State
 
-A program normally initializes video in this order:
+MIA initializes video state and indexes automatically when it releases the 6502
+from reset, so a program can begin writing video immediately. A program normally
+initializes video in this order:
 
-1. issue `VIDEO_ENABLE`,
-2. load palettes through `VIDX_PALETTE_0-15`,
-3. load CHR banks through `VIDX_CHR_BANK_0-7`,
-4. fill background nametables and attributes,
-5. fill overlay nametable and attributes,
-6. initialize OAM sprite records,
-7. set scroll, layer flags, and active banks,
-8. enter the main loop.
+1. load palettes through `VIDX_PALETTE_0-15`,
+2. load CHR banks through `VIDX_CHR_BANK_0-7`,
+3. fill background nametables and attributes,
+4. fill overlay nametable and attributes,
+5. initialize OAM sprite records,
+6. set scroll, layer flags, and active banks,
+7. enter the main loop.
 
 The first client update after connection is a full refresh because MIA marks
 every syncable video page dirty. Large startup writes affect startup transfer
@@ -440,8 +471,7 @@ Video event bits live in the normal `IRQ_STATUS` register:
 | 7 | `IRQ_VIDEO_FRAME_ACKED` | client acknowledged the response |
 
 `IRQ_MASK` selects which pending event bits raise the physical IRQ line. Pending
-video event bits are cleared through the normal `IRQ_STATUS` mechanism, the same
-as other MIA IRQ sources.
+video event bits are cleared by reading `$FFF0`, the same as other MIA IRQ sources.
 
 For a clean client-paced loop, enable `IRQ_VIDEO_FRAME_ACKED`. For a lower
 latency loop, enable `IRQ_VIDEO_FRAME_SENT` and accept possible repair-time

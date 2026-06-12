@@ -1,6 +1,7 @@
 #include "mem.h"
 #include "etc/err.h"
 #include "etc/status.h"
+#include "irq/irq.h"
 #include "hardware/dma.h"
 #include "hardware/irq.h"
 
@@ -11,6 +12,9 @@ dma_channel_config config;
 void on_mia_dma_complete() {
     dma_irqn_acknowledge_channel(0, mia_dma_chan);
     mia_status_clear_flag(MIA_STAT_DMA_RUNNING);
+
+    // The asynchronous copy command has finished; signal command completion.
+    mia_irq_set_flag(IRQ_COMMAND);
 }
 
 // Initialize DMA channel for MIA RAM transfer

@@ -43,6 +43,10 @@ static enum mia_states {
 
 static volatile bool normal_mode_transition_requested = false;
 
+// Storage for the IRQ set-request accumulator declared in irq.h. Producers on
+// either core OR their source bits in; core 1 drains it in act_loop.
+atomic_ushort mia_irq_set_requests;
+
 static void fast_loader_init(void);
 static void mia_enter_normal_mode(void);
 
@@ -114,6 +118,10 @@ __attribute__((optimize("O1"))) static void __no_inline_not_in_flash_func(act_lo
     // In here we bypass the usual SDK calls as needed for performance.
     while (true) {
         mia_video_core1_poll();
+
+        // Core 1 owns irq_status and the IRQ line: fold in any set-requests
+        // raised by other contexts since the last pass.
+        mia_irq_drain_requests();
 
         // If PIO send and action in the RX FIFO
         if (!(MIA_ACT_PIO->fstat & (1u << (PIO_FSTAT_RXEMPTY_LSB + MIA_ACT_SM)))) {
@@ -236,14 +244,26 @@ __attribute__((optimize("O1"))) static void __no_inline_not_in_flash_func(act_lo
 
                             break;
                         case CASE_READ(0xFFEC):
-                            mia_regs->mia_error = error_pull();
+                            // The 6502 just read the head error; advance the queue
+                            // and preload the next one for the following read.
+                            error_consume();
                             break;
 
                         case CASE_WRITE(0xFFEE):
                         case CASE_WRITE(0xFFEF):
-                        case CASE_WRITE(0xFFF0):
-                        case CASE_WRITE(0xFFF1):
-                            mia_irq_eval();
+                            mia_irq_write_mask(address, data);
+                            break;
+
+                        case CASE_READ(0xFFF0):
+                            // IRQ acknowledge: reading $FFF0 clears all irq_status
+                            // bits and deasserts the pin. $FFF0 is a multiple-of-4
+                            // offset so it is already caught by the action PIO's
+                            // read-watch rule; no extra watch slot is needed.
+                            // $FFF1 is not watched — the 6502 reads it passively
+                            // (no side effect) before reading $FFF0 when it needs
+                            // the high byte of status.
+                            mia_irq_apply(0, mia_regs->irq_mask);
+                            break;
                     }
             }
         }
@@ -494,11 +514,25 @@ static void mia_enter_normal_mode(void) {
     REGS(0xFFFC) = kernel_target_address & 0xFF;
     REGS(0xFFFD) = kernel_target_address >> 8;
 
+    // Default the NMI and IRQ/BRK vectors into the kernel image as well. The
+    // kernel owns $FFFA-$FFFF and installs its real handlers before it enables
+    // interrupts; until then this keeps a stray NMI/IRQ/BRK inside kernel space
+    // instead of vectoring through $0000.
+    REGS(0xFFFA) = kernel_target_address & 0xFF;
+    REGS(0xFFFB) = kernel_target_address >> 8;
+    REGS(0xFFFE) = kernel_target_address & 0xFF;
+    REGS(0xFFFF) = kernel_target_address >> 8;
+
     // Ensure indices are initialized even if reset_runtime_state wasn't
     // the path taken to get here.
     mia_video_enable();
 
-    // Enter normal mode and watch index A's data port again for read-side effects.
+    // Enter normal mode. Every normal-mode register with a read side effect
+    // ($FFE0 idxa, $FFE4 idxb, $FFEC error) is a multiple of 4, so it is already
+    // caught by the action PIO's (addr & 3)==0 read rule. The configurable
+    // read-watch slot has nothing extra to watch here, so it is parked on $FFE0
+    // (redundant, harmless). Reserve it for a future non-multiple-of-4 read side
+    // effect (e.g. advancing a 16-bit MIA_ERROR on the $FFED read).
     mia_state = mia_state_normal;
     mia_status_set_flag(MIA_STAT_MASTER_MODE);
     __dmb(); // Ensure memory writes to regs/state are visible to Core 1

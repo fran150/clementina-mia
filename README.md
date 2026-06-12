@@ -62,8 +62,8 @@ MIA exposes 32 internal registers. The 6502 sees them at `$FFE0-$FFFF`; internal
 | `0D` | `$FFED` | `ERROR_H` | High byte of the error register. Currently unused by the error queue. |
 | `0E` | `$FFEE` | `IRQ_MASK_L` | Low byte of the IRQ mask. After writes, MIA re-evaluates the IRQ output. |
 | `0F` | `$FFEF` | `IRQ_MASK_H` | High byte of the IRQ mask. After writes, MIA re-evaluates the IRQ output. |
-| `10` | `$FFF0` | `IRQ_STATUS_L` | Low byte of pending IRQ flags. The 6502 can write status bits, then MIA re-evaluates the IRQ output. |
-| `11` | `$FFF1` | `IRQ_STATUS_H` | High byte of pending IRQ flags. Bit 15 is maintained as the aggregate IRQ-triggered state. |
+| `10` | `$FFF0` | `IRQ_STATUS_L` | Low byte of pending IRQ flags. Read-to-clear: reading this address clears all `IRQ_STATUS` bits and deasserts the IRQ line. Read `$FFF1` first if high-byte flags are needed. |
+| `11` | `$FFF1` | `IRQ_STATUS_H` | High byte of pending IRQ flags. Bit 15 (`IRQ_TRIGGERED`) is the aggregate summary. Passive read — no side effect; read before `$FFF0` to sample high-byte flags. |
 | `12-19` | `$FFF2-$FFF9` | `RESERVED` | Reserved register bytes. |
 | `1A` | `$FFFA` | `NMI_VECTOR_L` | Low byte of the 6502 NMI vector exposed by MIA. |
 | `1B` | `$FFFB` | `NMI_VECTOR_H` | High byte of the 6502 NMI vector exposed by MIA. |

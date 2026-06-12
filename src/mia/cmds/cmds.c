@@ -3,6 +3,7 @@
 #include "pico/multicore.h"
 
 #include "etc/status.h"
+#include "irq/irq.h"
 #include "mem/dma.h"
 #include "mem/indexes.h"
 #include "mem/regs.h"
@@ -90,12 +91,6 @@ void command_copy_indexes(uint8_t param[]) {
     mia_dma_transfer_init(idx[from].current_addr, idx[to].current_addr, count);
 }
 
-void command_video_enable(uint8_t param[]) {
-    UNUSED(param);
-
-    //mia_video_enable();
-}
-
 void command_video_force_full_refresh(uint8_t param[]) {
     UNUSED(param);
 
@@ -135,6 +130,11 @@ void on_fifo_irq() {
 
     // Clears the busy status flag in the MIA
     mia_status_clear_flag(MIA_STAT_CMD_RUNNING);
+
+    // Notify the 6502 that command execution finished. The bit latches and only
+    // raises the line if IRQ_COMMAND is enabled in IRQ_MASK. Asynchronous
+    // commands (e.g. the DMA copy) re-raise this again on actual completion.
+    mia_irq_set_flag(IRQ_COMMAND);
 }
 
 // Inits the command system. This prepares the lookup table of commands
@@ -157,7 +157,6 @@ void mia_command_init() {
 
     commands[0x10] = command_copy_indexes;
 
-    commands[0x40] = command_video_enable;
     commands[0x42] = command_video_force_full_refresh;
     commands[0x43] = command_video_set_mode;
 
