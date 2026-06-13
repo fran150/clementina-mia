@@ -5,5 +5,6 @@
 // Accumulates typed characters, handles backspace, and dispatches the
 // appropriate command handler (normal or monitor) when Enter is pressed.
 void con_process(void);
+void con_enter_input(void);
 
 #endif

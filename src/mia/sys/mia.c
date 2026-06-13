@@ -16,6 +16,7 @@
 #include "cmds/cmds.h"
 #include "hardware/gpio_mapping.h"
 #include "hardware/pio_mapping.h"
+#include "input/input.h"
 #include "irq/irq.h"
 #include "mem/dma.h"
 #include "mem/indexes.h"
@@ -107,6 +108,7 @@ void mia_reset_runtime_state(void) {
     // Pre-initialize video indices so they are ready the moment the 6502
     // is released from reset, preventing races with VIDEO_ENABLE.
     mia_video_enable();
+    mia_input_reset_runtime_state();
 
     fast_loader_init();
     mia_set_watch_address(0xFFE1);
@@ -264,6 +266,16 @@ __attribute__((optimize("O1"))) static void __no_inline_not_in_flash_func(act_lo
                             // the high byte of status.
                             mia_irq_apply(0, mia_regs->irq_mask);
                             break;
+
+                        case CASE_READ(0xFFF3):
+                            mia_input_core1_on_char_read();
+                            break;
+
+                        case CASE_WRITE(0xFFF2):
+                        case CASE_WRITE(0xFFF3):
+                        case CASE_WRITE(0xFFF4):
+                            mia_input_core1_refresh_registers();
+                            break;
                     }
             }
         }
@@ -277,6 +289,7 @@ void mia_service(void) {
     }
 
     mia_speed_service();
+    mia_input_service();
 }
 
 // Initializes the PIO program that monitors the CS and R/W enable pins and adjusts
@@ -526,17 +539,16 @@ static void mia_enter_normal_mode(void) {
     // Ensure indices are initialized even if reset_runtime_state wasn't
     // the path taken to get here.
     mia_video_enable();
+    mia_input_reset_runtime_state();
 
-    // Enter normal mode. Every normal-mode register with a read side effect
-    // ($FFE0 idxa, $FFE4 idxb, $FFEC error) is a multiple of 4, so it is already
-    // caught by the action PIO's (addr & 3)==0 read rule. The configurable
-    // read-watch slot has nothing extra to watch here, so it is parked on $FFE0
-    // (redundant, harmless). Reserve it for a future non-multiple-of-4 read side
-    // effect (e.g. advancing a 16-bit MIA_ERROR on the $FFED read).
+    // Enter normal mode. Most read side effects are on addresses where
+    // (addr & 3)==0 and are caught by the action PIO automatically. The
+    // configurable read-watch slot is used for INPUT_CHAR ($FFF3), which is
+    // read-to-pop.
     mia_state = mia_state_normal;
     mia_status_set_flag(MIA_STAT_MASTER_MODE);
     __dmb(); // Ensure memory writes to regs/state are visible to Core 1
-    mia_set_watch_address(0xFFE0);
+    mia_set_watch_address(0xFFF3);
     mia_drain_action_fifo();
 
     // Keep reset low for the configured number of PHI2 cycles, then release it
@@ -585,6 +597,8 @@ void mia_init(void)
     mia_command_init();
     // Init the mia memory
     mia_mem_init();
+    // Init input UDP/session state after memory is available.
+    mia_input_init();
     // Init video UDP/session state after memory is available.
     mia_video_init();
 

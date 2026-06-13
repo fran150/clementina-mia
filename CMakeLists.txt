@@ -66,6 +66,10 @@ add_executable(mia
     src/mia/con/con.c
     src/mia/con/con_cmds.c
     src/mia/con/monitor.c
+    src/mia/input/input.c
+    src/mia/input/input_state.c
+    src/mia/input/input_text.c
+    src/mia/input/input_wifi.c
     src/mia/net/wifi.c
     src/mia/sys/led.c
     src/mia/sys/mia.c
@@ -86,6 +90,7 @@ target_include_directories(mia PRIVATE
     src/mia/cmds
     src/mia/con
     src/mia/hardware
+    src/mia/input
     src/mia/irq
     src/mia/mem
     src/mia/net
@@ -108,8 +113,20 @@ target_link_libraries(mia
     pico_cyw43_arch_lwip_poll
 )
 
-# Enable USB output, disable UART output
-pico_enable_stdio_usb(mia 1)
+# Enable USB output in USB-device builds, disable UART output.
+if(DEFINED ENV{MIA_USB_MODE})
+    string(TOLOWER "$ENV{MIA_USB_MODE}" _mia_usb_mode)
+else()
+    set(_mia_usb_mode "device")
+endif()
+
+if(_mia_usb_mode STREQUAL "host")
+    target_compile_definitions(mia PRIVATE MIA_USB_MODE=1)
+    pico_enable_stdio_usb(mia 0)
+else()
+    target_compile_definitions(mia PRIVATE MIA_USB_MODE=0)
+    pico_enable_stdio_usb(mia 1)
+endif()
 pico_enable_stdio_uart(mia 0)
 
 # Create map/bin/hex/uf2 files
@@ -157,4 +174,20 @@ endif()
 
 if(DEFINED ENV{MIA_VIDEO_UDP_PORT})
     target_compile_definitions(mia PRIVATE MIA_VIDEO_UDP_PORT=$ENV{MIA_VIDEO_UDP_PORT})
+endif()
+
+if(DEFINED ENV{MIA_INPUT_UDP_PORT})
+    target_compile_definitions(mia PRIVATE MIA_INPUT_UDP_PORT=$ENV{MIA_INPUT_UDP_PORT})
+endif()
+
+# MIA_INPUT_DEFAULT_MODE is used in USB-device builds: console (default) or wifi.
+if(DEFINED ENV{MIA_INPUT_DEFAULT_MODE})
+    string(TOLOWER "$ENV{MIA_INPUT_DEFAULT_MODE}" _input_default_mode)
+    if(_input_default_mode STREQUAL "wifi")
+        target_compile_definitions(mia PRIVATE MIA_INPUT_DEFAULT_MODE=1)
+    else()
+        target_compile_definitions(mia PRIVATE MIA_INPUT_DEFAULT_MODE=0)
+    endif()
+else()
+    target_compile_definitions(mia PRIVATE MIA_INPUT_DEFAULT_MODE=0)
 endif()

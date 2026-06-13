@@ -3,6 +3,7 @@
 #include "pico/multicore.h"
 
 #include "etc/status.h"
+#include "input/input.h"
 #include "irq/irq.h"
 #include "mem/dma.h"
 #include "mem/indexes.h"
@@ -101,6 +102,14 @@ void command_video_set_mode(uint8_t param[]) {
     mia_video_set_mode(param[0]);
 }
 
+void command_input_set_mode(uint8_t param[]) {
+    (void)mia_input_set_mode((mia_input_mode_t)param[0]);
+}
+
+void command_input_set_probe(uint8_t param[]) {
+    (void)mia_input_set_probe(param[0], param[1]);
+}
+
 /**************************************************************************************************
  * Init and crosscore messaging handling
  **************************************************************************************************/
@@ -159,6 +168,9 @@ void mia_command_init() {
 
     commands[0x42] = command_video_force_full_refresh;
     commands[0x43] = command_video_set_mode;
+
+    commands[0x50] = command_input_set_mode;
+    commands[0x51] = command_input_set_probe;
 
     // Clear the FIFO IRQ
     multicore_fifo_clear_irq();

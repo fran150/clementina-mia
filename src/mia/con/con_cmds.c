@@ -8,11 +8,13 @@
 #include "mem/regs.h"
 #include "mem/mem.h"
 #include "etc/status.h"
+#include "input/input.h"
 #include "sys/speed.h"
 #include "net/wifi.h"
 
-// Defined in con.c — switches the engine into monitor mode.
+// Defined in con.c — switches the engine into monitor or input mode.
 extern void con_enter_monitor(void);
+extern void con_enter_input(void);
 
 // ---- Helpers ---------------------------------------------------------------
 
@@ -48,6 +50,7 @@ static void cmd_status(const char *args) {
     printf("  IDXB:   index %u\n", mia_regs->idxb_selector);
 
     mia_net_wifi_print_status();
+    mia_input_print_status();
 }
 
 static void cmd_speed(const char *args) {
@@ -128,6 +131,36 @@ static void cmd_monitor(const char *args) {
     con_enter_monitor();
 }
 
+static void cmd_input(const char *args) {
+    args = skip_ws(args);
+
+    if (!*args || strcmp(args, "status") == 0) {
+        mia_input_print_status();
+        printf("Usage: input [status|console|wifi]\n");
+        return;
+    }
+
+    if (strcmp(args, "console") == 0) {
+        if (!mia_input_set_mode(MIA_INPUT_MODE_CONSOLE)) {
+            printf("Input: console mode is not available in this build.\n");
+            return;
+        }
+        con_enter_input();
+        return;
+    }
+
+    if (strcmp(args, "wifi") == 0) {
+        if (!mia_input_set_mode(MIA_INPUT_MODE_WIFI)) {
+            printf("Input: Wi-Fi mode is not available.\n");
+            return;
+        }
+        printf("Input: Wi-Fi mode active on UDP port %u.\n", (unsigned)MIA_INPUT_UDP_PORT);
+        return;
+    }
+
+    printf("Usage: input [status|console|wifi]\n");
+}
+
 static void cmd_quit(const char *args) {
     (void)args;
     printf("Rebooting to BOOTSEL...\n");
@@ -148,6 +181,7 @@ static const con_cmd_t commands[] = {
     { "status",  cmd_status,  "Show MIA status and Wi-Fi state"          },
     { "speed",   cmd_speed,   "speed HZ  — set PHI2 clock frequency"     },
     { "wifi",    cmd_wifi,    "wifi [status|off|connect|ap]"             },
+    { "input",   cmd_input,   "input [status|console|wifi]"              },
     { "monitor", cmd_monitor, "Enter 65C02 machine language monitor"     },
     { "quit",    cmd_quit,    "Reboot to BOOTSEL"                        },
     { NULL, NULL, NULL }

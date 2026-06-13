@@ -23,7 +23,10 @@ typedef union {
         uint16_t mia_error;     // 0C, 0D (FFEC, FFED)
         uint16_t irq_mask;      // 0E, 0F (FFEE, FFEF)
         uint16_t irq_status;    // 10, 11 (FFF0, FFF1) read-to-clear: reading $FFF0 clears both bytes
-        uint8_t reserved[8];    // 12 - 19 (FFF2 - FFF9)
+        uint8_t input_status;   // 12 (FFF2)
+        uint8_t input_char;     // 13 (FFF3) read-to-pop
+        uint8_t input_char_count; // 14 (FFF4)
+        uint8_t reserved[5];    // 15 - 19 (FFF5 - FFF9)
         uint16_t nmi_vector;    // 1A, 1B (FFFA, FFFB)
         uint16_t reset_vector;  // 1C, 1D (FFFC, FFFD)
         uint16_t brk_vector;    // 1E, 1F (FFFE, FFFF)

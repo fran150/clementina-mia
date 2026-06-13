@@ -40,6 +40,27 @@ The video service listens on UDP port `6502` by default. Override it with
 `MIA_VIDEO_UDP_PORT` at build time if needed. If no SSID is provided, the
 firmware still builds and runs, but UDP video waits for network configuration.
 
+## Input subsystem
+
+The input design is documented under `docs/`. MIA exposes a text FIFO, fixed
+Keyboard/Keypad and Consumer HID bitmaps, mouse state, and four gamepad slots to
+the 6502.
+See [docs/input.md](docs/input.md),
+[docs/input-programmer-guide.md](docs/input-programmer-guide.md), and
+[docs/input-protocol.md](docs/input-protocol.md).
+
+The console command `input console` feeds terminal key presses into the input
+FIFO until `Ctrl+Q`. The console command `input wifi` enables the Wi-Fi input
+listener on UDP port `6503` and accepts one client at a time. The build-time
+default input mode for USB-device builds is selected with
+`MIA_INPUT_DEFAULT_MODE` and defaults to `console`. Building with
+`MIA_USB_MODE=host` disables USB stdio and boots MIA in the USB host input
+source; USB HID device decoding is reserved for the TinyUSB host integration.
+The 6502 can change input modes at any point in either USB role with the
+`CMD_INPUT_SET_MODE` command, which is especially useful in USB-host builds
+where terminal console commands are not available.
+Console input is text-only.
+
 ## Register Map
 
 MIA exposes 32 internal registers. The 6502 sees them at `$FFE0-$FFFF`; internally only the low 5 address bits are used.
@@ -64,7 +85,10 @@ MIA exposes 32 internal registers. The 6502 sees them at `$FFE0-$FFFF`; internal
 | `0F` | `$FFEF` | `IRQ_MASK_H` | High byte of the IRQ mask. After writes, MIA re-evaluates the IRQ output. |
 | `10` | `$FFF0` | `IRQ_STATUS_L` | Low byte of pending IRQ flags. Read-to-clear: reading this address clears all `IRQ_STATUS` bits and deasserts the IRQ line. Read `$FFF1` first if high-byte flags are needed. |
 | `11` | `$FFF1` | `IRQ_STATUS_H` | High byte of pending IRQ flags. Bit 15 (`IRQ_TRIGGERED`) is the aggregate summary. Passive read — no side effect; read before `$FFF0` to sample high-byte flags. |
-| `12-19` | `$FFF2-$FFF9` | `RESERVED` | Reserved register bytes. |
+| `12` | `$FFF2` | `INPUT_STATUS` | Text availability, held digital input, and active-source flags. |
+| `13` | `$FFF3` | `INPUT_CHAR` | Text FIFO read port. Reading pops one byte, or returns `$00` when empty. |
+| `14` | `$FFF4` | `INPUT_CHAR_COUNT` | Number of bytes currently queued in the text FIFO. |
+| `15-19` | `$FFF5-$FFF9` | `RESERVED` | Reserved register bytes. |
 | `1A` | `$FFFA` | `NMI_VECTOR_L` | Low byte of the 6502 NMI vector exposed by MIA. |
 | `1B` | `$FFFB` | `NMI_VECTOR_H` | High byte of the 6502 NMI vector exposed by MIA. |
 | `1C` | `$FFFC` | `RESET_VECTOR_L` | Low byte of the 6502 reset vector. Loader mode initializes this to `$FFE0`. |
@@ -152,6 +176,8 @@ Commands are requested by writing parameters to `CMD_PARAM1-3`, then writing the
 | `06` | `p1 = index id` | Peek the specified index's current RAM byte into `IDXA_PORT` without stepping. |
 | `07` | `p1 = index id` | Peek the specified index's current RAM byte into `IDXB_PORT` without stepping. |
 | `10` | `p1 = source index`, `p2 = destination index`, `p3 = byte count` | Start a DMA copy inside MIA RAM. Source and destination indexes are not moved. |
+| `50` | `p1 = input mode`, `p2 = 0`, `p3 = 0` | Request an input mode change: `0` = console, `1` = Wi-Fi, `2` = USB host. |
+| `51` | `p1 = input probe`, `p2 = byte offset`, `p3 = 0` | Position an input probe: `0-7` = keyboard probes, `8-15` = consumer probes. |
 
 Unassigned command ids are no-ops.
 
@@ -169,6 +195,9 @@ Unassigned command ids are no-ops.
 | 5 | `IRQ_VIDEO_FRAME_REQUEST` | Video client update request accepted. |
 | 6 | `IRQ_VIDEO_FRAME_SENT` | Initial video response send completed. |
 | 7 | `IRQ_VIDEO_FRAME_ACKED` | Video client acknowledged the response. |
+| 8 | `IRQ_INPUT_KEYBOARD` | Enabled keyboard, consumer, or text input event pending. |
+| 9 | `IRQ_INPUT_MOUSE` | Enabled mouse input event pending. |
+| 10 | `IRQ_INPUT_GAMEPAD` | Enabled gamepad input event pending. |
 | 15 | `IRQ_TRIGGERED` | Aggregate state maintained by MIA when any masked IRQ flag is pending. |
 
 ## Status
@@ -226,4 +255,8 @@ make build
 make flash
 ```
 
-USB stdio is enabled and UART stdio is disabled. During the initial debug loop, sending `c` over USB continues into MIA initialization, and sending `q` reboots the Pico into BOOTSEL.
+USB stdio is enabled and UART stdio is disabled in the default USB-device build.
+In a `MIA_USB_MODE=host` build, USB stdio is disabled for the USB host input
+source. During the initial debug loop in a USB-device build, sending `c` over
+USB continues into MIA initialization, and sending `q` reboots the Pico into
+BOOTSEL.

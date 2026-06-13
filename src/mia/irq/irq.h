@@ -16,6 +16,9 @@
 #define IRQ_VIDEO_FRAME_REQUEST  (1u << 5)
 #define IRQ_VIDEO_FRAME_SENT     (1u << 6)
 #define IRQ_VIDEO_FRAME_ACKED    (1u << 7)
+#define IRQ_INPUT_KEYBOARD       (1u << 8)
+#define IRQ_INPUT_MOUSE          (1u << 9)
+#define IRQ_INPUT_GAMEPAD        (1u << 10)
 #define IRQ_TRIGGERED            (1u << 15)   // summary bit, maintained by core 1
 
 // IRQ ownership model
