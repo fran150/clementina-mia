@@ -13,6 +13,7 @@
 void mia_video_init(void);
 void mia_video_reset_runtime_state(void);
 void mia_video_service(void);
+void mia_video_report_errors(void);
 
 void mia_video_enable(void);
 void mia_video_force_full_refresh(void);

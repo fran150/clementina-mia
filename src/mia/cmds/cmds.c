@@ -2,6 +2,7 @@
 
 #include "pico/multicore.h"
 
+#include "etc/err.h"
 #include "etc/status.h"
 #include "input/input.h"
 #include "irq/irq.h"
@@ -103,11 +104,15 @@ void command_video_set_mode(uint8_t param[]) {
 }
 
 void command_input_set_mode(uint8_t param[]) {
-    (void)mia_input_set_mode((mia_input_mode_t)param[0]);
+    if (!mia_input_set_mode((mia_input_mode_t)param[0])) {
+        error_push(ERROR_INPUT_MODE_UNAVAILABLE);
+    }
 }
 
 void command_input_set_probe(uint8_t param[]) {
-    (void)mia_input_set_probe(param[0], param[1]);
+    if (!mia_input_set_probe(param[0], param[1])) {
+        error_push(ERROR_INPUT_PROBE_INVALID);
+    }
 }
 
 /**************************************************************************************************
@@ -130,8 +135,11 @@ void on_fifo_irq() {
         uint8_t p2 = (msg >> 8)  & 0xFF;
         uint8_t p3 = msg         & 0xFF;
 
-        // Set the 
-        commands[id]((uint8_t[3]) { p1, p2, p3 });
+        if (commands[id] == command_empty) {
+            error_push(ERROR_CMD_UNKNOWN);
+        } else {
+            commands[id]((uint8_t[3]) { p1, p2, p3 });
+        }
     }
 
     // Clears the FIFO interrupt

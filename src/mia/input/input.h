@@ -65,6 +65,7 @@ typedef enum {
 void mia_input_init(void);
 void mia_input_reset_runtime_state(void);
 void mia_input_service(void);
+void mia_input_report_errors(void);
 
 bool mia_input_set_mode(mia_input_mode_t mode);
 mia_input_mode_t mia_input_get_mode(void);

@@ -21,6 +21,7 @@
 #include "mem/dma.h"
 #include "mem/indexes.h"
 #include "mem/regs.h"
+#include "net/wifi.h"
 #include "rom/kernel_data.h"
 #include "sys/reset.h"
 #include "sys/speed.h"
@@ -77,6 +78,8 @@ static inline __force_inline void __not_in_flash_func(mia_core1_try_push_command
     if (sio_hw->fifo_st & SIO_FIFO_ST_RDY_BITS) {
         sio_hw->fifo_wr = msg;
         __sev();
+    } else {
+        error_defer(ERROR_DEFER_CMD_QUEUE_FULL);
     }
 }
 
@@ -288,6 +291,7 @@ void mia_service(void) {
         mia_enter_normal_mode();
     }
 
+    error_service();
     mia_speed_service();
     mia_input_service();
 }
@@ -540,6 +544,9 @@ static void mia_enter_normal_mode(void) {
     // the path taken to get here.
     mia_video_enable();
     mia_input_reset_runtime_state();
+    mia_net_wifi_report_errors();
+    mia_video_report_errors();
+    mia_input_report_errors();
 
     // Enter normal mode. Most read side effects are on addresses where
     // (addr & 3)==0 and are caught by the action PIO automatically. The

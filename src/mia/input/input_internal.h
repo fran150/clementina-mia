@@ -129,6 +129,7 @@ void input_apply_gamepad_state(uint8_t player, const uint8_t *next);
 bool input_wifi_available(void);
 void input_wifi_init(void);
 void input_wifi_reset_runtime_state(void);
+void input_wifi_report_errors(void);
 void input_invalidate_wifi_session(bool publish_events);
 
 #endif

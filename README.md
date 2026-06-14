@@ -179,7 +179,7 @@ Commands are requested by writing parameters to `CMD_PARAM1-3`, then writing the
 | `50` | `p1 = input mode`, `p2 = 0`, `p3 = 0` | Request an input mode change: `0` = console, `1` = Wi-Fi, `2` = USB host. |
 | `51` | `p1 = input probe`, `p2 = byte offset`, `p3 = 0` | Position an input probe: `0-7` = keyboard probes, `8-15` = consumer probes. |
 
-Unassigned command ids are no-ops.
+Unassigned command ids report `ERROR_CMD_UNKNOWN`.
 
 ## IRQ Status
 
@@ -214,14 +214,25 @@ Unassigned command ids are no-ops.
 
 ## Errors
 
-Errors are stored in a 16-entry ring buffer. Reading `$FFEC` pulls one error into `ERROR_L`; when the queue becomes empty, `MIA_STAT_ERRORS` is cleared.
+Errors are stored in a 16-entry ring buffer. Reading `$FFEC` pulls one error into `ERROR_L`; when the queue becomes empty, `MIA_STAT_ERRORS` is cleared. If the queue fills, MIA keeps error reporting non-blocking by discarding the oldest unread entry and queuing `ERROR_QUEUE_OVERFLOW`.
 
 | Code | Name | Description |
 | ---- | ---- | ----------- |
 | `01` | `ERROR_MIA_CANNOT_ALLOCATE_RAM` | Reserved/startup RAM allocation failure code. Current RAM is statically allocated, so this should not normally occur. |
+| `02` | `ERROR_QUEUE_OVERFLOW` | Error queue overwrote one or more unread errors. |
 | `10` | `ERROR_DMA_SIZE_ZERO` | DMA copy requested with a byte count of zero. |
 | `11` | `ERROR_DMA_SRC_WILL_OVERFLOW` | DMA source range would exceed the 128 KiB MIA RAM region. |
 | `12` | `ERROR_DMA_TGT_WILL_OVERFLOW` | DMA destination range would exceed the 128 KiB MIA RAM region. |
+| `20` | `ERROR_CMD_QUEUE_FULL` | Command trigger could not be queued for core 0. |
+| `21` | `ERROR_CMD_UNKNOWN` | Unknown command id. |
+| `30` | `ERROR_WIFI_INIT_FAILED` | CYW43/Wi-Fi chip initialization failed. |
+| `31` | `ERROR_WIFI_CONNECT_FAILED` | STA connection failed. |
+| `40` | `ERROR_VIDEO_UDP_ALLOC_FAILED` | Video UDP PCB allocation failed. |
+| `41` | `ERROR_VIDEO_UDP_BIND_FAILED` | Video UDP bind failed. |
+| `50` | `ERROR_INPUT_MODE_UNAVAILABLE` | Requested input mode is not available in this build/runtime. |
+| `51` | `ERROR_INPUT_PROBE_INVALID` | Requested input probe id is invalid. |
+| `52` | `ERROR_INPUT_UDP_ALLOC_FAILED` | Input UDP PCB allocation failed. |
+| `53` | `ERROR_INPUT_UDP_BIND_FAILED` | Input UDP bind failed. |
 
 ## PHI2 Speed Control
 

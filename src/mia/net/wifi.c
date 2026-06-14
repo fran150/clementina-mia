@@ -8,6 +8,8 @@
 #include "lwip/netif.h"
 #include "lwip/ip4_addr.h"
 
+#include "etc/err.h"
+
 // Compile-time default mode (set by CMakeLists.txt from MIA_WIFI_MODE env var).
 // 0 = off, 1 = sta, 2 = ap
 #ifndef MIA_WIFI_DEFAULT_MODE
@@ -26,12 +28,27 @@
 
 static mia_wifi_mode_t current_mode = MIA_WIFI_MODE_OFF;
 static char current_ssid[64];
+static uint8_t wifi_error_code;
+
+static bool wifi_arch_available(void) {
+    if (wifi_error_code == ERROR_WIFI_INIT_FAILED) {
+        printf("Wi-Fi: CYW43 is unavailable.\n");
+        error_push(ERROR_WIFI_INIT_FAILED);
+        return false;
+    }
+
+    return true;
+}
 
 static uint32_t sta_auth(const char *password) {
     return strlen(password) == 0 ? CYW43_AUTH_OPEN : CYW43_AUTH_WPA2_AES_PSK;
 }
 
 bool mia_net_wifi_connect(const char *ssid, const char *password) {
+    if (!wifi_arch_available()) {
+        return false;
+    }
+
     cyw43_arch_enable_sta_mode();
     current_mode = MIA_WIFI_MODE_OFF;
 
@@ -39,12 +56,15 @@ bool mia_net_wifi_connect(const char *ssid, const char *password) {
     int rc = cyw43_arch_wifi_connect_timeout_ms(ssid, password, sta_auth(password), 30000);
     if (rc != 0) {
         printf("Wi-Fi: connection failed (%d)\n", rc);
+        wifi_error_code = ERROR_WIFI_CONNECT_FAILED;
+        error_push(ERROR_WIFI_CONNECT_FAILED);
         return false;
     }
 
     strncpy(current_ssid, ssid, sizeof(current_ssid) - 1);
     current_ssid[sizeof(current_ssid) - 1] = '\0';
     current_mode = MIA_WIFI_MODE_STA;
+    wifi_error_code = 0;
 
     if (netif_default != NULL) {
         printf("Wi-Fi: connected at %s\n", ip4addr_ntoa(netif_ip4_addr(netif_default)));
@@ -55,6 +75,10 @@ bool mia_net_wifi_connect(const char *ssid, const char *password) {
 }
 
 bool mia_net_wifi_start_ap(const char *ssid, const char *password) {
+    if (!wifi_arch_available()) {
+        return false;
+    }
+
     uint32_t auth = sta_auth(password);
     cyw43_arch_enable_ap_mode(ssid, password, auth);
 
@@ -67,6 +91,7 @@ bool mia_net_wifi_start_ap(const char *ssid, const char *password) {
     strncpy(current_ssid, ssid, sizeof(current_ssid) - 1);
     current_ssid[sizeof(current_ssid) - 1] = '\0';
     current_mode = MIA_WIFI_MODE_AP;
+    wifi_error_code = 0;
 
     printf("Wi-Fi: AP '%s' active at %d.%d.%d.%d\n",
            ssid,
@@ -82,6 +107,9 @@ void mia_net_wifi_off(void) {
     }
     current_mode = MIA_WIFI_MODE_OFF;
     current_ssid[0] = '\0';
+    if (wifi_error_code != ERROR_WIFI_INIT_FAILED) {
+        wifi_error_code = 0;
+    }
     printf("Wi-Fi: off\n");
 }
 
@@ -107,6 +135,16 @@ void mia_net_wifi_print_status(void) {
                    current_ssid,
                    MIA_NET_AP_IP_A, MIA_NET_AP_IP_B, MIA_NET_AP_IP_C, MIA_NET_AP_IP_D);
             break;
+    }
+}
+
+void mia_net_wifi_record_error(uint8_t error) {
+    wifi_error_code = error;
+}
+
+void mia_net_wifi_report_errors(void) {
+    if (wifi_error_code != 0) {
+        error_push(wifi_error_code);
     }
 }
 

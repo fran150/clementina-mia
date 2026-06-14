@@ -2,6 +2,7 @@
 #define _MIA_NET_WIFI_H_
 
 #include <stdbool.h>
+#include <stdint.h>
 
 typedef enum {
     MIA_WIFI_MODE_OFF,
@@ -31,5 +32,9 @@ mia_wifi_mode_t mia_net_wifi_mode(void);
 
 // Print a human-readable status line to stdout.
 void mia_net_wifi_print_status(void);
+
+// Remember/report Wi-Fi setup failures that happen before MIA enters normal mode.
+void mia_net_wifi_record_error(uint8_t error);
+void mia_net_wifi_report_errors(void);
 
 #endif

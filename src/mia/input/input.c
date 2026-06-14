@@ -133,6 +133,10 @@ void mia_input_init(void) {
     mia_input_reset_runtime_state();
 }
 
+void mia_input_report_errors(void) {
+    input_wifi_report_errors();
+}
+
 bool mia_input_set_mode(mia_input_mode_t mode) {
     if (!input_mode_available(mode)) {
         return false;

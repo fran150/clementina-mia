@@ -7,6 +7,7 @@
 #include "lwip/pbuf.h"
 #include "lwip/udp.h"
 
+#include "etc/err.h"
 #include "etc/status.h"
 #include "irq/irq.h"
 #include "mem/indexes.h"
@@ -61,6 +62,7 @@ static uint32_t video_last_peer_seq;
 static uint8_t video_rx_packet[MIA_VIDEO_UDP_PAYLOAD_SIZE];
 static uint8_t video_tx_packet[MIA_VIDEO_UDP_PAYLOAD_SIZE];
 static bool video_enable = false;
+static uint8_t video_init_error;
 
 static void video_clear_dirty_map(uint8_t map_index);
 static void video_clear_dirty_maps(void);
@@ -85,6 +87,7 @@ static void video_reset_session(const ip_addr_t *addr, uint16_t port);
 static void video_invalidate_session(void);
 static void video_release_pending_response(bool acknowledged);
 static void video_protocol_error(const ip_addr_t *addr, uint16_t port, uint16_t request_id, uint32_t frame_id);
+static void video_protocol_error_for_malformed(const uint8_t *packet, uint16_t packet_len, const ip_addr_t *addr, uint16_t port);
 static void video_handle_datagram(const uint8_t *packet, uint16_t packet_len, const ip_addr_t *addr, uint16_t port);
 static void video_handle_request_frame(const mia_video_header_t *header, const uint8_t *payload, const ip_addr_t *addr, uint16_t port);
 static void video_handle_request_frame_no_pending(uint16_t request_id, uint32_t last_complete, const ip_addr_t *addr, uint16_t port);
@@ -103,6 +106,7 @@ void mia_video_init(void) {
     video_pcb = udp_new();
     if (video_pcb == NULL) {
         printf("MIA video UDP allocation failed\n");
+        video_init_error = ERROR_VIDEO_UDP_ALLOC_FAILED;
         return;
     }
 
@@ -111,12 +115,20 @@ void mia_video_init(void) {
         printf("MIA video UDP bind failed on port %u: %d\n", (unsigned)MIA_VIDEO_UDP_PORT, err);
         udp_remove(video_pcb);
         video_pcb = NULL;
+        video_init_error = ERROR_VIDEO_UDP_BIND_FAILED;
         return;
     }
 
     udp_recv(video_pcb, video_udp_recv, NULL);
     video_udp_ready = true;
+    video_init_error = 0;
     printf("MIA video UDP listening on port %u\n", (unsigned)MIA_VIDEO_UDP_PORT);
+}
+
+void mia_video_report_errors(void) {
+    if (video_init_error != 0) {
+        error_push(video_init_error);
+    }
 }
 
 void mia_video_reset_runtime_state(void) {
@@ -564,9 +576,27 @@ static void video_protocol_error(const ip_addr_t *addr, uint16_t port, uint16_t 
     (void)video_send_packet(video_tx_packet, packet_len, addr, port);
 }
 
+static void video_protocol_error_for_malformed(const uint8_t *packet, uint16_t packet_len, const ip_addr_t *addr, uint16_t port) {
+    if (packet_len < MIA_VIDEO_HEADER_SIZE ||
+        mia_video_read_u16(&packet[0]) != MIA_VIDEO_MAGIC ||
+        packet[2] != MIA_VIDEO_VERSION) {
+        return;
+    }
+
+    mia_video_header_t partial;
+    partial.session_id = mia_video_read_u32(&packet[4]);
+    partial.frame_id = mia_video_read_u32(&packet[16]);
+    partial.request_id = mia_video_read_u16(&packet[20]);
+
+    if (video_accepts_session_packet(&partial, addr, port)) {
+        video_protocol_error(addr, port, partial.request_id, partial.frame_id);
+    }
+}
+
 static void video_handle_datagram(const uint8_t *packet, uint16_t packet_len, const ip_addr_t *addr, uint16_t port) {
     mia_video_header_t header;
     if (!mia_video_parse_header(packet, packet_len, &header)) {
+        video_protocol_error_for_malformed(packet, packet_len, addr, port);
         return;
     }
 

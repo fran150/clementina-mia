@@ -6,6 +6,8 @@
 #include "lwip/pbuf.h"
 #include "lwip/udp.h"
 
+#include "etc/err.h"
+
 #define INPUT_MAGIC_0 'M'
 #define INPUT_MAGIC_1 'I'
 #define INPUT_MAGIC_2 'I'
@@ -45,6 +47,7 @@ static uint32_t input_next_session_value;
 static uint32_t input_tx_seq;
 static uint8_t input_rx_packet[INPUT_RX_PACKET_SIZE];
 static uint8_t input_tx_packet[INPUT_TX_PACKET_SIZE];
+static uint8_t input_wifi_init_error;
 
 static void input_udp_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr, u16_t port);
 static void input_handle_datagram(const uint8_t *packet, uint16_t packet_len, const ip_addr_t *addr, uint16_t port);
@@ -65,6 +68,7 @@ void input_wifi_init(void) {
     input_pcb = udp_new();
     if (input_pcb == NULL) {
         printf("MIA input UDP allocation failed\n");
+        input_wifi_init_error = ERROR_INPUT_UDP_ALLOC_FAILED;
         return;
     }
 
@@ -73,12 +77,20 @@ void input_wifi_init(void) {
         printf("MIA input UDP bind failed on port %u: %d\n", (unsigned)MIA_INPUT_UDP_PORT, err);
         udp_remove(input_pcb);
         input_pcb = NULL;
+        input_wifi_init_error = ERROR_INPUT_UDP_BIND_FAILED;
         return;
     }
 
     udp_recv(input_pcb, input_udp_recv, NULL);
     input_udp_ready = true;
+    input_wifi_init_error = 0;
     printf("MIA input UDP listening on port %u\n", (unsigned)MIA_INPUT_UDP_PORT);
+}
+
+void input_wifi_report_errors(void) {
+    if (input_wifi_init_error != 0) {
+        error_push(input_wifi_init_error);
+    }
 }
 
 static void input_apply_device_flags_from_wifi_capabilities(uint16_t capabilities) {

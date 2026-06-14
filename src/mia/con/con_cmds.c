@@ -5,9 +5,10 @@
 
 #include "pico/bootrom.h"
 
+#include "etc/err.h"
+#include "etc/status.h"
 #include "mem/regs.h"
 #include "mem/mem.h"
-#include "etc/status.h"
 #include "input/input.h"
 #include "sys/speed.h"
 #include "net/wifi.h"
@@ -21,6 +22,27 @@ extern void con_enter_input(void);
 static const char *skip_ws(const char *p) {
     while (*p == ' ' || *p == '\t') p++;
     return p;
+}
+
+static const char *error_name(uint8_t code) {
+    switch (code) {
+        case ERROR_MIA_CANNOT_ALLOCATE_RAM: return "ERROR_MIA_CANNOT_ALLOCATE_RAM";
+        case ERROR_QUEUE_OVERFLOW: return "ERROR_QUEUE_OVERFLOW";
+        case ERROR_DMA_SIZE_ZERO: return "ERROR_DMA_SIZE_ZERO";
+        case ERROR_DMA_SRC_WILL_OVERFLOW: return "ERROR_DMA_SRC_WILL_OVERFLOW";
+        case ERROR_DMA_TGT_WILL_OVERFLOW: return "ERROR_DMA_TGT_WILL_OVERFLOW";
+        case ERROR_CMD_QUEUE_FULL: return "ERROR_CMD_QUEUE_FULL";
+        case ERROR_CMD_UNKNOWN: return "ERROR_CMD_UNKNOWN";
+        case ERROR_WIFI_INIT_FAILED: return "ERROR_WIFI_INIT_FAILED";
+        case ERROR_WIFI_CONNECT_FAILED: return "ERROR_WIFI_CONNECT_FAILED";
+        case ERROR_VIDEO_UDP_ALLOC_FAILED: return "ERROR_VIDEO_UDP_ALLOC_FAILED";
+        case ERROR_VIDEO_UDP_BIND_FAILED: return "ERROR_VIDEO_UDP_BIND_FAILED";
+        case ERROR_INPUT_MODE_UNAVAILABLE: return "ERROR_INPUT_MODE_UNAVAILABLE";
+        case ERROR_INPUT_PROBE_INVALID: return "ERROR_INPUT_PROBE_INVALID";
+        case ERROR_INPUT_UDP_ALLOC_FAILED: return "ERROR_INPUT_UDP_ALLOC_FAILED";
+        case ERROR_INPUT_UDP_BIND_FAILED: return "ERROR_INPUT_UDP_BIND_FAILED";
+        default: return "UNKNOWN_ERROR";
+    }
 }
 
 // ---- Command handlers -------------------------------------------------------
@@ -51,6 +73,46 @@ static void cmd_status(const char *args) {
 
     mia_net_wifi_print_status();
     mia_input_print_status();
+}
+
+static void cmd_errors_list(void) {
+    uint8_t first = _err_first;
+    uint8_t last = _err_last;
+    uint8_t count = (uint8_t)((last - first) & 15u);
+
+    printf("MIA Errors: %u queued", (unsigned)count);
+    if (count != 0) {
+        printf("  current: 0x%02X %s", (unsigned)mia_regs->mia_error, error_name((uint8_t)mia_regs->mia_error));
+    }
+    printf("\n");
+
+    if (count == 0) {
+        printf("  none\n");
+        return;
+    }
+
+    for (uint8_t i = 0; i < count && i < 15u; i++) {
+        uint8_t pos = (first + i) & 15u;
+        uint8_t code = _err_buf[pos];
+        printf("  %2u: 0x%02X %s\n", (unsigned)i, (unsigned)code, error_name(code));
+    }
+}
+
+static void cmd_errors(const char *args) {
+    args = skip_ws(args);
+
+    if (strcmp(args, "list") == 0) {
+        cmd_errors_list();
+        return;
+    }
+
+    if (strcmp(args, "clear") == 0) {
+        error_reset();
+        printf("MIA Errors cleared.\n");
+        return;
+    }
+
+    printf("Usage: errors [list|clear]\n");
 }
 
 static void cmd_speed(const char *args) {
@@ -179,6 +241,7 @@ typedef struct {
 
 static const con_cmd_t commands[] = {
     { "status",  cmd_status,  "Show MIA status and Wi-Fi state"          },
+    { "errors",  cmd_errors,  "errors [list|clear]"                      },
     { "speed",   cmd_speed,   "speed HZ  — set PHI2 clock frequency"     },
     { "wifi",    cmd_wifi,    "wifi [status|off|connect|ap]"             },
     { "input",   cmd_input,   "input [status|console|wifi]"              },
