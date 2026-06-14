@@ -7,8 +7,9 @@
 ;       Ready
 ;
 ; at the upper-left corner, places a blinking cursor on the line below, then
-; polls MIA's input text FIFO and echoes typed characters to the screen. The
-; arrow keys move the cursor through the full 40x25 screen.
+; plays a short MIA audio test melody. It then polls MIA's input text FIFO and
+; echoes typed characters to the screen. The arrow keys move the cursor through
+; the full 40x25 screen.
 ;
 ; The background uses the C64 lowercase/uppercase font plane. Nametable cells
 ; hold C64 screen codes, not ASCII. Printable ASCII is converted just enough for
@@ -56,6 +57,24 @@ VIDX_BG_NT_0       = $A8
 
 ; ---------------------------------------------------------------- commands
 CMD_VIDEO_SET_MODE = $43
+CMD_AUDIO_ENABLE   = $60
+CMD_AUDIO_STOP     = $61
+
+; ---------------------------------------------------------------- audio indexes
+AIDX_AUDIO_CH0     = $D1
+
+; ---------------------------------------------------------------- audio values
+AUDIO_WAVE_TRIANGLE = $03
+AUDIO_GATE          = $01
+AUDIO_RESET_PHASE   = $02
+
+NOTE_C4            = $105A
+NOTE_D4            = $125B
+NOTE_E4            = $149A
+NOTE_G4            = $1880
+NOTE_C5            = $20B4
+NOTE_D5            = $24B5
+NOTE_E5            = $2934
 
 ; ---------------------------------------------------------------- layout
 SCREEN_W           = 40
@@ -102,6 +121,10 @@ COL_FG             = $FFFF         ; text: white
 
 ; ---------------------------------------------------------------- timing
 BLINK_TICKS_HI     = $20
+MELODY_DUR_SHORT   = $08
+MELODY_DUR_MEDIUM  = $10
+MELODY_DUR_LONG    = $18
+MELODY_DUR_REST    = $06
 
 ; ---------------------------------------------------------------- zero page
 ptr                = $00           ; 16-bit down-counter / scratch
@@ -117,6 +140,9 @@ arrow_current      = $0A
 arrow_previous     = $0B
 arrow_pressed      = $0C
 escape_state       = $0D
+melody_timer_lo    = $0E
+melody_timer_hi    = $0F
+melody_index       = $10
 
 .segment "CODE"
 
@@ -187,10 +213,13 @@ reset:
         lda     #CMD_VIDEO_SET_MODE
         sta     CMD_TRIGGER
 
+        jsr     init_test_melody
+
 main_loop:
         jsr     poll_input
         jsr     poll_keyboard
         jsr     tick_cursor
+        jsr     tick_test_melody
         jmp     main_loop
 
 ; ---------------------------------------------------------------------------
@@ -281,6 +310,114 @@ init_cursor:
         sta     escape_state
         lda     #CH_SPACE
         sta     cursor_under
+        rts
+
+; ---------------------------------------------------------------------------
+; Boot audio test melody
+; ---------------------------------------------------------------------------
+
+init_test_melody:
+        lda     #$00
+        sta     melody_index
+        sta     melody_timer_lo
+        sta     melody_timer_hi
+
+        jsr     start_next_melody_event
+
+        lda     #CMD_AUDIO_ENABLE
+        sta     CMD_TRIGGER
+        rts
+
+tick_test_melody:
+        lda     melody_index
+        cmp     #$FF
+        beq     @done
+
+        lda     melody_timer_lo
+        bne     @dec_lo
+        lda     melody_timer_hi
+        beq     @next
+        dec     melody_timer_hi
+
+@dec_lo:
+        dec     melody_timer_lo
+        rts
+
+@next:
+        jsr     start_next_melody_event
+
+@done:
+        rts
+
+start_next_melody_event:
+        lda     melody_index
+        asl
+        asl
+        tay
+
+        lda     boot_melody,y
+        sta     cell_value
+        iny
+        lda     boot_melody,y
+        sta     ptr
+        iny
+        lda     boot_melody,y
+        sta     melody_timer_hi
+        lda     #$00
+        sta     melody_timer_lo
+
+        lda     cell_value
+        ora     ptr
+        bne     @note
+
+        lda     melody_timer_hi
+        beq     @end
+
+        jsr     release_melody_voice
+        inc     melody_index
+        rts
+
+@note:
+        lda     #AIDX_AUDIO_CH0
+        sta     IDXA_SELECT
+        lda     cell_value
+        sta     IDXA_PORT
+        lda     ptr
+        sta     IDXA_PORT
+        lda     #$80                    ; pulse width, kept valid for waveform tests
+        sta     IDXA_PORT
+        lda     #$14                    ; attack=1, decay=4
+        sta     IDXA_PORT
+        lda     #$C5                    ; sustain=C, release=5
+        sta     IDXA_PORT
+        lda     #AUDIO_WAVE_TRIANGLE
+        sta     IDXA_PORT
+        lda     #$00                    ; pan center
+        sta     IDXA_PORT
+        lda     #AUDIO_GATE | AUDIO_RESET_PHASE
+        sta     IDXA_PORT
+
+        inc     melody_index
+        rts
+
+@end:
+        jsr     release_melody_voice
+        lda     #CMD_AUDIO_STOP
+        sta     CMD_TRIGGER
+        lda     #$FF
+        sta     melody_index
+        rts
+
+release_melody_voice:
+        lda     #AIDX_AUDIO_CH0
+        sta     IDXA_SELECT
+        ldx     #$07
+@skip:
+        lda     IDXA_PORT
+        dex
+        bne     @skip
+        lda     #$00
+        sta     IDXA_PORT
         rts
 
 ; ---------------------------------------------------------------------------
@@ -736,3 +873,23 @@ title_text:
 ; "Ready" as C64 lowercase-set screen codes.
 ready_text:
         .byte $52,$05,$01,$04,$19
+
+; Four bytes per event: frequency low, frequency high, duration high byte, unused.
+; A zero frequency with nonzero duration is a rest; all zeroes end the melody.
+boot_melody:
+        .byte <NOTE_C4, >NOTE_C4, MELODY_DUR_SHORT, $00
+        .byte <NOTE_D4, >NOTE_D4, MELODY_DUR_SHORT, $00
+        .byte <NOTE_E4, >NOTE_E4, MELODY_DUR_SHORT, $00
+        .byte <NOTE_C4, >NOTE_C4, MELODY_DUR_SHORT, $00
+        .byte <NOTE_C4, >NOTE_C4, MELODY_DUR_SHORT, $00
+        .byte <NOTE_D4, >NOTE_D4, MELODY_DUR_SHORT, $00
+        .byte <NOTE_E4, >NOTE_E4, MELODY_DUR_SHORT, $00
+        .byte <NOTE_C4, >NOTE_C4, MELODY_DUR_MEDIUM, $00
+        .byte <NOTE_E4, >NOTE_E4, MELODY_DUR_SHORT, $00
+        .byte <NOTE_G4, >NOTE_G4, MELODY_DUR_SHORT, $00
+        .byte <NOTE_C5, >NOTE_C5, MELODY_DUR_MEDIUM, $00
+        .byte <NOTE_E5, >NOTE_E5, MELODY_DUR_SHORT, $00
+        .byte <NOTE_D5, >NOTE_D5, MELODY_DUR_SHORT, $00
+        .byte <NOTE_C5, >NOTE_C5, MELODY_DUR_LONG, $00
+        .byte $00, $00, MELODY_DUR_REST, $00
+        .byte $00, $00, $00, $00
