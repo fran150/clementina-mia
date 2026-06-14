@@ -32,13 +32,6 @@
 #define INPUT_WELCOME_BUSY 0x01u
 #define INPUT_WELCOME_UNSUPPORTED_VERSION 0x02u
 
-#define INPUT_CAP_TEXT     (1u << 0)
-#define INPUT_CAP_KEYBOARD (1u << 1)
-#define INPUT_CAP_CONSUMER (1u << 2)
-#define INPUT_CAP_MOUSE    (1u << 3)
-#define INPUT_CAP_GAMEPAD  (1u << 4)
-#define INPUT_CAP_ALL      (INPUT_CAP_TEXT | INPUT_CAP_KEYBOARD | INPUT_CAP_CONSUMER | INPUT_CAP_MOUSE | INPUT_CAP_GAMEPAD)
-
 bool input_udp_ready;
 input_wifi_session_t wifi_session;
 

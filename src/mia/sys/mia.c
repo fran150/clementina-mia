@@ -23,6 +23,7 @@
 #include "mem/regs.h"
 #include "net/wifi.h"
 #include "rom/kernel_data.h"
+#include "sys/exec.h"
 #include "sys/reset.h"
 #include "sys/speed.h"
 #include "video/video.h"
@@ -106,6 +107,7 @@ void mia_reset_runtime_state(void) {
     mia_irq_init();
     mia_status_clear_flag(MIA_STAT_MASTER_MODE); // 0 - Bootloader mode
     mia_speed_reset_runtime_state();
+    mia_exec_resume();
     mia_video_reset_runtime_state();
 
     // Pre-initialize video indices so they are ready the moment the 6502

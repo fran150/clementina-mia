@@ -176,10 +176,34 @@ Commands are requested by writing parameters to `CMD_PARAM1-3`, then writing the
 | `06` | `p1 = index id` | Peek the specified index's current RAM byte into `IDXA_PORT` without stepping. |
 | `07` | `p1 = index id` | Peek the specified index's current RAM byte into `IDXB_PORT` without stepping. |
 | `10` | `p1 = source index`, `p2 = destination index`, `p3 = byte count` | Start a DMA copy inside MIA RAM. Source and destination indexes are not moved. |
+| `30` | none | Pause 6502 execution by stopping `PHI2`. Once stopped, resume normally comes from the terminal with `exec resume`. |
+| `42` | none | Force a full video refresh by marking every syncable video page dirty. |
+| `43` | `p1 = video mode` | Update the `VIDEO_MODE` byte. |
 | `50` | `p1 = input mode`, `p2 = 0`, `p3 = 0` | Request an input mode change: `0` = console, `1` = Wi-Fi, `2` = USB host. |
 | `51` | `p1 = input probe`, `p2 = byte offset`, `p3 = 0` | Position an input probe: `0-7` = keyboard probes, `8-15` = consumer probes. |
 
 Unassigned command ids report `ERROR_CMD_UNKNOWN`.
+
+## Terminal Diagnostics
+
+The USB terminal command `status` prints a compact dashboard. Use
+`status <subsystem>` for deeper diagnostics:
+
+| Command | Description |
+| ------- | ----------- |
+| `status video` | Video UDP/session, frame response, dirty maps, and repair/NACK state. |
+| `status input` | Active input source, Wi-Fi input client, device flags, event flags/masks/acks, mouse, and gamepads. |
+| `status wifi` | Wi-Fi mode, SSID, IP/netif details, and last Wi-Fi error. |
+| `status irq` | IRQ status, mask, enabled pending sources, set requests, and line state. |
+| `status speed` | Applied/requested/staged `PHI2` speed and pending speed-change state. |
+| `status exec` | Whether `PHI2` is running or paused. |
+| `status mem` | RAM/register summary and selected index descriptors. |
+| `status index [id]` | Selected index descriptors, or one explicit index id. |
+| `status errors` | Error queue contents. |
+
+Use `exec pause` to stop `PHI2` from the terminal and `exec resume` to restart
+it. A 6502 program can also issue command `30` to pause itself at a diagnostic
+point; once paused, the terminal normally performs the resume.
 
 ## IRQ Status
 
@@ -211,6 +235,7 @@ Unassigned command ids report `ERROR_CMD_UNKNOWN`.
 | 4 | `MIA_STAT_SPEED_CHANGING` | A `PHI2` speed change has been requested and not yet applied. |
 | 5 | `MIA_STAT_VIDEO_FRAME_REQUESTED` | Video client update request accepted; ACK not received yet. |
 | 6 | `MIA_STAT_VIDEO_FRAME_SENT` | Initial video response send finished; ACK may still be pending. |
+| 7 | `MIA_STAT_EXEC_PAUSED` | `PHI2` is stopped by the exec pause control. |
 
 ## Errors
 

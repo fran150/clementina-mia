@@ -197,6 +197,53 @@ const char *mia_input_mode_name(mia_input_mode_t mode) {
     }
 }
 
+static void input_print_flag(bool *any, const char *name) {
+    printf(*any ? "," : " (");
+    printf("%s", name);
+    *any = true;
+}
+
+static void input_print_status_bits(uint8_t status) {
+    bool any = false;
+
+    printf("0x%02X", (unsigned)status);
+    if (status & INPUT_TEXT_READY)      input_print_flag(&any, "TEXT");
+    if (status & INPUT_KEYBOARD_DOWN)   input_print_flag(&any, "KEYBOARD");
+    if (status & INPUT_CONSUMER_DOWN)   input_print_flag(&any, "CONSUMER");
+    if (status & INPUT_MOUSE_DOWN)      input_print_flag(&any, "MOUSE");
+    if (status & INPUT_GAMEPAD_DOWN)    input_print_flag(&any, "GAMEPAD");
+    if (status & INPUT_SOURCE_CONSOLE)  input_print_flag(&any, "CONSOLE");
+    if (status & INPUT_SOURCE_WIFI)     input_print_flag(&any, "WIFI");
+    if (status & INPUT_SOURCE_USB_HOST) input_print_flag(&any, "USB_HOST");
+    if (any) printf(")");
+}
+
+static void input_print_device_flags(uint8_t flags) {
+    bool any = false;
+
+    printf("0x%02X", (unsigned)flags);
+    if (flags & INPUT_DEVICE_KEYBOARD)  input_print_flag(&any, "KEYBOARD");
+    if (flags & INPUT_DEVICE_CONSUMER)  input_print_flag(&any, "CONSUMER");
+    if (flags & INPUT_DEVICE_MOUSE)     input_print_flag(&any, "MOUSE");
+    if (flags & INPUT_DEVICE_GAMEPAD_0) input_print_flag(&any, "PAD0");
+    if (flags & INPUT_DEVICE_GAMEPAD_1) input_print_flag(&any, "PAD1");
+    if (flags & INPUT_DEVICE_GAMEPAD_2) input_print_flag(&any, "PAD2");
+    if (flags & INPUT_DEVICE_GAMEPAD_3) input_print_flag(&any, "PAD3");
+    if (any) printf(")");
+}
+
+static void input_print_capabilities(uint16_t capabilities) {
+    bool any = false;
+
+    printf("0x%04X", (unsigned)capabilities);
+    if (capabilities & INPUT_CAP_TEXT)     input_print_flag(&any, "TEXT");
+    if (capabilities & INPUT_CAP_KEYBOARD) input_print_flag(&any, "KEYBOARD");
+    if (capabilities & INPUT_CAP_CONSUMER) input_print_flag(&any, "CONSUMER");
+    if (capabilities & INPUT_CAP_MOUSE)    input_print_flag(&any, "MOUSE");
+    if (capabilities & INPUT_CAP_GAMEPAD)  input_print_flag(&any, "GAMEPAD");
+    if (any) printf(")");
+}
+
 void mia_input_print_status(void) {
     printf("Input: %s", mia_input_mode_name(active_mode));
     if (active_mode == MIA_INPUT_MODE_WIFI) {
@@ -204,6 +251,74 @@ void mia_input_print_status(void) {
         printf("  client:%s", wifi_session.active ? "active" : "none");
     }
     printf("  status:0x%02X  chars:%u\n", cached_input_status, cached_input_char_count);
+}
+
+void mia_input_print_detail(void) {
+    printf("Input:\n");
+    printf("  mode:    %s\n", mia_input_mode_name(active_mode));
+    printf("  status:  ");
+    input_print_status_bits(cached_input_status);
+    printf("  chars:%u  current:0x%02X\n",
+           (unsigned)cached_input_char_count,
+           (unsigned)cached_input_char);
+
+    printf("  UDP:     %s  port:%u\n",
+           input_udp_ready ? "ready" : "unavailable",
+           (unsigned)MIA_INPUT_UDP_PORT);
+
+    if (wifi_session.active) {
+        printf("  client:  %s:%u  session:0x%08lX  last-seq:%u\n",
+               ipaddr_ntoa(&wifi_session.addr),
+               (unsigned)wifi_session.port,
+               (unsigned long)wifi_session.session,
+               (unsigned)wifi_session.last_seq);
+        printf("  caps:    ");
+        input_print_capabilities(wifi_session.capabilities);
+        printf("\n");
+    } else {
+        printf("  client:  none\n");
+    }
+
+    printf("  devices: ");
+    input_print_device_flags(mem[INPUT_DEVICE_FLAGS_OFFSET]);
+    printf("\n");
+
+    printf("  keyboard events: flags:0x%02X  mask:0x%02X  ack:0x%02X\n",
+           (unsigned)mem[KEYBOARD_EVENT_FLAGS_OFFSET],
+           (unsigned)mem[KEYBOARD_EVENT_MASK_OFFSET],
+           (unsigned)mem[KEYBOARD_EVENT_ACK_OFFSET]);
+    printf("  mouse events:    flags:0x%02X  mask:0x%02X  ack:0x%02X\n",
+           (unsigned)mem[MOUSE_EVENT_FLAGS_OFFSET],
+           (unsigned)mem[MOUSE_EVENT_MASK_OFFSET],
+           (unsigned)mem[MOUSE_EVENT_ACK_OFFSET]);
+    printf("  gamepad events:  flags:0x%02X  mask:0x%02X  ack:0x%02X\n",
+           (unsigned)mem[GAMEPAD_EVENT_FLAGS_OFFSET],
+           (unsigned)mem[GAMEPAD_EVENT_MASK_OFFSET],
+           (unsigned)mem[GAMEPAD_EVENT_ACK_OFFSET]);
+
+    uint8_t *mouse = input_mouse_state();
+    printf("  mouse:   buttons:0x%02X  dx:0x%02X  dy:0x%02X  wheel-x:0x%02X  wheel-y:0x%02X\n",
+           (unsigned)(mouse[0] & MOUSE_BUTTON_MASK),
+           (unsigned)mouse[1],
+           (unsigned)mouse[2],
+           (unsigned)mouse[3],
+           (unsigned)mouse[4]);
+
+    for (uint8_t i = 0; i < 4u; i++) {
+        uint8_t *slot = input_gamepad_slot(i);
+        uint16_t buttons = (uint16_t)slot[2] | ((uint16_t)slot[3] << 8);
+        printf("  pad%u:    %s  dpad:0x%X  buttons:0x%04X  lx:%u  ly:%u  rx:%u  ry:%u  lt:%u  rt:%u\n",
+               (unsigned)i,
+               (slot[0] & 0x80u) ? "connected" : "none",
+               (unsigned)(slot[0] & 0x0Fu),
+               (unsigned)buttons,
+               (unsigned)slot[4],
+               (unsigned)slot[5],
+               (unsigned)slot[6],
+               (unsigned)slot[7],
+               (unsigned)slot[8],
+               (unsigned)slot[9]);
+    }
 }
 
 void mia_input_console_byte(uint8_t value) {

@@ -32,6 +32,7 @@ mia_wifi_mode_t mia_net_wifi_mode(void);
 
 // Print a human-readable status line to stdout.
 void mia_net_wifi_print_status(void);
+void mia_net_wifi_print_detail(void);
 
 // Remember/report Wi-Fi setup failures that happen before MIA enters normal mode.
 void mia_net_wifi_record_error(uint8_t error);

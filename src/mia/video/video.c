@@ -72,6 +72,7 @@ static bool video_has_dirty_pages(uint8_t map_index);
 static uint16_t video_scan_dirty_pages(uint8_t map_index);
 static void video_request_dirty_rotation(void);
 static void video_request_mark_all_dirty(void);
+static uint16_t video_count_dirty_pages(uint8_t map_index);
 static uint32_t video_next_frame_id(void);
 static uint32_t video_next_seq(void);
 static void video_set_frame_id(uint32_t frame_id);
@@ -129,6 +130,94 @@ void mia_video_report_errors(void) {
     if (video_init_error != 0) {
         error_push(video_init_error);
     }
+}
+
+void mia_video_print_summary(void) {
+    const char *pipeline = "idle";
+    if (video_response.valid) {
+        pipeline = video_response.initial_send_done ? "sent" : "sending";
+    } else if (video_has_dirty_pages(mia_video_active_dirty_index)) {
+        pipeline = "dirty";
+    }
+
+    printf("Video: %s  UDP:%s  client:%s  frame:%lu  dirty:%u  pipeline:%s\n",
+           video_enable ? "enabled" : "disabled",
+           video_udp_ready ? "ready" : "unavailable",
+           video_session.active ? "active" : "none",
+           (unsigned long)video_frame_id,
+           (unsigned)video_count_dirty_pages(mia_video_active_dirty_index),
+           pipeline);
+}
+
+void mia_video_print_status(void) {
+    uint16_t st = mia_regs->mia_status;
+    uint16_t dirty0 = video_count_dirty_pages(0);
+    uint16_t dirty1 = video_count_dirty_pages(1);
+
+    printf("Video:\n");
+    printf("  enabled: %s\n", video_enable ? "yes" : "no");
+    printf("  UDP:     %s  port:%u  init-error:0x%02X\n",
+           video_udp_ready ? "ready" : "unavailable",
+           (unsigned)MIA_VIDEO_UDP_PORT,
+           (unsigned)video_init_error);
+
+    if (video_session.active) {
+        printf("  client:  %s:%u  session:0x%08lX\n",
+               ipaddr_ntoa(&video_session.addr),
+               (unsigned)video_session.port,
+               (unsigned long)video_session.session_id);
+    } else {
+        printf("  client:  none\n");
+    }
+
+    printf("  frames:  local:%lu  client:%lu  last-peer-seq:%lu  next-seq:%lu\n",
+           (unsigned long)video_frame_id,
+           (unsigned long)video_session.client_frame_id,
+           (unsigned long)video_last_peer_seq,
+           (unsigned long)video_next_seq_value);
+
+    printf("  dirty:   active-map:%u  map0:%u  map1:%u\n",
+           (unsigned)mia_video_active_dirty_index,
+           (unsigned)dirty0,
+           (unsigned)dirty1);
+
+    printf("  rotate:  request:%s  done:%s  pending-map:%u\n",
+           mia_video_rotate_request ? "yes" : "no",
+           mia_video_rotate_done ? "yes" : "no",
+           (unsigned)mia_video_rotated_pending_index);
+    printf("  full:    request:%s  done:%s\n",
+           mia_video_mark_all_request ? "yes" : "no",
+           mia_video_mark_all_done ? "yes" : "no");
+
+    if (video_response.valid) {
+        printf("  response: valid  request:%u  frame:%lu  last-complete:%lu\n",
+               (unsigned)video_response.request_id,
+               (unsigned long)video_response.frame_id,
+               (unsigned long)video_response.last_complete_frame_id);
+        printf("            pages:%u  chunks:%u  next:%u  initial-sent:%s\n",
+               (unsigned)video_response.page_count,
+               (unsigned)video_response.chunk_count,
+               (unsigned)video_response.next_chunk_to_send,
+               video_response.initial_send_done ? "yes" : "no");
+    } else {
+        printf("  response: none\n");
+    }
+
+    printf("  repair:  count:%u  pos:%u\n",
+           (unsigned)video_repair_count,
+           (unsigned)video_repair_pos);
+
+    if (mem != NULL) {
+        printf("  state:   layout:%u  mode:0x%02X  frame-field:%lu  dirty-field:%u\n",
+               (unsigned)mem[MIA_VIDEO_LOCAL_VERSION_OFFSET],
+               (unsigned)mem[MIA_VIDEO_MODE_OFFSET],
+               (unsigned long)mia_video_read_u32(&mem[MIA_VIDEO_LOCAL_FRAME_ID_OFFSET]),
+               (unsigned)mia_video_read_u16(&mem[MIA_VIDEO_LOCAL_DIRTY_PAGES_OFFSET]));
+    }
+
+    printf("  flags:   requested:%s  sent:%s\n",
+           (st & MIA_STAT_VIDEO_FRAME_REQUESTED) ? "yes" : "no",
+           (st & MIA_STAT_VIDEO_FRAME_SENT) ? "yes" : "no");
 }
 
 void mia_video_reset_runtime_state(void) {
@@ -329,6 +418,24 @@ static uint16_t video_scan_dirty_pages(uint8_t map_index) {
             }
             bits &= (uint8_t)(bits - 1u);
         }
+    }
+
+    return count;
+}
+
+static uint16_t video_count_dirty_pages(uint8_t map_index) {
+    const uint8_t *dirty = mia_video_dirty_maps[map_index];
+    uint16_t count = 0;
+
+    for (uint32_t byte_i = 0; byte_i < MIA_VIDEO_DIRTY_MAP_SIZE; byte_i++) {
+        uint8_t bits = dirty[byte_i];
+        if (byte_i == 0) {
+            bits &= 0xFEu;
+        } else if (byte_i == MIA_VIDEO_DIRTY_MAP_SIZE - 1u) {
+            bits &= 0x07u;
+        }
+
+        count = (uint16_t)(count + (uint16_t)__builtin_popcount((unsigned)bits));
     }
 
     return count;

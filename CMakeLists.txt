@@ -71,6 +71,7 @@ add_executable(mia
     src/mia/input/input_text.c
     src/mia/input/input_wifi.c
     src/mia/net/wifi.c
+    src/mia/sys/exec.c
     src/mia/sys/led.c
     src/mia/sys/mia.c
     src/mia/sys/reset.c

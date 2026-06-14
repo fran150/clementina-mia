@@ -117,6 +117,19 @@ mia_wifi_mode_t mia_net_wifi_mode(void) {
     return current_mode;
 }
 
+static const char *wifi_mode_name(mia_wifi_mode_t mode) {
+    switch (mode) {
+        case MIA_WIFI_MODE_OFF:
+            return "off";
+        case MIA_WIFI_MODE_STA:
+            return "sta";
+        case MIA_WIFI_MODE_AP:
+            return "ap";
+        default:
+            return "unknown";
+    }
+}
+
 void mia_net_wifi_print_status(void) {
     switch (current_mode) {
         case MIA_WIFI_MODE_OFF:
@@ -135,6 +148,30 @@ void mia_net_wifi_print_status(void) {
                    current_ssid,
                    MIA_NET_AP_IP_A, MIA_NET_AP_IP_B, MIA_NET_AP_IP_C, MIA_NET_AP_IP_D);
             break;
+    }
+}
+
+void mia_net_wifi_print_detail(void) {
+    printf("Wi-Fi:\n");
+    printf("  mode:       %s\n", wifi_mode_name(current_mode));
+    printf("  ssid:       %s\n", current_ssid[0] ? current_ssid : "(none)");
+    printf("  last-error: 0x%02X\n", (unsigned)wifi_error_code);
+
+    if (netif_default == NULL) {
+        printf("  netif:      unavailable\n");
+        return;
+    }
+
+    printf("  netif:      up:%s  link:%s\n",
+           netif_is_up(netif_default) ? "yes" : "no",
+           netif_is_link_up(netif_default) ? "yes" : "no");
+    printf("  ip:         %s\n", ip4addr_ntoa(netif_ip4_addr(netif_default)));
+    printf("  netmask:    %s\n", ip4addr_ntoa(netif_ip4_netmask(netif_default)));
+    printf("  gateway:    %s\n", ip4addr_ntoa(netif_ip4_gw(netif_default)));
+
+    if (current_mode == MIA_WIFI_MODE_AP) {
+        printf("  AP clients: static IP in %d.%d.%d.x/24\n",
+               MIA_NET_AP_IP_A, MIA_NET_AP_IP_B, MIA_NET_AP_IP_C);
     }
 }
 

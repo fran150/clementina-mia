@@ -9,6 +9,7 @@
 #include "mem/dma.h"
 #include "mem/indexes.h"
 #include "mem/regs.h"
+#include "sys/exec.h"
 #include "video/video.h"
 
 #define UNUSED(x) (void)(x)
@@ -103,6 +104,12 @@ void command_video_set_mode(uint8_t param[]) {
     mia_video_set_mode(param[0]);
 }
 
+void command_exec_pause(uint8_t param[]) {
+    UNUSED(param);
+
+    mia_exec_pause();
+}
+
 void command_input_set_mode(uint8_t param[]) {
     if (!mia_input_set_mode((mia_input_mode_t)param[0])) {
         error_push(ERROR_INPUT_MODE_UNAVAILABLE);
@@ -173,6 +180,8 @@ void mia_command_init() {
     commands[0x07] = command_peek_from_index_to_b;
 
     commands[0x10] = command_copy_indexes;
+
+    commands[0x30] = command_exec_pause;
 
     commands[0x42] = command_video_force_full_refresh;
     commands[0x43] = command_video_set_mode;

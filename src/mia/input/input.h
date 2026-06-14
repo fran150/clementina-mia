@@ -79,5 +79,6 @@ void mia_input_core1_refresh_registers(void);
 
 const char *mia_input_mode_name(mia_input_mode_t mode);
 void mia_input_print_status(void);
+void mia_input_print_detail(void);
 
 #endif
