@@ -23,8 +23,10 @@
 #define ERROR_INPUT_PROBE_INVALID       0x51        // Requested input probe id is invalid
 #define ERROR_INPUT_UDP_ALLOC_FAILED    0x52        // Input UDP PCB allocation failed
 #define ERROR_INPUT_UDP_BIND_FAILED     0x53        // Input UDP bind failed
+#define ERROR_AUDIO_QUEUE_OVERFLOW      0x60        // Audio register write queue overflowed
 
 #define ERROR_DEFER_CMD_QUEUE_FULL      (1u << 0)
+#define ERROR_DEFER_AUDIO_QUEUE_OVERFLOW (1u << 1)
 
 extern volatile uint8_t _err_first;
 extern volatile uint8_t _err_last;

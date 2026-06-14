@@ -3,6 +3,7 @@
 #include "hardware/clocks.h"
 #include "pico/cyw43_driver.h"
 
+#include "audio/audio.h"
 #include "hardware/pio_mapping.h"
 #include "irq/irq.h"
 
@@ -230,6 +231,7 @@ static void mia_speed_apply_phi2(uint32_t target_hz) {
     pio_sm_set_clkdiv(MIA_WRITE_PIO, MIA_WRITE_SM, div);
     pio_sm_set_clkdiv(MIA_READ_PIO, MIA_READ_SM, div);
     pio_sm_set_clkdiv(MIA_ACT_PIO, MIA_ACT_SM, div);
+    mia_audio_reclock();
 
     mia_applied_phi2_hz = target_hz;
 }

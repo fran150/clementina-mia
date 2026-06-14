@@ -12,4 +12,8 @@ void error_service(void) {
     if ((flags & ERROR_DEFER_CMD_QUEUE_FULL) != 0) {
         error_push(ERROR_CMD_QUEUE_FULL);
     }
+
+    if ((flags & ERROR_DEFER_AUDIO_QUEUE_OVERFLOW) != 0) {
+        error_push(ERROR_AUDIO_QUEUE_OVERFLOW);
+    }
 }

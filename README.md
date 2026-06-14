@@ -61,6 +61,20 @@ The 6502 can change input modes at any point in either USB role with the
 where terminal console commands are not available.
 Console input is text-only.
 
+## PWM audio subsystem
+
+The audio design is documented under `docs/`. MIA exposes a 4-voice stereo PWM
+PSG intended for SID-era music and sound effects rather than sample playback or
+FM synthesis. The 6502 writes compact voice registers in MIA RAM; the audio IRQ
+handles oscillator stepping, ADSR envelopes, panning, mixing, and PWM output.
+See [docs/audio.md](docs/audio.md) and
+[docs/audio-programmer-guide.md](docs/audio-programmer-guide.md).
+
+The default outputs are GPIO 4 for left and GPIO 5 for right. GPIO 28 is used as
+an internal PWM slice timer for the 24 kHz sample interrupt and is not driven as
+an audio output. These can be overridden at build time with
+`MIA_AUDIO_L_PIN`, `MIA_AUDIO_R_PIN`, and `MIA_AUDIO_IRQ_PIN`.
+
 ## Register Map
 
 MIA exposes 32 internal registers. The 6502 sees them at `$FFE0-$FFFF`; internally only the low 5 address bits are used.
@@ -181,6 +195,9 @@ Commands are requested by writing parameters to `CMD_PARAM1-3`, then writing the
 | `43` | `p1 = video mode` | Update the `VIDEO_MODE` byte. |
 | `50` | `p1 = input mode`, `p2 = 0`, `p3 = 0` | Request an input mode change: `0` = console, `1` = Wi-Fi, `2` = USB host. |
 | `51` | `p1 = input probe`, `p2 = byte offset`, `p3 = 0` | Position an input probe: `0-7` = keyboard probes, `8-15` = consumer probes. |
+| `60` | none | Enable PWM audio, synchronizing live voice state from the audio RAM block. |
+| `61` | none | Stop PWM audio and return the outputs to center. Audio RAM is preserved. |
+| `62` | none | Stop audio, clear the audio RAM block, restore defaults, and reset audio indexes. |
 
 Unassigned command ids report `ERROR_CMD_UNKNOWN`.
 
@@ -193,6 +210,7 @@ The USB terminal command `status` prints a compact dashboard. Use
 | ------- | ----------- |
 | `status video` | Video UDP/session, frame response, dirty maps, and repair/NACK state. |
 | `status input` | Active input source, Wi-Fi input client, device flags, event flags/masks/acks, mouse, and gamepads. |
+| `status audio` | PWM audio state, pins, register block, queue state, and voice register dump. |
 | `status wifi` | Wi-Fi mode, SSID, IP/netif details, and last Wi-Fi error. |
 | `status irq` | IRQ status, mask, enabled pending sources, set requests, and line state. |
 | `status speed` | Applied/requested/staged `PHI2` speed and pending speed-change state. |
@@ -205,6 +223,9 @@ Use `exec pause` to stop `PHI2` from the terminal and `exec resume` to restart
 it. A 6502 program can also issue command `30` to pause itself at a diagnostic
 point; once paused, the terminal normally performs the resume.
 
+The terminal command `audio [status|enable|stop|reset]` provides direct control
+over the PWM audio subsystem during bring-up.
+
 ## IRQ Status
 
 `IRQ_STATUS & IRQ_MASK` controls the physical active-low `IRQB` line. If any enabled flag is set, MIA also sets bit 15 (`IRQ_TRIGGERED`) and drives `IRQB` low. If no enabled flags are pending, bit 15 is cleared and `IRQB` is released high.
@@ -214,7 +235,7 @@ point; once paused, the terminal normally performs the resume.
 | 0 | `IRQ_ERROR` | An error was pushed into the error queue. |
 | 1 | `IRQ_IDXA_WRAPPED` | The active index in window A wrapped and its `WRAP_IRQ` flag was enabled. |
 | 2 | `IRQ_IDXB_WRAPPED` | The active index in window B wrapped and its `WRAP_IRQ` flag was enabled. |
-| 3 | `IRQ_COMMAND` | Reserved for command-triggered interrupts. |
+| 3 | `IRQ_COMMAND` | Command handler completed; asynchronous commands may raise it again on actual completion. |
 | 4 | `IRQ_SPEED_CHANGED` | A requested `PHI2` speed change was applied. |
 | 5 | `IRQ_VIDEO_FRAME_REQUEST` | Video client update request accepted. |
 | 6 | `IRQ_VIDEO_FRAME_SENT` | Initial video response send completed. |
@@ -236,6 +257,7 @@ point; once paused, the terminal normally performs the resume.
 | 5 | `MIA_STAT_VIDEO_FRAME_REQUESTED` | Video client update request accepted; ACK not received yet. |
 | 6 | `MIA_STAT_VIDEO_FRAME_SENT` | Initial video response send finished; ACK may still be pending. |
 | 7 | `MIA_STAT_EXEC_PAUSED` | `PHI2` is stopped by the exec pause control. |
+| 8 | `MIA_STAT_AUDIO_ACTIVE` | PWM audio IRQ is running. |
 
 ## Errors
 
@@ -258,6 +280,7 @@ Errors are stored in a 16-entry ring buffer. Reading `$FFEC` pulls one error int
 | `51` | `ERROR_INPUT_PROBE_INVALID` | Requested input probe id is invalid. |
 | `52` | `ERROR_INPUT_UDP_ALLOC_FAILED` | Input UDP PCB allocation failed. |
 | `53` | `ERROR_INPUT_UDP_BIND_FAILED` | Input UDP bind failed. |
+| `60` | `ERROR_AUDIO_QUEUE_OVERFLOW` | Live audio register writes outran the audio IRQ queue; the IRQ resynchronized from RAM. |
 
 ## PHI2 Speed Control
 
@@ -273,6 +296,8 @@ On Pico 2 W, the default Pico system clock is `150 MHz`. With that normal `clk_s
 
 | GPIO | Signal | Direction | Description |
 | ---- | ------ | --------- | ----------- |
+| 4 | `AUDIO_L` | Output | Left PWM audio output by default. |
+| 5 | `AUDIO_R` | Output | Right PWM audio output by default. |
 | 6 | `MIA_CS` | Input | Chip select sampled by PIO. |
 | 7 | `MIA_RWB` | Input | 6502 read/write line sampled by PIO. |
 | 8-15 | `D0-D7` | Bidirectional | 6502 data bus. Direction is controlled by the CS/RWB PIO program. |
@@ -281,6 +306,7 @@ On Pico 2 W, the default Pico system clock is `150 MHz`. With that normal `clk_s
 | 22 | `CPU_IRQB` | Output | Active-low IRQ output to the 6502. |
 | 26 | `CPU_RESB` | Output | Active-low reset output to the 6502. |
 | 27 | `MIA_RESETB` | Input | Active-low reset request into MIA. |
+| 28 | `AUDIO_IRQ_TIMER` | PWM timer | PWM slice used for the audio sample interrupt; not driven as an audio output. |
 
 ## Build and Flash
 

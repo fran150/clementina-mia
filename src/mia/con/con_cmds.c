@@ -8,6 +8,7 @@
 
 #include "etc/err.h"
 #include "etc/status.h"
+#include "audio/audio.h"
 #include "irq/irq.h"
 #include "mem/indexes.h"
 #include "mem/regs.h"
@@ -46,6 +47,7 @@ static const char *error_name(uint8_t code) {
         case ERROR_INPUT_PROBE_INVALID: return "ERROR_INPUT_PROBE_INVALID";
         case ERROR_INPUT_UDP_ALLOC_FAILED: return "ERROR_INPUT_UDP_ALLOC_FAILED";
         case ERROR_INPUT_UDP_BIND_FAILED: return "ERROR_INPUT_UDP_BIND_FAILED";
+        case ERROR_AUDIO_QUEUE_OVERFLOW: return "ERROR_AUDIO_QUEUE_OVERFLOW";
         default: return "UNKNOWN_ERROR";
     }
 }
@@ -72,6 +74,7 @@ static void print_status_word(uint16_t st) {
     if (st & MIA_STAT_VIDEO_FRAME_REQUESTED) print_flag_name(&any, "VID_REQ");
     if (st & MIA_STAT_VIDEO_FRAME_SENT)      print_flag_name(&any, "VID_SENT");
     if (st & MIA_STAT_EXEC_PAUSED)           print_flag_name(&any, "PAUSED");
+    if (st & MIA_STAT_AUDIO_ACTIVE)          print_flag_name(&any, "AUDIO");
     if (any) printf(")");
 }
 
@@ -203,6 +206,7 @@ static void cmd_status_summary(void) {
     mia_net_wifi_print_status();
     mia_video_print_summary();
     mia_input_print_status();
+    mia_audio_print_summary();
 }
 
 static void cmd_status_irq(void) {
@@ -286,6 +290,11 @@ static void cmd_status(const char *args) {
         return;
     }
 
+    if (strcmp(args, "audio") == 0) {
+        mia_audio_print_status();
+        return;
+    }
+
     if (strcmp(args, "wifi") == 0) {
         mia_net_wifi_print_detail();
         return;
@@ -321,7 +330,7 @@ static void cmd_status(const char *args) {
         return;
     }
 
-    printf("Usage: status [video|input|wifi|irq|speed|exec|errors|mem|index [id]]\n");
+    printf("Usage: status [video|input|audio|wifi|irq|speed|exec|errors|mem|index [id]]\n");
 }
 
 static void cmd_errors_list(void) {
@@ -472,6 +481,36 @@ static void cmd_input(const char *args) {
     printf("Usage: input [status|console|wifi]\n");
 }
 
+static void cmd_audio(const char *args) {
+    args = skip_ws(args);
+
+    if (!*args || strcmp(args, "status") == 0) {
+        mia_audio_print_status();
+        printf("Usage: audio [status|enable|stop|reset]\n");
+        return;
+    }
+
+    if (strcmp(args, "enable") == 0) {
+        mia_audio_enable();
+        printf("Audio: enabled\n");
+        return;
+    }
+
+    if (strcmp(args, "stop") == 0) {
+        mia_audio_stop();
+        printf("Audio: stopped\n");
+        return;
+    }
+
+    if (strcmp(args, "reset") == 0) {
+        mia_audio_reset();
+        printf("Audio: reset\n");
+        return;
+    }
+
+    printf("Usage: audio [status|enable|stop|reset]\n");
+}
+
 static void cmd_exec(const char *args) {
     args = skip_ws(args);
 
@@ -513,11 +552,12 @@ typedef struct {
 } con_cmd_t;
 
 static const con_cmd_t commands[] = {
-    { "status",  cmd_status,  "status [video|input|wifi|irq|speed|exec|mem|index]" },
+    { "status",  cmd_status,  "status [video|input|audio|wifi|irq|speed|exec|mem|index]" },
     { "errors",  cmd_errors,  "errors [list|clear]"                      },
     { "speed",   cmd_speed,   "speed HZ  — set PHI2 clock frequency"     },
     { "wifi",    cmd_wifi,    "wifi [status|off|connect|ap]"             },
     { "input",   cmd_input,   "input [status|console|wifi]"              },
+    { "audio",   cmd_audio,   "audio [status|enable|stop|reset]"         },
     { "exec",    cmd_exec,    "exec [status|pause|resume]"               },
     { "monitor", cmd_monitor, "Enter 65C02 machine language monitor"     },
     { "quit",    cmd_quit,    "Reboot to BOOTSEL"                        },

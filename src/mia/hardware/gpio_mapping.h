@@ -13,6 +13,18 @@
 // Active-low input that asks MIA to reset itself and the 6502
 #define MIA_RESETB_PIN 27
 
+// PWM audio output pins. GPIO 28 is reserved as an internal PWM slice timer
+// for the audio sample interrupt and is not driven as an output.
+#ifndef MIA_AUDIO_L_PIN
+#define MIA_AUDIO_L_PIN 4
+#endif
+#ifndef MIA_AUDIO_R_PIN
+#define MIA_AUDIO_R_PIN 5
+#endif
+#ifndef MIA_AUDIO_IRQ_PIN
+#define MIA_AUDIO_IRQ_PIN 28
+#endif
+
 // Usually these pins are handled in a group
 
 // Pin mapping start

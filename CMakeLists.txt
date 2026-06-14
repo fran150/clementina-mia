@@ -57,6 +57,7 @@ add_custom_command(
 # Add executable
 add_executable(mia
     src/mia/main.c
+    src/mia/audio/audio.c
     src/mia/etc/err.c
     src/mia/cmds/cmds.c
     src/mia/mem/dma.c
@@ -87,6 +88,7 @@ pico_generate_pio_header(mia ${CMAKE_SOURCE_DIR}/src/mia/sys/sys.pio)
 target_include_directories(mia PRIVATE
     src/
     src/mia
+    src/mia/audio
     src/mia/etc
     src/mia/cmds
     src/mia/con
@@ -112,6 +114,7 @@ target_link_libraries(mia
     hardware_pio
     hardware_dma
     pico_cyw43_arch_lwip_poll
+    m
 )
 
 # Enable USB output in USB-device builds, disable UART output.
@@ -179,6 +182,18 @@ endif()
 
 if(DEFINED ENV{MIA_INPUT_UDP_PORT})
     target_compile_definitions(mia PRIVATE MIA_INPUT_UDP_PORT=$ENV{MIA_INPUT_UDP_PORT})
+endif()
+
+if(DEFINED ENV{MIA_AUDIO_L_PIN})
+    target_compile_definitions(mia PRIVATE MIA_AUDIO_L_PIN=$ENV{MIA_AUDIO_L_PIN})
+endif()
+
+if(DEFINED ENV{MIA_AUDIO_R_PIN})
+    target_compile_definitions(mia PRIVATE MIA_AUDIO_R_PIN=$ENV{MIA_AUDIO_R_PIN})
+endif()
+
+if(DEFINED ENV{MIA_AUDIO_IRQ_PIN})
+    target_compile_definitions(mia PRIVATE MIA_AUDIO_IRQ_PIN=$ENV{MIA_AUDIO_IRQ_PIN})
 endif()
 
 # MIA_INPUT_DEFAULT_MODE is used in USB-device builds: console (default) or wifi.

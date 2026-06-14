@@ -13,6 +13,7 @@
 #include "etc/cfg.h"
 #include "etc/err.h"
 #include "etc/status.h"
+#include "audio/audio.h"
 #include "cmds/cmds.h"
 #include "hardware/gpio_mapping.h"
 #include "hardware/pio_mapping.h"
@@ -114,6 +115,7 @@ void mia_reset_runtime_state(void) {
     // is released from reset, preventing races with VIDEO_ENABLE.
     mia_video_enable();
     mia_input_reset_runtime_state();
+    mia_audio_reset_runtime_state();
 
     fast_loader_init();
     mia_set_watch_address(0xFFE1);
@@ -193,7 +195,12 @@ __attribute__((optimize("O1"))) static void __no_inline_not_in_flash_func(act_lo
                             
                         case CASE_WRITE(0xFFE0):
                             // After writing to port A, copy the value to the actual memory and step the index
-                            index_write_and_step(mia_regs->idxa_selector, data, IDXA);
+                            {
+                                uint8_t index_id = mia_regs->idxa_selector;
+                                uint32_t offset = idx[index_id].current_addr & MIA_RAM_MASK;
+                                index_write_and_step(index_id, data, IDXA);
+                                mia_audio_core1_on_write(offset, data);
+                            }
                             
                             // Read the new value into the port
                             mia_regs->idxa_port = index_read(mia_regs->idxa_selector);
@@ -222,7 +229,12 @@ __attribute__((optimize("O1"))) static void __no_inline_not_in_flash_func(act_lo
                             
                         case CASE_WRITE(0xFFE4):
                             // After writing to port B, copy the value to the actual memory and step the index
-                            index_write_and_step(mia_regs->idxb_selector, data, IDXB);
+                            {
+                                uint8_t index_id = mia_regs->idxb_selector;
+                                uint32_t offset = idx[index_id].current_addr & MIA_RAM_MASK;
+                                index_write_and_step(index_id, data, IDXB);
+                                mia_audio_core1_on_write(offset, data);
+                            }
 
                             // Read the new value into the port
                             mia_regs->idxb_port = index_read(mia_regs->idxb_selector);
@@ -546,6 +558,7 @@ static void mia_enter_normal_mode(void) {
     // the path taken to get here.
     mia_video_enable();
     mia_input_reset_runtime_state();
+    mia_audio_reset_runtime_state();
     mia_net_wifi_report_errors();
     mia_video_report_errors();
     mia_input_report_errors();
@@ -610,6 +623,8 @@ void mia_init(void)
     mia_input_init();
     // Init video UDP/session state after memory is available.
     mia_video_init();
+    // Init PWM audio state after memory is available.
+    mia_audio_init();
 
     // Safety check for compiler alignment
     assert(!((uintptr_t)mia_regs & 0x1F));

@@ -4,6 +4,7 @@
 
 #include "etc/err.h"
 #include "etc/status.h"
+#include "audio/audio.h"
 #include "input/input.h"
 #include "irq/irq.h"
 #include "mem/dma.h"
@@ -122,6 +123,24 @@ void command_input_set_probe(uint8_t param[]) {
     }
 }
 
+void command_audio_enable(uint8_t param[]) {
+    UNUSED(param);
+
+    mia_audio_enable();
+}
+
+void command_audio_stop(uint8_t param[]) {
+    UNUSED(param);
+
+    mia_audio_stop();
+}
+
+void command_audio_reset(uint8_t param[]) {
+    UNUSED(param);
+
+    mia_audio_reset();
+}
+
 /**************************************************************************************************
  * Init and crosscore messaging handling
  **************************************************************************************************/
@@ -188,6 +207,10 @@ void mia_command_init() {
 
     commands[0x50] = command_input_set_mode;
     commands[0x51] = command_input_set_probe;
+
+    commands[MIA_CMD_AUDIO_ENABLE] = command_audio_enable;
+    commands[MIA_CMD_AUDIO_STOP] = command_audio_stop;
+    commands[MIA_CMD_AUDIO_RESET] = command_audio_reset;
 
     // Clear the FIFO IRQ
     multicore_fifo_clear_irq();
