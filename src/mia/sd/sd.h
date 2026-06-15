@@ -1,0 +1,125 @@
+#ifndef _MIA_SD_SD_H_
+#define _MIA_SD_SD_H_
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#define MIA_SD_STATE_OFFSET 0x13000u
+#define MIA_SD_CONTROL_OFFSET MIA_SD_STATE_OFFSET
+#define MIA_SD_CONTROL_SIZE 0x40u
+#define MIA_SD_SECTOR_OFFSET 0x13040u
+#define MIA_SD_SECTOR_SIZE 512u
+#define MIA_FS_PATH_OFFSET 0x13240u
+#define MIA_FS_PATH_SIZE 256u
+#define MIA_FS_DIR_ENTRY_OFFSET 0x13340u
+#define MIA_FS_DIR_ENTRY_SIZE 256u
+#define MIA_FS_TRANSFER_OFFSET 0x13440u
+#define MIA_FS_TRANSFER_SIZE 0x07C0u
+
+#define MIA_SD_VERSION 2u
+
+#define MIA_SD_CONTROL_VERSION 0x00u
+#define MIA_SD_CONTROL_STATUS 0x01u
+#define MIA_SD_CONTROL_LAST_ERROR 0x02u
+#define MIA_SD_CONTROL_CARD_TYPE 0x03u
+#define MIA_SD_CONTROL_LBA0 0x04u
+#define MIA_SD_CONTROL_LBA1 0x05u
+#define MIA_SD_CONTROL_LBA2 0x06u
+#define MIA_SD_CONTROL_LBA3 0x07u
+#define MIA_SD_CONTROL_REQUEST_LEN_L 0x08u
+#define MIA_SD_CONTROL_REQUEST_LEN_H 0x09u
+#define MIA_SD_CONTROL_RESULT_LEN_L 0x0Au
+#define MIA_SD_CONTROL_RESULT_LEN_H 0x0Bu
+#define MIA_SD_CONTROL_DEST_ADDR_L 0x0Cu
+#define MIA_SD_CONTROL_DEST_ADDR_M 0x0Du
+#define MIA_SD_CONTROL_DEST_ADDR_H 0x0Eu
+#define MIA_SD_CONTROL_FILE_HANDLE 0x0Fu
+#define MIA_SD_CONTROL_OPEN_MODE 0x10u
+#define MIA_SD_CONTROL_EOF 0x11u
+#define MIA_SD_CONTROL_FATFS_RESULT 0x12u
+#define MIA_SD_CONTROL_FLAGS 0x13u
+#define MIA_SD_CONTROL_CARD_SECTORS0 0x14u
+#define MIA_SD_CONTROL_CARD_SECTORS1 0x15u
+#define MIA_SD_CONTROL_CARD_SECTORS2 0x16u
+#define MIA_SD_CONTROL_CARD_SECTORS3 0x17u
+#define MIA_SD_CONTROL_FILE_SIZE0 0x18u
+#define MIA_SD_CONTROL_FILE_SIZE1 0x19u
+#define MIA_SD_CONTROL_FILE_SIZE2 0x1Au
+#define MIA_SD_CONTROL_FILE_SIZE3 0x1Bu
+#define MIA_SD_CONTROL_FILE_POS0 0x1Cu
+#define MIA_SD_CONTROL_FILE_POS1 0x1Du
+#define MIA_SD_CONTROL_FILE_POS2 0x1Eu
+#define MIA_SD_CONTROL_FILE_POS3 0x1Fu
+
+#define MIA_SD_STATUS_PRESENT     (1u << 0)
+#define MIA_SD_STATUS_INITIALIZED (1u << 1)
+#define MIA_SD_STATUS_MOUNTED     (1u << 2)
+#define MIA_SD_STATUS_BUSY        (1u << 3)
+#define MIA_SD_STATUS_FILE_OPEN   (1u << 4)
+#define MIA_SD_STATUS_DIR_OPEN    (1u << 5)
+#define MIA_SD_STATUS_EOF         (1u << 6)
+#define MIA_SD_STATUS_ERROR       (1u << 7)
+
+#define MIA_SD_CARD_NONE 0u
+#define MIA_SD_CARD_SD_V1 1u
+#define MIA_SD_CARD_SD_V2 2u
+#define MIA_SD_CARD_SDHC 3u
+
+#define MIA_FS_OPEN_READ 0u
+#define MIA_FS_OPEN_WRITE_CREATE 1u
+#define MIA_FS_OPEN_WRITE_APPEND 2u
+#define MIA_FS_OPEN_READ_WRITE 3u
+
+#define MIA_FS_DIR_ATTR 0x00u
+#define MIA_FS_DIR_NAME_LEN 0x01u
+#define MIA_FS_DIR_RESERVED0 0x02u
+#define MIA_FS_DIR_RESERVED1 0x03u
+#define MIA_FS_DIR_SIZE0 0x04u
+#define MIA_FS_DIR_SIZE1 0x05u
+#define MIA_FS_DIR_SIZE2 0x06u
+#define MIA_FS_DIR_SIZE3 0x07u
+#define MIA_FS_DIR_DATE_L 0x08u
+#define MIA_FS_DIR_DATE_H 0x09u
+#define MIA_FS_DIR_TIME_L 0x0Au
+#define MIA_FS_DIR_TIME_H 0x0Bu
+#define MIA_FS_DIR_NAME 0x0Cu
+
+#define MIA_SD_INDEX_CONTROL 0xE0u
+#define MIA_SD_INDEX_SECTOR 0xE1u
+#define MIA_FS_INDEX_PATH 0xE2u
+#define MIA_FS_INDEX_DIR_ENTRY 0xE3u
+#define MIA_FS_INDEX_TRANSFER 0xE4u
+
+#define MIA_CMD_SD_INIT 0x70u
+#define MIA_CMD_SD_READ_SECTOR 0x71u
+#define MIA_CMD_SD_WRITE_SECTOR 0x72u
+#define MIA_CMD_SD_GET_INFO 0x73u
+
+#define MIA_CMD_FS_MOUNT 0x78u
+#define MIA_CMD_FS_OPENDIR 0x79u
+#define MIA_CMD_FS_READDIR 0x7Au
+#define MIA_CMD_FS_OPEN 0x7Bu
+#define MIA_CMD_FS_READ 0x7Cu
+#define MIA_CMD_FS_CLOSE 0x7Du
+#define MIA_CMD_FS_LOAD_TO_MIA_RAM 0x7Eu
+#define MIA_CMD_FS_WRITE 0x7Fu
+#define MIA_CMD_FS_SYNC 0x80u
+#define MIA_CMD_FS_SEEK 0x81u
+
+void mia_sd_init(void);
+void mia_sd_reset_runtime_state(void);
+void mia_sd_service(void);
+
+bool mia_sd_request(uint8_t command);
+
+bool mia_sd_card_init(void);
+bool mia_sd_block_read(uint32_t lba, uint8_t *buffer);
+bool mia_sd_block_write(uint32_t lba, const uint8_t *buffer);
+bool mia_sd_is_initialized(void);
+uint8_t mia_sd_card_type(void);
+uint32_t mia_sd_sector_count(void);
+
+void mia_sd_print_summary(void);
+void mia_sd_print_status(void);
+
+#endif

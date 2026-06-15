@@ -10,6 +10,7 @@
 #include "mem/dma.h"
 #include "mem/indexes.h"
 #include "mem/regs.h"
+#include "sd/sd.h"
 #include "sys/exec.h"
 #include "video/video.h"
 
@@ -141,6 +142,90 @@ void command_audio_reset(uint8_t param[]) {
     mia_audio_reset();
 }
 
+void command_sd_init(uint8_t param[]) {
+    UNUSED(param);
+
+    (void)mia_sd_request(MIA_CMD_SD_INIT);
+}
+
+void command_sd_read_sector(uint8_t param[]) {
+    UNUSED(param);
+
+    (void)mia_sd_request(MIA_CMD_SD_READ_SECTOR);
+}
+
+void command_sd_write_sector(uint8_t param[]) {
+    UNUSED(param);
+
+    (void)mia_sd_request(MIA_CMD_SD_WRITE_SECTOR);
+}
+
+void command_sd_get_info(uint8_t param[]) {
+    UNUSED(param);
+
+    (void)mia_sd_request(MIA_CMD_SD_GET_INFO);
+}
+
+void command_fs_mount(uint8_t param[]) {
+    UNUSED(param);
+
+    (void)mia_sd_request(MIA_CMD_FS_MOUNT);
+}
+
+void command_fs_opendir(uint8_t param[]) {
+    UNUSED(param);
+
+    (void)mia_sd_request(MIA_CMD_FS_OPENDIR);
+}
+
+void command_fs_readdir(uint8_t param[]) {
+    UNUSED(param);
+
+    (void)mia_sd_request(MIA_CMD_FS_READDIR);
+}
+
+void command_fs_open(uint8_t param[]) {
+    UNUSED(param);
+
+    (void)mia_sd_request(MIA_CMD_FS_OPEN);
+}
+
+void command_fs_read(uint8_t param[]) {
+    UNUSED(param);
+
+    (void)mia_sd_request(MIA_CMD_FS_READ);
+}
+
+void command_fs_close(uint8_t param[]) {
+    UNUSED(param);
+
+    (void)mia_sd_request(MIA_CMD_FS_CLOSE);
+}
+
+void command_fs_load(uint8_t param[]) {
+    UNUSED(param);
+
+    (void)mia_sd_request(MIA_CMD_FS_LOAD_TO_MIA_RAM);
+}
+
+void command_fs_write(uint8_t param[]) {
+    UNUSED(param);
+
+    (void)mia_sd_request(MIA_CMD_FS_WRITE);
+}
+
+void command_fs_sync(uint8_t param[]) {
+    UNUSED(param);
+
+    (void)mia_sd_request(MIA_CMD_FS_SYNC);
+}
+
+void command_fs_seek(uint8_t param[]) {
+    UNUSED(param);
+
+    (void)mia_sd_request(MIA_CMD_FS_SEEK);
+}
+
 /**************************************************************************************************
  * Init and crosscore messaging handling
  **************************************************************************************************/
@@ -211,6 +296,21 @@ void mia_command_init() {
     commands[MIA_CMD_AUDIO_ENABLE] = command_audio_enable;
     commands[MIA_CMD_AUDIO_STOP] = command_audio_stop;
     commands[MIA_CMD_AUDIO_RESET] = command_audio_reset;
+
+    commands[MIA_CMD_SD_INIT] = command_sd_init;
+    commands[MIA_CMD_SD_READ_SECTOR] = command_sd_read_sector;
+    commands[MIA_CMD_SD_WRITE_SECTOR] = command_sd_write_sector;
+    commands[MIA_CMD_SD_GET_INFO] = command_sd_get_info;
+    commands[MIA_CMD_FS_MOUNT] = command_fs_mount;
+    commands[MIA_CMD_FS_OPENDIR] = command_fs_opendir;
+    commands[MIA_CMD_FS_READDIR] = command_fs_readdir;
+    commands[MIA_CMD_FS_OPEN] = command_fs_open;
+    commands[MIA_CMD_FS_READ] = command_fs_read;
+    commands[MIA_CMD_FS_CLOSE] = command_fs_close;
+    commands[MIA_CMD_FS_LOAD_TO_MIA_RAM] = command_fs_load;
+    commands[MIA_CMD_FS_WRITE] = command_fs_write;
+    commands[MIA_CMD_FS_SYNC] = command_fs_sync;
+    commands[MIA_CMD_FS_SEEK] = command_fs_seek;
 
     // Clear the FIFO IRQ
     multicore_fifo_clear_irq();

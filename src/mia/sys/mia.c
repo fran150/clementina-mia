@@ -24,6 +24,7 @@
 #include "mem/regs.h"
 #include "net/wifi.h"
 #include "rom/kernel_data.h"
+#include "sd/sd.h"
 #include "sys/exec.h"
 #include "sys/reset.h"
 #include "sys/speed.h"
@@ -116,6 +117,7 @@ void mia_reset_runtime_state(void) {
     mia_video_enable();
     mia_input_reset_runtime_state();
     mia_audio_reset_runtime_state();
+    mia_sd_reset_runtime_state();
 
     fast_loader_init();
     mia_set_watch_address(0xFFE1);
@@ -308,6 +310,7 @@ void mia_service(void) {
     error_service();
     mia_speed_service();
     mia_input_service();
+    mia_sd_service();
 }
 
 // Initializes the PIO program that monitors the CS and R/W enable pins and adjusts
@@ -625,6 +628,8 @@ void mia_init(void)
     mia_video_init();
     // Init PWM audio state after memory is available.
     mia_audio_init();
+    // Init SD/FAT RAM state after memory is available.
+    mia_sd_init();
 
     // Safety check for compiler alignment
     assert(!((uintptr_t)mia_regs & 0x1F));

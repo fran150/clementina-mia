@@ -24,6 +24,21 @@
 #define ERROR_INPUT_UDP_ALLOC_FAILED    0x52        // Input UDP PCB allocation failed
 #define ERROR_INPUT_UDP_BIND_FAILED     0x53        // Input UDP bind failed
 #define ERROR_AUDIO_QUEUE_OVERFLOW      0x60        // Audio register write queue overflowed
+#define ERROR_SD_BUSY                   0x70        // SD/FS request could not start because another request is running
+#define ERROR_SD_INIT_FAILED            0x71        // SD card initialization failed
+#define ERROR_SD_NOT_READY              0x72        // SD card is not initialized
+#define ERROR_SD_READ_FAILED            0x73        // Raw SD sector read failed
+#define ERROR_SD_WRITE_FAILED           0x74        // Raw SD sector write failed
+#define ERROR_FS_MOUNT_FAILED           0x78        // FAT filesystem mount failed
+#define ERROR_FS_OPEN_FAILED            0x79        // FAT file open failed
+#define ERROR_FS_READ_FAILED            0x7A        // FAT file read failed
+#define ERROR_FS_CLOSE_FAILED           0x7B        // FAT file close failed
+#define ERROR_FS_DIR_FAILED             0x7C        // FAT directory operation failed
+#define ERROR_FS_INVALID_REQUEST        0x7D        // SD/FS request parameters are invalid
+#define ERROR_FS_NO_FILE_OPEN           0x7E        // FAT file I/O requested with no open file
+#define ERROR_FS_WRITE_FAILED           0x7F        // FAT file write failed
+#define ERROR_FS_SEEK_FAILED            0x80        // FAT file seek failed
+#define ERROR_FS_SYNC_FAILED            0x81        // FAT file sync failed
 
 #define ERROR_DEFER_CMD_QUEUE_FULL      (1u << 0)
 #define ERROR_DEFER_AUDIO_QUEUE_OVERFLOW (1u << 1)

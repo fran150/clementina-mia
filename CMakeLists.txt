@@ -38,6 +38,7 @@ pico_sdk_init()
 # Generate kernel data from kernel.bin at build time
 set(KERNEL_BIN_FILE "${CMAKE_SOURCE_DIR}/kernel.bin")
 set(KERNEL_DATA_FILE "${CMAKE_BINARY_DIR}/generated/kernel_data.c")
+set(TINYUSB_FATFS_SOURCE "$ENV{PICO_SDK_PATH}/lib/tinyusb/lib/fatfs/source")
 
 # Create the generated directory
 file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/generated")
@@ -72,6 +73,8 @@ add_executable(mia
     src/mia/input/input_text.c
     src/mia/input/input_wifi.c
     src/mia/net/wifi.c
+    src/mia/sd/sd.c
+    src/mia/sd/sd_diskio.c
     src/mia/sys/exec.c
     src/mia/sys/led.c
     src/mia/sys/mia.c
@@ -98,9 +101,16 @@ target_include_directories(mia PRIVATE
     src/mia/mem
     src/mia/net
     src/mia/rom
+    src/mia/sd
     src/mia/sys
     src/mia/video
     ${CMAKE_BINARY_DIR}/generated  # Include generated files directory
+    ${TINYUSB_FATFS_SOURCE}
+)
+
+target_sources(mia PRIVATE
+    ${TINYUSB_FATFS_SOURCE}/ff.c
+    ${TINYUSB_FATFS_SOURCE}/ffunicode.c
 )
 
 # Link libraries
@@ -113,6 +123,7 @@ target_link_libraries(mia
     hardware_clocks
     hardware_pio
     hardware_dma
+    hardware_spi
     pico_cyw43_arch_lwip_poll
     m
 )
@@ -194,6 +205,30 @@ endif()
 
 if(DEFINED ENV{MIA_AUDIO_IRQ_PIN})
     target_compile_definitions(mia PRIVATE MIA_AUDIO_IRQ_PIN=$ENV{MIA_AUDIO_IRQ_PIN})
+endif()
+
+if(DEFINED ENV{MIA_SD_SPI_INSTANCE})
+    target_compile_definitions(mia PRIVATE MIA_SD_SPI_INSTANCE=$ENV{MIA_SD_SPI_INSTANCE})
+endif()
+
+if(DEFINED ENV{MIA_SD_MISO_PIN})
+    target_compile_definitions(mia PRIVATE MIA_SD_MISO_PIN=$ENV{MIA_SD_MISO_PIN})
+endif()
+
+if(DEFINED ENV{MIA_SD_CS_PIN})
+    target_compile_definitions(mia PRIVATE MIA_SD_CS_PIN=$ENV{MIA_SD_CS_PIN})
+endif()
+
+if(DEFINED ENV{MIA_SD_SCK_PIN})
+    target_compile_definitions(mia PRIVATE MIA_SD_SCK_PIN=$ENV{MIA_SD_SCK_PIN})
+endif()
+
+if(DEFINED ENV{MIA_SD_MOSI_PIN})
+    target_compile_definitions(mia PRIVATE MIA_SD_MOSI_PIN=$ENV{MIA_SD_MOSI_PIN})
+endif()
+
+if(DEFINED ENV{MIA_SD_SPI_FAST_BAUD})
+    target_compile_definitions(mia PRIVATE MIA_SD_SPI_FAST_BAUD=$ENV{MIA_SD_SPI_FAST_BAUD})
 endif()
 
 # MIA_INPUT_DEFAULT_MODE is used in USB-device builds: console (default) or wifi.

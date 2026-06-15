@@ -75,6 +75,20 @@ an internal PWM slice timer for the 24 kHz sample interrupt and is not driven as
 an audio output. These can be overridden at build time with
 `MIA_AUDIO_L_PIN`, `MIA_AUDIO_R_PIN`, and `MIA_AUDIO_IRQ_PIN`.
 
+## SD and FAT filesystem subsystem
+
+The SD design is documented under `docs/`. MIA exposes SPI SD raw-sector access
+and a small read/write FAT file interface to the 6502. The 6502 writes paths and
+request fields into MIA RAM, triggers asynchronous SD/FS commands, and streams
+sector or file data through indexed windows.
+See [docs/sd.md](docs/sd.md) and
+[docs/sd-programmer-guide.md](docs/sd-programmer-guide.md).
+
+The default SD pins use `SPI0`: MISO GPIO 0, CS GPIO 1, SCK GPIO 2, and MOSI
+GPIO 3. These can be overridden at build time with `MIA_SD_SPI_INSTANCE`,
+`MIA_SD_MISO_PIN`, `MIA_SD_CS_PIN`, `MIA_SD_SCK_PIN`, `MIA_SD_MOSI_PIN`, and
+`MIA_SD_SPI_FAST_BAUD`.
+
 ## Register Map
 
 MIA exposes 32 internal registers. The 6502 sees them at `$FFE0-$FFFF`; internally only the low 5 address bits are used.
@@ -198,6 +212,20 @@ Commands are requested by writing parameters to `CMD_PARAM1-3`, then writing the
 | `60` | none | Enable PWM audio, synchronizing live voice state from the audio RAM block. |
 | `61` | none | Stop PWM audio and return the outputs to center. Audio RAM is preserved. |
 | `62` | none | Stop audio, clear the audio RAM block, restore defaults, and reset audio indexes. |
+| `70` | none | Initialize the physical SD card. |
+| `71` | `SD_LBA` in SD control block | Read one 512-byte raw sector into the SD sector buffer. |
+| `72` | `SD_LBA` and sector buffer | Write one 512-byte raw sector from the SD sector buffer. |
+| `73` | none | Refresh/read SD card info fields. |
+| `78` | none | Mount the FAT filesystem. |
+| `79` | path buffer | Open a FAT directory cursor. |
+| `7A` | none | Read one directory entry into the directory-entry buffer. |
+| `7B` | path buffer, `SD_OPEN_MODE` | Open one file for reading and/or writing. |
+| `7C` | `SD_REQUEST_LEN` in SD control block | Read file bytes into the transfer buffer. |
+| `7D` | none | Close the implicit file handle and directory cursor. |
+| `7E` | path buffer, `SD_DEST_ADDR`, `SD_REQUEST_LEN` | Load a file directly into MIA RAM. |
+| `7F` | `SD_REQUEST_LEN` and transfer buffer | Write file bytes from the transfer buffer. |
+| `80` | none | Flush the open file to the card. |
+| `81` | `SD_FILE_POS` in SD control block | Seek the open file. |
 
 Unassigned command ids report `ERROR_CMD_UNKNOWN`.
 
@@ -211,6 +239,7 @@ The USB terminal command `status` prints a compact dashboard. Use
 | `status video` | Video UDP/session, frame response, dirty maps, and repair/NACK state. |
 | `status input` | Active input source, Wi-Fi input client, device flags, event flags/masks/acks, mouse, and gamepads. |
 | `status audio` | PWM audio state, pins, register block, queue state, and voice register dump. |
+| `status sd` | SD/FAT state, pins, memory ranges, indexes, and last result. |
 | `status wifi` | Wi-Fi mode, SSID, IP/netif details, and last Wi-Fi error. |
 | `status irq` | IRQ status, mask, enabled pending sources, set requests, and line state. |
 | `status speed` | Applied/requested/staged `PHI2` speed and pending speed-change state. |
@@ -225,6 +254,8 @@ point; once paused, the terminal normally performs the resume.
 
 The terminal command `audio [status|enable|stop|reset]` provides direct control
 over the PWM audio subsystem during bring-up.
+The terminal command `sd [status|init|mount]` provides direct SD/FAT diagnostics
+during storage bring-up.
 
 ## IRQ Status
 
@@ -243,6 +274,9 @@ over the PWM audio subsystem during bring-up.
 | 8 | `IRQ_INPUT_KEYBOARD` | Enabled keyboard, consumer, or text input event pending. |
 | 9 | `IRQ_INPUT_MOUSE` | Enabled mouse input event pending. |
 | 10 | `IRQ_INPUT_GAMEPAD` | Enabled gamepad input event pending. |
+| 11 | `IRQ_SD_DONE` | An SD/FS command completed successfully. |
+| 12 | `IRQ_SD_ERROR` | An SD/FS command failed. |
+| 13 | `IRQ_FS_EVENT` | A filesystem command completed. |
 | 15 | `IRQ_TRIGGERED` | Aggregate state maintained by MIA when any masked IRQ flag is pending. |
 
 ## Status
@@ -258,6 +292,9 @@ over the PWM audio subsystem during bring-up.
 | 6 | `MIA_STAT_VIDEO_FRAME_SENT` | Initial video response send finished; ACK may still be pending. |
 | 7 | `MIA_STAT_EXEC_PAUSED` | `PHI2` is stopped by the exec pause control. |
 | 8 | `MIA_STAT_AUDIO_ACTIVE` | PWM audio IRQ is running. |
+| 9 | `MIA_STAT_SD_PRESENT` | SD card initialized successfully. |
+| 10 | `MIA_STAT_SD_BUSY` | SD/FS command is in progress. |
+| 11 | `MIA_STAT_FS_MOUNTED` | FAT filesystem is mounted. |
 
 ## Errors
 
@@ -281,6 +318,21 @@ Errors are stored in a 16-entry ring buffer. Reading `$FFEC` pulls one error int
 | `52` | `ERROR_INPUT_UDP_ALLOC_FAILED` | Input UDP PCB allocation failed. |
 | `53` | `ERROR_INPUT_UDP_BIND_FAILED` | Input UDP bind failed. |
 | `60` | `ERROR_AUDIO_QUEUE_OVERFLOW` | Live audio register writes outran the audio IRQ queue; the IRQ resynchronized from RAM. |
+| `70` | `ERROR_SD_BUSY` | A new SD/FS request was made while another request was running. |
+| `71` | `ERROR_SD_INIT_FAILED` | SD card initialization failed. |
+| `72` | `ERROR_SD_NOT_READY` | Raw SD command requested before initialization. |
+| `73` | `ERROR_SD_READ_FAILED` | Raw SD sector read failed. |
+| `74` | `ERROR_SD_WRITE_FAILED` | Raw SD sector write failed. |
+| `78` | `ERROR_FS_MOUNT_FAILED` | FAT filesystem mount failed. |
+| `79` | `ERROR_FS_OPEN_FAILED` | FAT file open failed. |
+| `7A` | `ERROR_FS_READ_FAILED` | FAT file read or load failed. |
+| `7B` | `ERROR_FS_CLOSE_FAILED` | FAT file close failed. |
+| `7C` | `ERROR_FS_DIR_FAILED` | FAT directory operation failed. |
+| `7D` | `ERROR_FS_INVALID_REQUEST` | SD/FS request parameters are invalid. |
+| `7E` | `ERROR_FS_NO_FILE_OPEN` | File I/O was requested with no open file. |
+| `7F` | `ERROR_FS_WRITE_FAILED` | FAT file write failed. |
+| `80` | `ERROR_FS_SEEK_FAILED` | FAT file seek failed. |
+| `81` | `ERROR_FS_SYNC_FAILED` | FAT file sync failed. |
 
 ## PHI2 Speed Control
 
@@ -296,6 +348,10 @@ On Pico 2 W, the default Pico system clock is `150 MHz`. With that normal `clk_s
 
 | GPIO | Signal | Direction | Description |
 | ---- | ------ | --------- | ----------- |
+| 0 | `SD_MISO` | Input | SD SPI MISO by default. |
+| 1 | `SD_CS` | Output | SD SPI chip select by default. |
+| 2 | `SD_SCK` | Output | SD SPI clock by default. |
+| 3 | `SD_MOSI` | Output | SD SPI MOSI by default. |
 | 4 | `AUDIO_L` | Output | Left PWM audio output by default. |
 | 5 | `AUDIO_R` | Output | Right PWM audio output by default. |
 | 6 | `MIA_CS` | Input | Chip select sampled by PIO. |

@@ -14,6 +14,7 @@
 #include "mem/regs.h"
 #include "mem/mem.h"
 #include "input/input.h"
+#include "sd/sd.h"
 #include "sys/exec.h"
 #include "sys/speed.h"
 #include "net/wifi.h"
@@ -48,6 +49,21 @@ static const char *error_name(uint8_t code) {
         case ERROR_INPUT_UDP_ALLOC_FAILED: return "ERROR_INPUT_UDP_ALLOC_FAILED";
         case ERROR_INPUT_UDP_BIND_FAILED: return "ERROR_INPUT_UDP_BIND_FAILED";
         case ERROR_AUDIO_QUEUE_OVERFLOW: return "ERROR_AUDIO_QUEUE_OVERFLOW";
+        case ERROR_SD_BUSY: return "ERROR_SD_BUSY";
+        case ERROR_SD_INIT_FAILED: return "ERROR_SD_INIT_FAILED";
+        case ERROR_SD_NOT_READY: return "ERROR_SD_NOT_READY";
+        case ERROR_SD_READ_FAILED: return "ERROR_SD_READ_FAILED";
+        case ERROR_SD_WRITE_FAILED: return "ERROR_SD_WRITE_FAILED";
+        case ERROR_FS_MOUNT_FAILED: return "ERROR_FS_MOUNT_FAILED";
+        case ERROR_FS_OPEN_FAILED: return "ERROR_FS_OPEN_FAILED";
+        case ERROR_FS_READ_FAILED: return "ERROR_FS_READ_FAILED";
+        case ERROR_FS_CLOSE_FAILED: return "ERROR_FS_CLOSE_FAILED";
+        case ERROR_FS_DIR_FAILED: return "ERROR_FS_DIR_FAILED";
+        case ERROR_FS_INVALID_REQUEST: return "ERROR_FS_INVALID_REQUEST";
+        case ERROR_FS_NO_FILE_OPEN: return "ERROR_FS_NO_FILE_OPEN";
+        case ERROR_FS_WRITE_FAILED: return "ERROR_FS_WRITE_FAILED";
+        case ERROR_FS_SEEK_FAILED: return "ERROR_FS_SEEK_FAILED";
+        case ERROR_FS_SYNC_FAILED: return "ERROR_FS_SYNC_FAILED";
         default: return "UNKNOWN_ERROR";
     }
 }
@@ -75,6 +91,9 @@ static void print_status_word(uint16_t st) {
     if (st & MIA_STAT_VIDEO_FRAME_SENT)      print_flag_name(&any, "VID_SENT");
     if (st & MIA_STAT_EXEC_PAUSED)           print_flag_name(&any, "PAUSED");
     if (st & MIA_STAT_AUDIO_ACTIVE)          print_flag_name(&any, "AUDIO");
+    if (st & MIA_STAT_SD_PRESENT)            print_flag_name(&any, "SD");
+    if (st & MIA_STAT_SD_BUSY)               print_flag_name(&any, "SD_BUSY");
+    if (st & MIA_STAT_FS_MOUNTED)            print_flag_name(&any, "FS");
     if (any) printf(")");
 }
 
@@ -92,6 +111,9 @@ static void print_irq_sources(uint16_t flags) {
     if (flags & IRQ_INPUT_KEYBOARD)      print_flag_name(&any, "INPUT_KEY");
     if (flags & IRQ_INPUT_MOUSE)         print_flag_name(&any, "INPUT_MOUSE");
     if (flags & IRQ_INPUT_GAMEPAD)       print_flag_name(&any, "INPUT_PAD");
+    if (flags & IRQ_SD_DONE)             print_flag_name(&any, "SD_DONE");
+    if (flags & IRQ_SD_ERROR)            print_flag_name(&any, "SD_ERROR");
+    if (flags & IRQ_FS_EVENT)            print_flag_name(&any, "FS_EVENT");
     if (flags & IRQ_TRIGGERED)           print_flag_name(&any, "TRIGGERED");
 
     if (!any) {
@@ -207,6 +229,7 @@ static void cmd_status_summary(void) {
     mia_video_print_summary();
     mia_input_print_status();
     mia_audio_print_summary();
+    mia_sd_print_summary();
 }
 
 static void cmd_status_irq(void) {
@@ -295,6 +318,11 @@ static void cmd_status(const char *args) {
         return;
     }
 
+    if (strcmp(args, "sd") == 0 || strcmp(args, "fs") == 0) {
+        mia_sd_print_status();
+        return;
+    }
+
     if (strcmp(args, "wifi") == 0) {
         mia_net_wifi_print_detail();
         return;
@@ -330,7 +358,7 @@ static void cmd_status(const char *args) {
         return;
     }
 
-    printf("Usage: status [video|input|audio|wifi|irq|speed|exec|errors|mem|index [id]]\n");
+    printf("Usage: status [video|input|audio|sd|wifi|irq|speed|exec|errors|mem|index [id]]\n");
 }
 
 static void cmd_errors_list(void) {
@@ -511,6 +539,36 @@ static void cmd_audio(const char *args) {
     printf("Usage: audio [status|enable|stop|reset]\n");
 }
 
+static void cmd_sd(const char *args) {
+    args = skip_ws(args);
+
+    if (!*args || strcmp(args, "status") == 0) {
+        mia_sd_print_status();
+        printf("Usage: sd [status|init|mount]\n");
+        return;
+    }
+
+    uint8_t command = 0;
+    const char *name = NULL;
+
+    if (strcmp(args, "init") == 0) {
+        command = MIA_CMD_SD_INIT;
+        name = "init";
+    } else if (strcmp(args, "mount") == 0) {
+        command = MIA_CMD_FS_MOUNT;
+        name = "mount";
+    } else {
+        printf("Usage: sd [status|init|mount]\n");
+        return;
+    }
+
+    if (mia_sd_request(command)) {
+        printf("SD: %s requested\n", name);
+    } else {
+        printf("SD: busy or invalid request\n");
+    }
+}
+
 static void cmd_exec(const char *args) {
     args = skip_ws(args);
 
@@ -552,12 +610,13 @@ typedef struct {
 } con_cmd_t;
 
 static const con_cmd_t commands[] = {
-    { "status",  cmd_status,  "status [video|input|audio|wifi|irq|speed|exec|mem|index]" },
+    { "status",  cmd_status,  "status [video|input|audio|sd|wifi|irq|speed|exec|mem|index]" },
     { "errors",  cmd_errors,  "errors [list|clear]"                      },
     { "speed",   cmd_speed,   "speed HZ  — set PHI2 clock frequency"     },
     { "wifi",    cmd_wifi,    "wifi [status|off|connect|ap]"             },
     { "input",   cmd_input,   "input [status|console|wifi]"              },
     { "audio",   cmd_audio,   "audio [status|enable|stop|reset]"         },
+    { "sd",      cmd_sd,      "sd [status|init|mount]"                   },
     { "exec",    cmd_exec,    "exec [status|pause|resume]"               },
     { "monitor", cmd_monitor, "Enter 65C02 machine language monitor"     },
     { "quit",    cmd_quit,    "Reboot to BOOTSEL"                        },

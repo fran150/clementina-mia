@@ -19,6 +19,9 @@
 #define IRQ_INPUT_KEYBOARD       (1u << 8)
 #define IRQ_INPUT_MOUSE          (1u << 9)
 #define IRQ_INPUT_GAMEPAD        (1u << 10)
+#define IRQ_SD_DONE              (1u << 11)
+#define IRQ_SD_ERROR             (1u << 12)
+#define IRQ_FS_EVENT             (1u << 13)
 #define IRQ_TRIGGERED            (1u << 15)   // summary bit, maintained by core 1
 
 // IRQ ownership model
