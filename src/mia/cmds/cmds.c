@@ -226,6 +226,36 @@ void command_fs_seek(uint8_t param[]) {
     (void)mia_sd_request(MIA_CMD_FS_SEEK);
 }
 
+void command_fs_stat(uint8_t param[]) {
+    UNUSED(param);
+
+    (void)mia_sd_request(MIA_CMD_FS_STAT);
+}
+
+void command_fs_mkdir(uint8_t param[]) {
+    UNUSED(param);
+
+    (void)mia_sd_request(MIA_CMD_FS_MKDIR);
+}
+
+void command_fs_delete(uint8_t param[]) {
+    UNUSED(param);
+
+    (void)mia_sd_request(MIA_CMD_FS_DELETE);
+}
+
+void command_fs_rename(uint8_t param[]) {
+    UNUSED(param);
+
+    (void)mia_sd_request(MIA_CMD_FS_RENAME);
+}
+
+void command_fs_get_free(uint8_t param[]) {
+    UNUSED(param);
+
+    (void)mia_sd_request(MIA_CMD_FS_GET_FREE);
+}
+
 /**************************************************************************************************
  * Init and crosscore messaging handling
  **************************************************************************************************/
@@ -311,6 +341,11 @@ void mia_command_init() {
     commands[MIA_CMD_FS_WRITE] = command_fs_write;
     commands[MIA_CMD_FS_SYNC] = command_fs_sync;
     commands[MIA_CMD_FS_SEEK] = command_fs_seek;
+    commands[MIA_CMD_FS_STAT] = command_fs_stat;
+    commands[MIA_CMD_FS_MKDIR] = command_fs_mkdir;
+    commands[MIA_CMD_FS_DELETE] = command_fs_delete;
+    commands[MIA_CMD_FS_RENAME] = command_fs_rename;
+    commands[MIA_CMD_FS_GET_FREE] = command_fs_get_free;
 
     // Clear the FIFO IRQ
     multicore_fifo_clear_irq();

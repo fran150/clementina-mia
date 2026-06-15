@@ -13,7 +13,7 @@
 #define MIA_STAT_VIDEO_FRAME_SENT    (1u << 6)  // Initial video response send finished and waiting for ACK
 #define MIA_STAT_EXEC_PAUSED         (1u << 7)  // PHI2 is stopped by the exec pause control
 #define MIA_STAT_AUDIO_ACTIVE        (1u << 8)  // PWM PSG audio engine is running
-#define MIA_STAT_SD_PRESENT          (1u << 9)  // SD card has initialized successfully
+#define MIA_STAT_SD_PRESENT          (1u << 9)  // SD card initialized successfully, not socket-detect state
 #define MIA_STAT_SD_BUSY             (1u << 10) // SD/FS command is in progress
 #define MIA_STAT_FS_MOUNTED          (1u << 11) // FAT filesystem is mounted
 

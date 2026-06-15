@@ -64,6 +64,11 @@ static const char *error_name(uint8_t code) {
         case ERROR_FS_WRITE_FAILED: return "ERROR_FS_WRITE_FAILED";
         case ERROR_FS_SEEK_FAILED: return "ERROR_FS_SEEK_FAILED";
         case ERROR_FS_SYNC_FAILED: return "ERROR_FS_SYNC_FAILED";
+        case ERROR_FS_STAT_FAILED: return "ERROR_FS_STAT_FAILED";
+        case ERROR_FS_MKDIR_FAILED: return "ERROR_FS_MKDIR_FAILED";
+        case ERROR_FS_DELETE_FAILED: return "ERROR_FS_DELETE_FAILED";
+        case ERROR_FS_RENAME_FAILED: return "ERROR_FS_RENAME_FAILED";
+        case ERROR_FS_FREE_FAILED: return "ERROR_FS_FREE_FAILED";
         default: return "UNKNOWN_ERROR";
     }
 }

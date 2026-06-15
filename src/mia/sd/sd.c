@@ -78,6 +78,11 @@ typedef enum {
     sd_request_write = MIA_CMD_FS_WRITE,
     sd_request_sync = MIA_CMD_FS_SYNC,
     sd_request_seek = MIA_CMD_FS_SEEK,
+    sd_request_stat = MIA_CMD_FS_STAT,
+    sd_request_mkdir = MIA_CMD_FS_MKDIR,
+    sd_request_delete = MIA_CMD_FS_DELETE,
+    sd_request_rename = MIA_CMD_FS_RENAME,
+    sd_request_get_free = MIA_CMD_FS_GET_FREE,
 } sd_request_t;
 
 static volatile uint8_t sd_pending_request;
@@ -484,6 +489,11 @@ bool mia_sd_request(uint8_t command) {
         case MIA_CMD_FS_WRITE:
         case MIA_CMD_FS_SYNC:
         case MIA_CMD_FS_SEEK:
+        case MIA_CMD_FS_STAT:
+        case MIA_CMD_FS_MKDIR:
+        case MIA_CMD_FS_DELETE:
+        case MIA_CMD_FS_RENAME:
+        case MIA_CMD_FS_GET_FREE:
             break;
         default:
             return false;
@@ -612,8 +622,8 @@ static bool sd_open_mode_to_fatfs(uint8_t open_mode, BYTE *fatfs_mode) {
     }
 }
 
-static void sd_prepare_fatfs_path(char out[MIA_FS_PATH_SIZE + 3u]) {
-    const char *in = (const char *)&mem[MIA_FS_PATH_OFFSET];
+static void sd_prepare_fatfs_path_from(uint32_t offset, uint32_t size, char out[MIA_FS_PATH_SIZE + 3u]) {
+    const char *in = (const char *)&mem[offset];
     uint32_t out_i = 0;
 
     out[out_i++] = '0';
@@ -622,10 +632,18 @@ static void sd_prepare_fatfs_path(char out[MIA_FS_PATH_SIZE + 3u]) {
         out[out_i++] = '/';
     }
 
-    for (uint32_t i = 0; i < MIA_FS_PATH_SIZE - 1u && in[i] != '\0' && out_i < MIA_FS_PATH_SIZE + 2u; i++) {
+    for (uint32_t i = 0; i < size - 1u && in[i] != '\0' && out_i < MIA_FS_PATH_SIZE + 2u; i++) {
         out[out_i++] = in[i] == '\\' ? '/' : in[i];
     }
     out[out_i] = '\0';
+}
+
+static void sd_prepare_fatfs_path(char out[MIA_FS_PATH_SIZE + 3u]) {
+    sd_prepare_fatfs_path_from(MIA_FS_PATH_OFFSET, MIA_FS_PATH_SIZE, out);
+}
+
+static void sd_prepare_fatfs_path2(char out[MIA_FS_PATH_SIZE + 3u]) {
+    sd_prepare_fatfs_path_from(MIA_FS_PATH2_OFFSET, MIA_FS_PATH2_SIZE, out);
 }
 
 static void sd_clear_dir_entry(void) {
@@ -925,6 +943,91 @@ void mia_sd_service(void) {
             sd_update_file_position();
             break;
 
+        case sd_request_stat: {
+            if (!sd_require_mounted(&fr)) {
+                ok = false;
+                error = ERROR_FS_MOUNT_FAILED;
+                break;
+            }
+            char path[MIA_FS_PATH_SIZE + 3u];
+            FILINFO info;
+            sd_prepare_fatfs_path(path);
+            fr = f_stat(path, &info);
+            ok = (fr == FR_OK);
+            error = ERROR_FS_STAT_FAILED;
+            if (ok) {
+                sd_fill_dir_entry(&info);
+                sd_write_u16(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_RESULT_LEN_L, MIA_FS_DIR_ENTRY_SIZE);
+            }
+            break;
+        }
+
+        case sd_request_mkdir: {
+            if (!sd_require_mounted(&fr)) {
+                ok = false;
+                error = ERROR_FS_MOUNT_FAILED;
+                break;
+            }
+            char path[MIA_FS_PATH_SIZE + 3u];
+            sd_prepare_fatfs_path(path);
+            fr = f_mkdir(path);
+            ok = (fr == FR_OK);
+            error = ERROR_FS_MKDIR_FAILED;
+            break;
+        }
+
+        case sd_request_delete: {
+            if (!sd_require_mounted(&fr)) {
+                ok = false;
+                error = ERROR_FS_MOUNT_FAILED;
+                break;
+            }
+            char path[MIA_FS_PATH_SIZE + 3u];
+            sd_prepare_fatfs_path(path);
+            fr = f_unlink(path);
+            ok = (fr == FR_OK);
+            error = ERROR_FS_DELETE_FAILED;
+            break;
+        }
+
+        case sd_request_rename: {
+            if (!sd_require_mounted(&fr)) {
+                ok = false;
+                error = ERROR_FS_MOUNT_FAILED;
+                break;
+            }
+            char old_path[MIA_FS_PATH_SIZE + 3u];
+            char new_path[MIA_FS_PATH_SIZE + 3u];
+            sd_prepare_fatfs_path(old_path);
+            sd_prepare_fatfs_path2(new_path);
+            fr = f_rename(old_path, new_path);
+            ok = (fr == FR_OK);
+            error = ERROR_FS_RENAME_FAILED;
+            break;
+        }
+
+        case sd_request_get_free: {
+            if (!sd_require_mounted(&fr)) {
+                ok = false;
+                error = ERROR_FS_MOUNT_FAILED;
+                break;
+            }
+            FATFS *fs = NULL;
+            DWORD free_clusters = 0;
+            fr = f_getfree("0:", &free_clusters, &fs);
+            ok = (fr == FR_OK && fs != NULL);
+            error = ERROR_FS_FREE_FAILED;
+            if (ok) {
+                uint32_t total_clusters = fs->n_fatent > 2u ? (uint32_t)(fs->n_fatent - 2u) : 0u;
+                uint16_t cluster_sectors = fs->csize;
+                sd_write_u32(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_FREE_CLUSTERS0, (uint32_t)free_clusters);
+                sd_write_u32(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_TOTAL_CLUSTERS0, total_clusters);
+                sd_write_u16(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_CLUSTER_SECTORS_L, cluster_sectors);
+                sd_write_u16(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_RESULT_LEN_L, 10u);
+            }
+            break;
+        }
+
         case sd_request_close:
             if (sd_file_open) {
                 fr = f_close(&sd_file);
@@ -1018,12 +1121,13 @@ void mia_sd_print_status(void) {
            MIA_FS_DIR_ENTRY_OFFSET + MIA_FS_DIR_ENTRY_SIZE - 1u,
            MIA_FS_TRANSFER_OFFSET,
            MIA_FS_TRANSFER_OFFSET + MIA_FS_TRANSFER_SIZE - 1u);
-    printf("  indexes:   control:$%02X sector:$%02X path:$%02X dir:$%02X transfer:$%02X\n",
+    printf("  indexes:   control:$%02X sector:$%02X path:$%02X dir:$%02X transfer:$%02X path2:$%02X\n",
            MIA_SD_INDEX_CONTROL,
            MIA_SD_INDEX_SECTOR,
            MIA_FS_INDEX_PATH,
            MIA_FS_INDEX_DIR_ENTRY,
-           MIA_FS_INDEX_TRANSFER);
+           MIA_FS_INDEX_TRANSFER,
+           MIA_FS_INDEX_PATH2);
     printf("  control:   status:0x%02X last-error:0x%02X fatfs:%u lba:%lu req:%u result:%u dest:$%05lX\n",
            (unsigned)mem[MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_STATUS],
            (unsigned)sd_last_error,
@@ -1038,6 +1142,10 @@ void mia_sd_print_status(void) {
     printf("             mode:%u requested-open-mode:%u\n",
            (unsigned)sd_current_open_mode,
            (unsigned)mem[MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_OPEN_MODE]);
+    printf("  free:      clusters:%lu/%lu cluster-sectors:%u\n",
+           (unsigned long)sd_read_u32(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_FREE_CLUSTERS0),
+           (unsigned long)sd_read_u32(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_TOTAL_CLUSTERS0),
+           (unsigned)sd_read_u16(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_CLUSTER_SECTORS_L));
 }
 
 static void sd_configure_indexes(void) {
@@ -1046,6 +1154,7 @@ static void sd_configure_indexes(void) {
     sd_configure_index(MIA_FS_INDEX_PATH, MIA_FS_PATH_OFFSET, MIA_FS_PATH_SIZE);
     sd_configure_index(MIA_FS_INDEX_DIR_ENTRY, MIA_FS_DIR_ENTRY_OFFSET, MIA_FS_DIR_ENTRY_SIZE);
     sd_configure_index(MIA_FS_INDEX_TRANSFER, MIA_FS_TRANSFER_OFFSET, MIA_FS_TRANSFER_SIZE);
+    sd_configure_index(MIA_FS_INDEX_PATH2, MIA_FS_PATH2_OFFSET, MIA_FS_PATH2_SIZE);
 }
 
 static void sd_configure_index(uint8_t index_id, uint32_t start, uint32_t length) {

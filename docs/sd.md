@@ -19,6 +19,7 @@ The first implementation provides:
 | Sector size | 512 bytes |
 | Filesystem | FAT via FatFs |
 | File API | read and write |
+| File management | stat, mkdir, delete, rename, free-space query |
 | Raw block API | read and write single 512-byte sectors |
 | Open files | one implicit file handle |
 | Open directories | one implicit directory cursor |
@@ -60,6 +61,10 @@ MIA_SD_MISO_PIN=16 MIA_SD_CS_PIN=17 MIA_SD_SCK_PIN=18 MIA_SD_MOSI_PIN=19 make bu
 The SD card socket or module must be 3.3 V compatible. Do not connect a 5 V SD
 module directly to Pico GPIOs unless it has appropriate level shifting.
 
+MIA does not currently use dedicated card-detect or write-protect GPIOs. The
+`SD_STATUS_PRESENT` and `MIA_STAT_SD_PRESENT` bits mean that a card answered SD
+initialization successfully; they are not live socket-switch state.
+
 ## Memory Map
 
 SD and filesystem state lives in MIA RAM at `$13000-$13BFF`. It is outside the
@@ -73,6 +78,9 @@ syncable video region, so normal SD/FS control writes do not dirty video pages.
 | `$13340-$1343F` | 256 | directory entry/result buffer |
 | `$13440-$13BFF` | 1984 | file transfer buffer |
 
+The secondary path buffer used by `FS_RENAME` overlays `$13440-$1353F`, the
+first 256 bytes of the file transfer buffer.
+
 `FS_LOAD_TO_MIA_RAM` can write into any MIA RAM destination. If the destination
 overlaps the syncable video region, MIA marks the affected video pages dirty.
 Bulk loads into the audio register block update RAM but do not queue live audio
@@ -84,7 +92,7 @@ Offsets in this table are relative to `$13000`.
 
 | Offset | Name | Access | Description |
 | ---: | --- | --- | --- |
-| `$00` | `SD_VERSION` | read | SD/FS memory layout version. Current value is `2`. |
+| `$00` | `SD_VERSION` | read | SD/FS memory layout version. Current value is `3`. |
 | `$01` | `SD_STATUS` | read | SD/FS status flags. |
 | `$02` | `SD_LAST_ERROR` | read | Last MIA SD/FS error code, or zero. |
 | `$03` | `SD_CARD_TYPE` | read | Card type code. |
@@ -100,7 +108,10 @@ Offsets in this table are relative to `$13000`.
 | `$14-$17` | `SD_CARD_SECTORS` | read | Little-endian card capacity in 512-byte sectors, when known. |
 | `$18-$1B` | `SD_FILE_SIZE` | read | Size of the currently open file. |
 | `$1C-$1F` | `SD_FILE_POS` | read/write | Current file position. Write before `FS_SEEK` to choose the target offset. After `FS_LOAD_TO_MIA_RAM`, this contains the full 32-bit loaded byte count. |
-| `$20-$3F` | reserved | reserved | Write zero. |
+| `$20-$23` | `SD_FREE_CLUSTERS` | read | Free FAT clusters after `FS_GET_FREE`. |
+| `$24-$27` | `SD_TOTAL_CLUSTERS` | read | Total usable FAT clusters after `FS_GET_FREE`. |
+| `$28-$29` | `SD_CLUSTER_SECTORS` | read | Sectors per FAT cluster after `FS_GET_FREE`. |
+| `$2A-$3F` | reserved | reserved | Write zero. |
 
 `SD_OPEN_MODE` values:
 
@@ -172,6 +183,7 @@ MIA configures fixed indexes for SD/FS during runtime reset:
 | `$E2` | `$13240-$1333F` | Path buffer. |
 | `$E3` | `$13340-$1343F` | Directory entry/result buffer. |
 | `$E4` | `$13440-$13BFF` | File transfer buffer. |
+| `$E5` | `$13440-$1353F` | Secondary path buffer, overlaid on the first 256 bytes of the transfer buffer. |
 
 All SD/FS indexes step on reads and writes and wrap within their configured
 range.
@@ -207,6 +219,11 @@ by the command dispatcher; it is not the SD/FS completion event.
 | `FS_WRITE` | `$7F` | `SD_REQUEST_LEN`, transfer buffer | Write up to `SD_REQUEST_LEN` bytes from the transfer buffer to the open file. |
 | `FS_SYNC` | `$80` | none | Flush the open file's dirty FAT/data sectors to the card. |
 | `FS_SEEK` | `$81` | `SD_FILE_POS` | Seek the open file to `SD_FILE_POS`. |
+| `FS_STAT` | `$82` | path buffer | Fill the directory entry buffer with metadata for one file or directory. |
+| `FS_MKDIR` | `$83` | path buffer | Create one directory. Parent directories must already exist. |
+| `FS_DELETE` | `$84` | path buffer | Delete one file or empty directory. |
+| `FS_RENAME` | `$85` | path buffer, secondary path buffer | Rename or move one file or directory. |
+| `FS_GET_FREE` | `$86` | none | Update free-space fields in the control block. |
 
 For `FS_READ` and `FS_WRITE`, a `SD_REQUEST_LEN` of zero means the full transfer
 buffer size (`1984` bytes). `SD_RESULT_LEN` contains the actual byte count read
@@ -223,13 +240,30 @@ For `FS_SEEK`, write the 32-bit target offset to `SD_FILE_POS`, trigger the
 command, then read `SD_FILE_POS` again. FatFs may clamp or adjust the final
 position depending on the open mode and filesystem result.
 
+`FS_STAT` uses the same directory entry/result buffer as `FS_READDIR`.
+`FS_RENAME` reads the old path from `$E2`/`IIDX_FS_PATH` and the new path from
+`$E5`/`IIDX_FS_PATH2`. Because path2 overlays the start of the transfer buffer,
+do not expect the first 256 transfer bytes to survive a rename request.
+
+After `FS_GET_FREE`, free space in bytes is:
+
+```text
+SD_FREE_CLUSTERS * SD_CLUSTER_SECTORS * 512
+```
+
+The total usable filesystem size is:
+
+```text
+SD_TOTAL_CLUSTERS * SD_CLUSTER_SECTORS * 512
+```
+
 ## Status and IRQ Bits
 
 Global `MIA_STATUS` adds:
 
 | Bit | Name | Meaning |
 | ---: | --- | --- |
-| 9 | `MIA_STAT_SD_PRESENT` | SD card initialized successfully. |
+| 9 | `MIA_STAT_SD_PRESENT` | SD card initialized successfully. This is not physical socket-detect state. |
 | 10 | `MIA_STAT_SD_BUSY` | SD/FS command is in progress. |
 | 11 | `MIA_STAT_FS_MOUNTED` | FAT filesystem is mounted. |
 
@@ -267,6 +301,11 @@ SD/FS failures are reported through the normal MIA error queue and mirrored in
 | `$7F` | `ERROR_FS_WRITE_FAILED` | File write failed or wrote fewer bytes than requested. |
 | `$80` | `ERROR_FS_SEEK_FAILED` | File seek failed. |
 | `$81` | `ERROR_FS_SYNC_FAILED` | File sync failed. |
+| `$82` | `ERROR_FS_STAT_FAILED` | File stat failed. |
+| `$83` | `ERROR_FS_MKDIR_FAILED` | Directory creation failed. |
+| `$84` | `ERROR_FS_DELETE_FAILED` | File or directory delete failed. |
+| `$85` | `ERROR_FS_RENAME_FAILED` | File or directory rename failed. |
+| `$86` | `ERROR_FS_FREE_FAILED` | Free-space query failed. |
 
 For filesystem errors, `SD_FATFS_RESULT` contains the raw FatFs result code for
 more detailed diagnosis.
@@ -285,12 +324,14 @@ The USB terminal exposes:
 
 ## Limitations
 
-- The file API supports open/read/write/sync/seek/close. Higher-level FAT
-  operations such as delete, rename, mkdir, and formatting are not exposed yet.
+- The file API supports open/read/write/sync/seek/close, stat, mkdir, delete,
+  rename, and free-space query. Formatting is not exposed.
 - Raw sector write exists for advanced tools, but it bypasses FAT consistency
   checks at the MIA API level.
 - Only one implicit file handle and one implicit directory cursor are exposed to
   the 6502.
+- No physical card-detect or write-protect GPIO is wired into MIA yet. Present
+  means "initialization succeeded."
 - FAT long filename support comes from the bundled FatFs configuration. Keep
   filenames ASCII/CP437-safe for predictable 6502 programs.
 - `FS_LOAD_TO_MIA_RAM` may block core 0 while reading larger files. Core 1 keeps

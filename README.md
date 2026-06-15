@@ -226,6 +226,11 @@ Commands are requested by writing parameters to `CMD_PARAM1-3`, then writing the
 | `7F` | `SD_REQUEST_LEN` and transfer buffer | Write file bytes from the transfer buffer. |
 | `80` | none | Flush the open file to the card. |
 | `81` | `SD_FILE_POS` in SD control block | Seek the open file. |
+| `82` | path buffer | Stat a file or directory into the directory-entry buffer. |
+| `83` | path buffer | Create a directory. |
+| `84` | path buffer | Delete a file or empty directory. |
+| `85` | path buffer and secondary path buffer | Rename or move a file or directory. |
+| `86` | none | Query FAT free space into the SD control block. |
 
 Unassigned command ids report `ERROR_CMD_UNKNOWN`.
 
@@ -292,7 +297,7 @@ during storage bring-up.
 | 6 | `MIA_STAT_VIDEO_FRAME_SENT` | Initial video response send finished; ACK may still be pending. |
 | 7 | `MIA_STAT_EXEC_PAUSED` | `PHI2` is stopped by the exec pause control. |
 | 8 | `MIA_STAT_AUDIO_ACTIVE` | PWM audio IRQ is running. |
-| 9 | `MIA_STAT_SD_PRESENT` | SD card initialized successfully. |
+| 9 | `MIA_STAT_SD_PRESENT` | SD card initialized successfully. This is not a physical socket-detect bit. |
 | 10 | `MIA_STAT_SD_BUSY` | SD/FS command is in progress. |
 | 11 | `MIA_STAT_FS_MOUNTED` | FAT filesystem is mounted. |
 
@@ -333,6 +338,11 @@ Errors are stored in a 16-entry ring buffer. Reading `$FFEC` pulls one error int
 | `7F` | `ERROR_FS_WRITE_FAILED` | FAT file write failed. |
 | `80` | `ERROR_FS_SEEK_FAILED` | FAT file seek failed. |
 | `81` | `ERROR_FS_SYNC_FAILED` | FAT file sync failed. |
+| `82` | `ERROR_FS_STAT_FAILED` | FAT stat failed. |
+| `83` | `ERROR_FS_MKDIR_FAILED` | FAT mkdir failed. |
+| `84` | `ERROR_FS_DELETE_FAILED` | FAT delete failed. |
+| `85` | `ERROR_FS_RENAME_FAILED` | FAT rename failed. |
+| `86` | `ERROR_FS_FREE_FAILED` | FAT free-space query failed. |
 
 ## PHI2 Speed Control
 

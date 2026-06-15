@@ -19,6 +19,9 @@ The 6502 should not parse FAT. MIA handles SD SPI mode, card type detection,
 mounting, directory traversal, file open, file read/write, and cluster-chain
 I/O.
 
+`MIA_STAT_SD_PRESENT` means that SD initialization succeeded. It is not a
+physical card-detect switch.
+
 ## Constants
 
 ```asm
@@ -53,12 +56,18 @@ CMD_FS_LOAD_MIA     = $7E
 CMD_FS_WRITE        = $7F
 CMD_FS_SYNC         = $80
 CMD_FS_SEEK         = $81
+CMD_FS_STAT         = $82
+CMD_FS_MKDIR        = $83
+CMD_FS_DELETE       = $84
+CMD_FS_RENAME       = $85
+CMD_FS_GET_FREE     = $86
 
 IIDX_SD_CONTROL     = $E0
 IIDX_SD_SECTOR      = $E1
 IIDX_FS_PATH        = $E2
 IIDX_FS_DIR_ENTRY   = $E3
 IIDX_FS_TRANSFER    = $E4
+IIDX_FS_PATH2       = $E5
 
 FS_OPEN_READ         = $00
 FS_OPEN_WRITE_CREATE = $01
@@ -117,6 +126,9 @@ SD_FATFS_RESULT   = $12
 SD_CARD_SECTORS0  = $14
 SD_FILE_SIZE0     = $18
 SD_FILE_POS0      = $1C
+SD_FREE_CLUSTERS0 = $20
+SD_TOTAL_CLUSTERS0 = $24
+SD_CLUSTER_SECTORS_L = $28
 ```
 
 Directory entry offsets, relative to `IIDX_FS_DIR_ENTRY`:
@@ -502,6 +514,97 @@ fs_seek_start:
     rts
 ```
 
+## Managing Files And Directories
+
+`FS_STAT`, `FS_MKDIR`, and `FS_DELETE` read their path from `IIDX_FS_PATH`.
+`FS_STAT` fills `IIDX_FS_DIR_ENTRY` with the same metadata layout used by
+`FS_READDIR`.
+
+```asm
+fs_stat_path:
+    jsr fs_write_path
+    lda #CMD_FS_STAT
+    jsr mia_cmd
+    jsr sd_wait
+    jsr sd_last_error
+    bne @done
+
+    lda #IIDX_FS_DIR_ENTRY
+    sta IDXA_SELECT
+    lda IDXA_PORT       ; DIR_ATTR
+    sta dir_attr
+    lda IDXA_PORT       ; DIR_NAME_LEN
+    sta dir_name_len
+@done:
+    rts
+```
+
+Directory creation uses `FS_MKDIR`. Parent directories must already exist.
+Deleting uses `FS_DELETE`; FAT only deletes empty directories.
+
+```asm
+fs_mkdir_path:
+    jsr fs_write_path
+    lda #CMD_FS_MKDIR
+    jsr mia_cmd
+    jsr sd_wait
+    jsr sd_last_error
+    rts
+
+fs_delete_path:
+    jsr fs_write_path
+    lda #CMD_FS_DELETE
+    jsr mia_cmd
+    jsr sd_wait
+    jsr sd_last_error
+    rts
+```
+
+`FS_RENAME` uses two paths. Write the old path to `IIDX_FS_PATH` and the new
+path to `IIDX_FS_PATH2`. `IIDX_FS_PATH2` overlays the first 256 bytes of the
+transfer buffer, so do not preserve transfer data across a rename.
+
+```asm
+new_path:
+    .byte "/STATE2.BIN",0
+
+fs_rename_demo:
+    jsr fs_write_path   ; old path from the guide's path label
+
+    lda #IIDX_FS_PATH2
+    sta IDXA_SELECT
+    ldy #$00
+@new_path:
+    lda new_path,y
+    sta IDXA_PORT
+    beq @ren
+    iny
+    bne @new_path
+@ren:
+    lda #CMD_FS_RENAME
+    jsr mia_cmd
+    jsr sd_wait
+    jsr sd_last_error
+    rts
+```
+
+`FS_GET_FREE` updates free-space fields in the SD control block:
+
+- `SD_FREE_CLUSTERS`
+- `SD_TOTAL_CLUSTERS`
+- `SD_CLUSTER_SECTORS`
+
+Free bytes are `SD_FREE_CLUSTERS * SD_CLUSTER_SECTORS * 512`.
+
+```asm
+fs_get_free:
+    lda #CMD_FS_GET_FREE
+    jsr mia_cmd
+    jsr sd_wait
+    jsr sd_last_error
+    rts
+```
+
 ## Listing A Directory
 
 Write the directory path, then issue `FS_OPENDIR`. Use `/` for the root
@@ -637,6 +740,11 @@ Common MIA SD/FS errors:
 | `$7F` | `ERROR_FS_WRITE_FAILED` |
 | `$80` | `ERROR_FS_SEEK_FAILED` |
 | `$81` | `ERROR_FS_SYNC_FAILED` |
+| `$82` | `ERROR_FS_STAT_FAILED` |
+| `$83` | `ERROR_FS_MKDIR_FAILED` |
+| `$84` | `ERROR_FS_DELETE_FAILED` |
+| `$85` | `ERROR_FS_RENAME_FAILED` |
+| `$86` | `ERROR_FS_FREE_FAILED` |
 
 The terminal command `status sd` is the fastest way to inspect the last SD/FS
 state during bring-up.
@@ -650,6 +758,6 @@ state during bring-up.
 - Prefer `FS_OPEN` plus repeated `FS_READ` for parsers and stream formats.
 - Use `FS_OPEN_WRITE_CREATE`, `FS_WRITE`, `FS_SYNC`, and `FS_CLOSE` for save
   files.
-- Parent directories must already exist; mkdir/delete/rename are not exposed
-  yet.
+- Use `FS_MKDIR` before saving into a new directory; it creates one level only.
+- Close open files and directory cursors before deleting or renaming paths.
 - Keep raw writes behind explicit tools; they bypass file-level safety.

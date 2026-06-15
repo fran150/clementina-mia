@@ -39,6 +39,11 @@
 #define ERROR_FS_WRITE_FAILED           0x7F        // FAT file write failed
 #define ERROR_FS_SEEK_FAILED            0x80        // FAT file seek failed
 #define ERROR_FS_SYNC_FAILED            0x81        // FAT file sync failed
+#define ERROR_FS_STAT_FAILED            0x82        // FAT stat failed
+#define ERROR_FS_MKDIR_FAILED           0x83        // FAT mkdir failed
+#define ERROR_FS_DELETE_FAILED          0x84        // FAT delete failed
+#define ERROR_FS_RENAME_FAILED          0x85        // FAT rename failed
+#define ERROR_FS_FREE_FAILED            0x86        // FAT free-space query failed
 
 #define ERROR_DEFER_CMD_QUEUE_FULL      (1u << 0)
 #define ERROR_DEFER_AUDIO_QUEUE_OVERFLOW (1u << 1)
