@@ -20,6 +20,7 @@ The first implementation provides:
 | Filesystem | FAT via FatFs |
 | File API | read and write |
 | File management | stat, mkdir, delete, rename, free-space query |
+| Whole-file jobs | chunked load to MIA RAM, chunked save from MIA RAM |
 | Raw block API | read and write single 512-byte sectors |
 | Open files | one implicit file handle |
 | Open directories | one implicit directory cursor |
@@ -51,6 +52,7 @@ These defaults can be overridden at build time:
 | `MIA_SD_SCK_PIN` | SCK GPIO. |
 | `MIA_SD_MOSI_PIN` | MOSI GPIO. |
 | `MIA_SD_SPI_FAST_BAUD` | post-initialization SPI clock. Default `12000000`. |
+| `MIA_SD_SERVICE_BUDGET_US` | Core 0 SD job service budget per call. Default `1000`. |
 
 Example:
 
@@ -92,7 +94,7 @@ Offsets in this table are relative to `$13000`.
 
 | Offset | Name | Access | Description |
 | ---: | --- | --- | --- |
-| `$00` | `SD_VERSION` | read | SD/FS memory layout version. Current value is `3`. |
+| `$00` | `SD_VERSION` | read | SD/FS memory layout version. Current value is `4`. |
 | `$01` | `SD_STATUS` | read | SD/FS status flags. |
 | `$02` | `SD_LAST_ERROR` | read | Last MIA SD/FS error code, or zero. |
 | `$03` | `SD_CARD_TYPE` | read | Card type code. |
@@ -111,7 +113,8 @@ Offsets in this table are relative to `$13000`.
 | `$20-$23` | `SD_FREE_CLUSTERS` | read | Free FAT clusters after `FS_GET_FREE`. |
 | `$24-$27` | `SD_TOTAL_CLUSTERS` | read | Total usable FAT clusters after `FS_GET_FREE`. |
 | `$28-$29` | `SD_CLUSTER_SECTORS` | read | Sectors per FAT cluster after `FS_GET_FREE`. |
-| `$2A-$3F` | reserved | reserved | Write zero. |
+| `$2A-$2D` | `SD_TRANSFER_LEN` | read/write | 32-bit byte count for `FS_SAVE_FROM_MIA_RAM`. |
+| `$2E-$3F` | reserved | reserved | Write zero. |
 
 `SD_OPEN_MODE` values:
 
@@ -224,6 +227,7 @@ by the command dispatcher; it is not the SD/FS completion event.
 | `FS_DELETE` | `$84` | path buffer | Delete one file or empty directory. |
 | `FS_RENAME` | `$85` | path buffer, secondary path buffer | Rename or move one file or directory. |
 | `FS_GET_FREE` | `$86` | none | Update free-space fields in the control block. |
+| `FS_SAVE_FROM_MIA_RAM` | `$87` | path buffer, `SD_DEST_ADDR`, `SD_TRANSFER_LEN`, `SD_OPEN_MODE` | Open a file, save bytes from MIA RAM, then close it. |
 
 For `FS_READ` and `FS_WRITE`, a `SD_REQUEST_LEN` of zero means the full transfer
 buffer size (`1984` bytes). `SD_RESULT_LEN` contains the actual byte count read
@@ -234,7 +238,15 @@ to the card before continuing.
 For `FS_LOAD_TO_MIA_RAM`, a `SD_REQUEST_LEN` of zero means load until EOF or
 until the destination reaches the end of MIA RAM. `SD_RESULT_LEN` is 16-bit and
 contains the low 16 bits of the loaded byte count; `SD_FILE_POS` contains the
-full 32-bit loaded byte count.
+full 32-bit loaded byte count. The load runs as an internal 512-byte chunked job,
+so core 0 returns to the normal service loop between chunks.
+
+For `FS_SAVE_FROM_MIA_RAM`, `SD_DEST_ADDR` is the MIA RAM source address,
+`SD_TRANSFER_LEN` is the full 32-bit byte count to save, and `SD_OPEN_MODE`
+selects the write policy. `FS_OPEN_READ` is rejected. `SD_RESULT_LEN` contains
+the low 16 bits of the saved byte count; `SD_FILE_POS` contains the full 32-bit
+saved byte count. The save runs as an internal 512-byte chunked job and closes
+the file when complete.
 
 For `FS_SEEK`, write the 32-bit target offset to `SD_FILE_POS`, trigger the
 command, then read `SD_FILE_POS` again. FatFs may clamp or adjust the final
@@ -326,6 +338,9 @@ The USB terminal exposes:
 
 - The file API supports open/read/write/sync/seek/close, stat, mkdir, delete,
   rename, and free-space query. Formatting is not exposed.
+- Whole-file load/save jobs process 512-byte chunks and return to the core 0
+  service loop between chunks. Individual SD card operations can still block for
+  card-internal erase/program latency.
 - Raw sector write exists for advanced tools, but it bypasses FAT consistency
   checks at the MIA API level.
 - Only one implicit file handle and one implicit directory cursor are exposed to
@@ -334,6 +349,5 @@ The USB terminal exposes:
   means "initialization succeeded."
 - FAT long filename support comes from the bundled FatFs configuration. Keep
   filenames ASCII/CP437-safe for predictable 6502 programs.
-- `FS_LOAD_TO_MIA_RAM` may block core 0 while reading larger files. Core 1 keeps
-  the 6502 bus interface alive, but Wi-Fi/video service work waits until the
-  load command returns.
+- `FS_SYNC`, `FS_CLOSE`, metadata updates, and raw sector writes may still block
+  core 0 while the card commits data internally.

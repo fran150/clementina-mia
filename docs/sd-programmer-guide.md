@@ -61,6 +61,7 @@ CMD_FS_MKDIR        = $83
 CMD_FS_DELETE       = $84
 CMD_FS_RENAME       = $85
 CMD_FS_GET_FREE     = $86
+CMD_FS_SAVE_MIA     = $87
 
 IIDX_SD_CONTROL     = $E0
 IIDX_SD_SECTOR      = $E1
@@ -129,6 +130,7 @@ SD_FILE_POS0      = $1C
 SD_FREE_CLUSTERS0 = $20
 SD_TOTAL_CLUSTERS0 = $24
 SD_CLUSTER_SECTORS_L = $28
+SD_TRANSFER_LEN0  = $2A
 ```
 
 Directory entry offsets, relative to `IIDX_FS_DIR_ENTRY`:
@@ -263,7 +265,8 @@ from 6502 software.
 ## Loading A Whole File To MIA RAM
 
 `FS_LOAD_TO_MIA_RAM` opens the path, reads from the start of the file into MIA
-RAM, and closes the file.
+RAM, and closes the file. MIA performs the load as a 512-byte chunked job; keep
+waiting for `MIA_STAT_SD_BUSY` to clear before reading final results.
 
 Set:
 
@@ -483,6 +486,68 @@ fs_save_demo:
 `FS_OPEN_WRITE_APPEND` is useful for logs because FatFs places the file pointer
 at EOF. `FS_OPEN_READ_WRITE` is useful for save slots or databases that patch
 fixed offsets in an existing file.
+
+## Saving MIA RAM Directly
+
+`FS_SAVE_FROM_MIA_RAM` is the whole-file counterpart to `FS_LOAD_TO_MIA_RAM`.
+It opens the path, writes bytes from MIA RAM in 512-byte chunks, and closes the
+file when finished.
+
+Set:
+
+- `SD_DEST_ADDR` to the 24-bit MIA RAM source address.
+- `SD_TRANSFER_LEN` to the 32-bit byte count to save.
+- `SD_OPEN_MODE` to `FS_OPEN_WRITE_CREATE`, `FS_OPEN_WRITE_APPEND`, or
+  `FS_OPEN_READ_WRITE`.
+
+```asm
+fs_save_ram_demo:
+    jsr fs_write_path
+
+    lda #IIDX_SD_CONTROL
+    sta IDXA_SELECT
+
+    ; Skip to SD_DEST_ADDR_L.
+    ldx #SD_DEST_ADDR_L
+@skip_dest:
+    lda IDXA_PORT
+    dex
+    bne @skip_dest
+
+    lda #$00
+    sta IDXA_PORT       ; SD_DEST_ADDR_L
+    lda #$40
+    sta IDXA_PORT       ; SD_DEST_ADDR_M
+    lda #$01
+    sta IDXA_PORT       ; SD_DEST_ADDR_H = $014000 source
+    lda IDXA_PORT       ; SD_FILE_HANDLE, preserve
+
+    lda #FS_OPEN_WRITE_CREATE
+    sta IDXA_PORT       ; SD_OPEN_MODE
+
+    ; Skip to SD_TRANSFER_LEN0.
+    ldx #(SD_TRANSFER_LEN0 - SD_EOF)
+@skip_len:
+    lda IDXA_PORT
+    dex
+    bne @skip_len
+
+    lda #$00
+    sta IDXA_PORT       ; 4096 bytes = $00001000
+    lda #$10
+    sta IDXA_PORT
+    stz IDXA_PORT
+    stz IDXA_PORT
+
+    lda #CMD_FS_SAVE_MIA
+    jsr mia_cmd
+    jsr sd_wait
+    jsr sd_last_error
+    rts
+```
+
+After completion, `SD_RESULT_LEN` contains the low 16 bits of the saved byte
+count and `SD_FILE_POS` contains the full 32-bit saved byte count.
 
 ## Seeking
 
@@ -756,8 +821,9 @@ state during bring-up.
 - Mount once at startup, then open/read/close as needed.
 - Prefer `FS_LOAD_TO_MIA_RAM` for program and asset loading.
 - Prefer `FS_OPEN` plus repeated `FS_READ` for parsers and stream formats.
-- Use `FS_OPEN_WRITE_CREATE`, `FS_WRITE`, `FS_SYNC`, and `FS_CLOSE` for save
-  files.
+- Use `FS_OPEN_WRITE_CREATE`, `FS_WRITE`, `FS_SYNC`, and `FS_CLOSE` for small
+  save records that the 6502 is already streaming through the transfer buffer.
+- Use `FS_SAVE_FROM_MIA_RAM` for larger contiguous MIA RAM saves.
 - Use `FS_MKDIR` before saving into a new directory; it creates one level only.
 - Close open files and directory cursors before deleting or renaming paths.
 - Keep raw writes behind explicit tools; they bypass file-level safety.

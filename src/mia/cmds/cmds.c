@@ -256,6 +256,12 @@ void command_fs_get_free(uint8_t param[]) {
     (void)mia_sd_request(MIA_CMD_FS_GET_FREE);
 }
 
+void command_fs_save_from_mia_ram(uint8_t param[]) {
+    UNUSED(param);
+
+    (void)mia_sd_request(MIA_CMD_FS_SAVE_FROM_MIA_RAM);
+}
+
 /**************************************************************************************************
  * Init and crosscore messaging handling
  **************************************************************************************************/
@@ -346,6 +352,7 @@ void mia_command_init() {
     commands[MIA_CMD_FS_DELETE] = command_fs_delete;
     commands[MIA_CMD_FS_RENAME] = command_fs_rename;
     commands[MIA_CMD_FS_GET_FREE] = command_fs_get_free;
+    commands[MIA_CMD_FS_SAVE_FROM_MIA_RAM] = command_fs_save_from_mia_ram;
 
     // Clear the FIFO IRQ
     multicore_fifo_clear_irq();

@@ -87,7 +87,8 @@ See [docs/sd.md](docs/sd.md) and
 The default SD pins use `SPI0`: MISO GPIO 0, CS GPIO 1, SCK GPIO 2, and MOSI
 GPIO 3. These can be overridden at build time with `MIA_SD_SPI_INSTANCE`,
 `MIA_SD_MISO_PIN`, `MIA_SD_CS_PIN`, `MIA_SD_SCK_PIN`, `MIA_SD_MOSI_PIN`, and
-`MIA_SD_SPI_FAST_BAUD`.
+`MIA_SD_SPI_FAST_BAUD`. The chunked SD job service budget can be tuned with
+`MIA_SD_SERVICE_BUDGET_US`.
 
 ## Register Map
 
@@ -231,6 +232,7 @@ Commands are requested by writing parameters to `CMD_PARAM1-3`, then writing the
 | `84` | path buffer | Delete a file or empty directory. |
 | `85` | path buffer and secondary path buffer | Rename or move a file or directory. |
 | `86` | none | Query FAT free space into the SD control block. |
+| `87` | path buffer, `SD_DEST_ADDR`, `SD_TRANSFER_LEN`, `SD_OPEN_MODE` | Save bytes from MIA RAM to a file in chunks. |
 
 Unassigned command ids report `ERROR_CMD_UNKNOWN`.
 

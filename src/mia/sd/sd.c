@@ -61,6 +61,11 @@
 
 #define SD_DATA_TOKEN 0xFEu
 #define SD_WRITE_ACCEPTED 0x05u
+#define SD_JOB_CHUNK_SIZE 512u
+
+#ifndef MIA_SD_SERVICE_BUDGET_US
+#define MIA_SD_SERVICE_BUDGET_US 1000u
+#endif
 
 typedef enum {
     sd_request_none = 0,
@@ -83,7 +88,22 @@ typedef enum {
     sd_request_delete = MIA_CMD_FS_DELETE,
     sd_request_rename = MIA_CMD_FS_RENAME,
     sd_request_get_free = MIA_CMD_FS_GET_FREE,
+    sd_request_save = MIA_CMD_FS_SAVE_FROM_MIA_RAM,
 } sd_request_t;
+
+typedef enum {
+    sd_job_none = 0,
+    sd_job_load,
+    sd_job_save,
+} sd_job_type_t;
+
+typedef struct {
+    sd_job_type_t type;
+    FIL file;
+    uint32_t addr;
+    uint32_t limit;
+    uint32_t total;
+} sd_job_state_t;
 
 static volatile uint8_t sd_pending_request;
 static volatile bool sd_request_pending;
@@ -103,12 +123,15 @@ static uint32_t sd_sectors;
 static FATFS sd_fatfs;
 static FIL sd_file;
 static DIR sd_dir;
+static sd_job_state_t sd_job;
+static uint8_t sd_job_buffer[SD_JOB_CHUNK_SIZE];
 
 static void sd_configure_indexes(void);
 static void sd_configure_index(uint8_t index_id, uint32_t start, uint32_t length);
 static void sd_publish_state(void);
 static void sd_finish(bool ok, uint8_t error, FRESULT fatfs_result, bool fs_event);
 static void sd_set_busy(bool busy);
+static void sd_service_job(void);
 
 static uint16_t sd_read_u16(uint32_t offset) {
     return (uint16_t)mem[offset] | ((uint16_t)mem[offset + 1u] << 8);
@@ -278,6 +301,7 @@ bool mia_sd_card_init(void) {
     sd_dir_open = false;
     sd_eof = false;
     sd_current_open_mode = MIA_FS_OPEN_READ;
+    memset(&sd_job, 0, sizeof(sd_job));
     sd_type = MIA_SD_CARD_NONE;
     sd_sectors = 0;
     mia_status_clear_flag(MIA_STAT_SD_PRESENT | MIA_STAT_FS_MOUNTED);
@@ -445,6 +469,10 @@ void mia_sd_init(void) {
 void mia_sd_reset_runtime_state(void) {
     sd_request_pending = false;
     sd_pending_request = sd_request_none;
+    if (sd_job.type != sd_job_none) {
+        f_close(&sd_job.file);
+    }
+    memset(&sd_job, 0, sizeof(sd_job));
     sd_mounted = false;
     sd_file_open = false;
     sd_dir_open = false;
@@ -494,6 +522,7 @@ bool mia_sd_request(uint8_t command) {
         case MIA_CMD_FS_DELETE:
         case MIA_CMD_FS_RENAME:
         case MIA_CMD_FS_GET_FREE:
+        case MIA_CMD_FS_SAVE_FROM_MIA_RAM:
             break;
         default:
             return false;
@@ -603,6 +632,10 @@ static uint32_t sd_control_file_pos(void) {
     return sd_read_u32(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_FILE_POS0);
 }
 
+static uint32_t sd_control_transfer_len(void) {
+    return sd_read_u32(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_TRANSFER_LEN0);
+}
+
 static bool sd_open_mode_to_fatfs(uint8_t open_mode, BYTE *fatfs_mode) {
     switch (open_mode) {
         case MIA_FS_OPEN_READ:
@@ -694,65 +727,193 @@ static bool sd_require_mounted(FRESULT *out_result) {
     return sd_mount_filesystem(out_result);
 }
 
-static bool sd_load_to_ram(uint32_t dest, uint32_t max_len, uint32_t *loaded, FRESULT *out_result) {
+static void sd_job_update_progress(void) {
+    sd_write_u16(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_RESULT_LEN_L, (uint16_t)sd_job.total);
+    sd_write_u32(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_FILE_POS0, sd_job.total);
+}
+
+static void sd_finish_job(bool ok, uint8_t error, FRESULT fr) {
+    sd_job_type_t type = sd_job.type;
+
+    if (ok && type == sd_job_load) {
+        sd_eof = f_eof(&sd_job.file) != 0;
+    }
+    if (ok && type == sd_job_save) {
+        sd_write_u32(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_FILE_SIZE0, (uint32_t)f_size(&sd_job.file));
+    }
+
+    FRESULT close_fr = f_close(&sd_job.file);
+    if (ok && close_fr != FR_OK) {
+        ok = false;
+        error = ERROR_FS_CLOSE_FAILED;
+        fr = close_fr;
+    }
+
+    memset(&sd_job, 0, sizeof(sd_job));
+    sd_finish(ok, error, fr, true);
+}
+
+static bool sd_start_load_job(uint32_t dest, uint32_t max_len, uint8_t *out_error, FRESULT *out_result) {
     char path[MIA_FS_PATH_SIZE + 3u];
     sd_prepare_fatfs_path(path);
 
-    FIL load_file;
-    FRESULT fr = f_open(&load_file, path, FA_READ);
+    memset(&sd_job, 0, sizeof(sd_job));
+    FRESULT fr = f_open(&sd_job.file, path, FA_READ);
     if (fr != FR_OK) {
         *out_result = fr;
+        *out_error = ERROR_FS_OPEN_FAILED;
         return false;
     }
 
-    uint32_t total = 0;
-    uint8_t temp[512];
-    bool ok = true;
+    sd_job.type = sd_job_load;
+    sd_job.addr = dest;
+    sd_job.limit = max_len;
+    sd_job.total = 0;
+    sd_eof = false;
 
-    while (dest < MIA_RAM_SIZE) {
-        uint32_t remaining_ram = MIA_RAM_SIZE - dest;
-        uint32_t remaining_limit = max_len == 0 ? remaining_ram : max_len - total;
-        uint32_t chunk = sizeof(temp);
+    sd_write_u16(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_RESULT_LEN_L, 0);
+    sd_write_u32(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_FILE_SIZE0, (uint32_t)f_size(&sd_job.file));
+    sd_write_u32(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_FILE_POS0, 0);
+    *out_result = FR_OK;
+    *out_error = 0;
+    return true;
+}
 
-        if (remaining_limit == 0 || remaining_ram == 0) {
-            break;
-        }
-        if (chunk > remaining_limit) {
-            chunk = remaining_limit;
-        }
-        if (chunk > remaining_ram) {
-            chunk = remaining_ram;
-        }
-
-        UINT br = 0;
-        fr = f_read(&load_file, temp, chunk, &br);
-        if (fr != FR_OK) {
-            ok = false;
-            break;
-        }
-        if (br == 0) {
-            break;
-        }
-
-        for (UINT i = 0; i < br; i++) {
-            uint32_t offset = dest + i;
-            mem[offset] = temp[i];
-            mia_video_mark_dirty(offset);
-        }
-
-        dest += br;
-        total += br;
+static bool sd_start_save_job(uint32_t source, uint32_t length, uint8_t *out_error, FRESULT *out_result) {
+    if (source > MIA_RAM_SIZE || length > MIA_RAM_SIZE - source) {
+        *out_result = FR_INVALID_PARAMETER;
+        *out_error = ERROR_FS_INVALID_REQUEST;
+        return false;
     }
 
-    sd_eof = f_eof(&load_file) != 0;
-    f_close(&load_file);
+    uint8_t open_mode = mem[MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_OPEN_MODE];
+    BYTE fatfs_mode = 0;
+    if (!sd_open_mode_to_fatfs(open_mode, &fatfs_mode) || (fatfs_mode & FA_WRITE) == 0) {
+        *out_result = FR_DENIED;
+        *out_error = ERROR_FS_INVALID_REQUEST;
+        return false;
+    }
 
-    *loaded = total;
-    *out_result = fr;
-    return ok;
+    char path[MIA_FS_PATH_SIZE + 3u];
+    sd_prepare_fatfs_path(path);
+
+    memset(&sd_job, 0, sizeof(sd_job));
+    FRESULT fr = f_open(&sd_job.file, path, fatfs_mode);
+    if (fr != FR_OK) {
+        *out_result = fr;
+        *out_error = ERROR_FS_OPEN_FAILED;
+        return false;
+    }
+
+    sd_job.type = sd_job_save;
+    sd_job.addr = source;
+    sd_job.limit = length;
+    sd_job.total = 0;
+    sd_eof = false;
+
+    sd_write_u16(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_RESULT_LEN_L, 0);
+    sd_write_u32(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_FILE_SIZE0, (uint32_t)f_size(&sd_job.file));
+    sd_write_u32(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_FILE_POS0, 0);
+    *out_result = FR_OK;
+    *out_error = 0;
+    return true;
+}
+
+static void sd_job_step_load(void) {
+    if (sd_job.addr >= MIA_RAM_SIZE || (sd_job.limit != 0 && sd_job.total >= sd_job.limit)) {
+        sd_finish_job(true, 0, FR_OK);
+        return;
+    }
+
+    uint32_t remaining_ram = MIA_RAM_SIZE - sd_job.addr;
+    uint32_t remaining_limit = sd_job.limit == 0 ? remaining_ram : sd_job.limit - sd_job.total;
+    uint32_t chunk = SD_JOB_CHUNK_SIZE;
+
+    if (remaining_ram == 0 || remaining_limit == 0) {
+        sd_finish_job(true, 0, FR_OK);
+        return;
+    }
+    if (chunk > remaining_ram) {
+        chunk = remaining_ram;
+    }
+    if (chunk > remaining_limit) {
+        chunk = remaining_limit;
+    }
+
+    UINT br = 0;
+    FRESULT fr = f_read(&sd_job.file, sd_job_buffer, chunk, &br);
+    if (fr != FR_OK) {
+        sd_finish_job(false, ERROR_FS_READ_FAILED, fr);
+        return;
+    }
+
+    for (UINT i = 0; i < br; i++) {
+        uint32_t offset = sd_job.addr + i;
+        mem[offset] = sd_job_buffer[i];
+        mia_video_mark_dirty(offset);
+    }
+
+    sd_job.addr += br;
+    sd_job.total += br;
+    sd_job_update_progress();
+
+    if (br == 0 || br < chunk || f_eof(&sd_job.file) != 0 ||
+        (sd_job.limit != 0 && sd_job.total >= sd_job.limit)) {
+        sd_finish_job(true, 0, FR_OK);
+    }
+}
+
+static void sd_job_step_save(void) {
+    if (sd_job.total >= sd_job.limit) {
+        sd_finish_job(true, 0, FR_OK);
+        return;
+    }
+
+    uint32_t remaining = sd_job.limit - sd_job.total;
+    uint32_t chunk = remaining > SD_JOB_CHUNK_SIZE ? SD_JOB_CHUNK_SIZE : remaining;
+    memcpy(sd_job_buffer, &mem[sd_job.addr], chunk);
+
+    UINT bw = 0;
+    FRESULT fr = f_write(&sd_job.file, sd_job_buffer, chunk, &bw);
+    if (bw != 0) {
+        sd_job.addr += bw;
+        sd_job.total += bw;
+        sd_job_update_progress();
+    }
+
+    if (fr != FR_OK || bw != chunk) {
+        sd_finish_job(false, ERROR_FS_WRITE_FAILED, fr);
+        return;
+    }
+
+    if (sd_job.total >= sd_job.limit) {
+        sd_finish_job(true, 0, FR_OK);
+    }
+}
+
+static void sd_service_job(void) {
+    uint32_t start = time_us_32();
+
+    do {
+        if (sd_job.type == sd_job_load) {
+            sd_job_step_load();
+        } else if (sd_job.type == sd_job_save) {
+            sd_job_step_save();
+        } else {
+            return;
+        }
+    } while (sd_job.type != sd_job_none &&
+             (uint32_t)(time_us_32() - start) < MIA_SD_SERVICE_BUDGET_US);
+
+    sd_publish_state();
 }
 
 void mia_sd_service(void) {
+    if (sd_job.type != sd_job_none) {
+        sd_service_job();
+        return;
+    }
+
     if (!sd_request_pending) {
         return;
     }
@@ -764,8 +925,8 @@ void mia_sd_service(void) {
     bool ok = true;
     uint8_t error = 0;
     FRESULT fr = FR_OK;
-    uint32_t loaded = 0;
     bool fs_event = command >= MIA_CMD_FS_MOUNT;
+    bool deferred = false;
 
     sd_eof = false;
     sd_write_u16(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_RESULT_LEN_L, 0);
@@ -1055,10 +1216,19 @@ void mia_sd_service(void) {
                 break;
             }
             uint32_t max_len = sd_control_request_len();
-            ok = sd_load_to_ram(sd_control_dest_addr(), max_len, &loaded, &fr);
-            error = ERROR_FS_READ_FAILED;
-            sd_write_u16(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_RESULT_LEN_L, (uint16_t)loaded);
-            sd_write_u32(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_FILE_POS0, loaded);
+            ok = sd_start_load_job(sd_control_dest_addr(), max_len, &error, &fr);
+            deferred = ok;
+            break;
+        }
+
+        case sd_request_save: {
+            if (!sd_require_mounted(&fr)) {
+                ok = false;
+                error = ERROR_FS_MOUNT_FAILED;
+                break;
+            }
+            ok = sd_start_save_job(sd_control_dest_addr(), sd_control_transfer_len(), &error, &fr);
+            deferred = ok;
             break;
         }
 
@@ -1070,7 +1240,9 @@ void mia_sd_service(void) {
             break;
     }
 
-    sd_finish(ok, error, fr, fs_event);
+    if (!deferred) {
+        sd_finish(ok, error, fr, fs_event);
+    }
 }
 
 void mia_sd_print_summary(void) {
@@ -1091,12 +1263,13 @@ void mia_sd_print_summary(void) {
 
 void mia_sd_print_status(void) {
     printf("SD/FS:\n");
-    printf("  state:     initialized:%s mounted:%s busy:%s file:%s dir:%s eof:%s\n",
+    printf("  state:     initialized:%s mounted:%s busy:%s file:%s dir:%s job:%u eof:%s\n",
            sd_initialized ? "yes" : "no",
            sd_mounted ? "yes" : "no",
            (mia_regs->mia_status & MIA_STAT_SD_BUSY) ? "yes" : "no",
            sd_file_open ? "open" : "closed",
            sd_dir_open ? "open" : "closed",
+           (unsigned)sd_job.type,
            sd_eof ? "yes" : "no");
     printf("  card:      type:%u sectors:%lu capacity:%lu MiB\n",
            (unsigned)sd_type,
@@ -1146,6 +1319,10 @@ void mia_sd_print_status(void) {
            (unsigned long)sd_read_u32(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_FREE_CLUSTERS0),
            (unsigned long)sd_read_u32(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_TOTAL_CLUSTERS0),
            (unsigned)sd_read_u16(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_CLUSTER_SECTORS_L));
+    printf("  service:   chunk:%u budget:%u us transfer-len:%lu\n",
+           (unsigned)SD_JOB_CHUNK_SIZE,
+           (unsigned)MIA_SD_SERVICE_BUDGET_US,
+           (unsigned long)sd_control_transfer_len());
 }
 
 static void sd_configure_indexes(void) {

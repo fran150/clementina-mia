@@ -231,6 +231,10 @@ if(DEFINED ENV{MIA_SD_SPI_FAST_BAUD})
     target_compile_definitions(mia PRIVATE MIA_SD_SPI_FAST_BAUD=$ENV{MIA_SD_SPI_FAST_BAUD})
 endif()
 
+if(DEFINED ENV{MIA_SD_SERVICE_BUDGET_US})
+    target_compile_definitions(mia PRIVATE MIA_SD_SERVICE_BUDGET_US=$ENV{MIA_SD_SERVICE_BUDGET_US})
+endif()
+
 # MIA_INPUT_DEFAULT_MODE is used in USB-device builds: console (default) or wifi.
 if(DEFINED ENV{MIA_INPUT_DEFAULT_MODE})
     string(TOLOWER "$ENV{MIA_INPUT_DEFAULT_MODE}" _input_default_mode)
