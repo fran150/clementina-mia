@@ -5,7 +5,7 @@
 MIA is the Multifunction Interface Adapter for the Clementina 6502 computer,
 implemented on a Raspberry Pi Pico 2 W. It appears to the 6502 as a 32-byte
 register block at `$FFE0-$FFFF`, generates the 6502 clock, handles the data
-bus, and provides 128 KiB of internal RAM through indexed memory windows. The
+bus, and provides 256 KiB of internal RAM through indexed memory windows. The
 video service uses that adapter role to give Clementina Wi-Fi video output
 without adding a framebuffer or video encoder to the 6502 side.
 
@@ -16,7 +16,7 @@ nametables, attributes, and sprite records. A host client keeps a complete
 mirror of the syncable render state and renders the final 320x200 image
 locally. MIA does not stream raw pixels and does not run a video codec.
 
-The video state occupies the first 68,944 bytes of MIA's 128 KiB RAM. That
+The video state occupies the first 68,944 bytes of MIA's 256 KiB RAM. That
 region starts with a 32-byte local control page that is visible to the 6502 but
 is never sent to the client. Syncable render state begins at offset `$00020`
 with the render control page, followed by reserved syncable control space,

@@ -1,8 +1,8 @@
 # MIA (Multifunction Interface Adapter)
 
-MIA is the Raspberry Pi Pico 2 W based interface adapter for the Clementina 6502 computer. It appears to the 6502 as a 32-byte register block at `$FFE0-$FFFF`, generates the 6502 `PHI2` clock, handles the data bus with PIO/DMA, provides 128 KiB of internal RAM behind indexed windows, and boots Clementina by exposing a small loader through the reset vector.
+MIA is the Raspberry Pi Pico 2 W based interface adapter for the Clementina 6502 computer. It appears to the 6502 as a 32-byte register block at `$FFE0-$FFFF`, generates the 6502 `PHI2` clock, handles the data bus with PIO/DMA, provides 256 KiB of internal RAM behind indexed windows, and boots Clementina by exposing a small loader through the reset vector.
 
-The firmware is built as a `copy_to_ram` Pico application so the time-critical PIO/DMA register path can run without flash stalls.
+The firmware executes most code from flash/XIP while keeping the time-critical PIO/DMA register path in RAM.
 
 ## Hardware role
 
@@ -127,11 +127,11 @@ MIA exposes 32 internal registers. The 6502 sees them at `$FFE0-$FFFF`; internal
 
 ## Indexed RAM
 
-MIA reserves 128 KiB of RAM. It is accessed through 256 index descriptors, each 16 bytes wide:
+MIA reserves 256 KiB of RAM. It is accessed through 256 index descriptors, each 16 bytes wide:
 
 | Field | Size | Description |
 | ----- | ---- | ----------- |
-| `current_addr` | 24 bits used | Current MIA RAM address for the index. Actual RAM access is masked to 128 KiB. |
+| `current_addr` | 24 bits used | Current MIA RAM address for the index. Actual RAM access is masked to 256 KiB. |
 | `default_addr` | 24 bits used | Address restored by reset-index commands and used as the forward wrap target. |
 | `limit_addr` | 24 bits used | Exclusive upper limit for forward wrapping; backward wrapping jumps to `limit_addr - 1`. |
 | `step` | 16 bits | Unsigned step magnitude. Direction comes from the index flags. |
@@ -312,8 +312,8 @@ Errors are stored in a 16-entry ring buffer. Reading `$FFEC` pulls one error int
 | `01` | `ERROR_MIA_CANNOT_ALLOCATE_RAM` | Reserved/startup RAM allocation failure code. Current RAM is statically allocated, so this should not normally occur. |
 | `02` | `ERROR_QUEUE_OVERFLOW` | Error queue overwrote one or more unread errors. |
 | `10` | `ERROR_DMA_SIZE_ZERO` | DMA copy requested with a byte count of zero. |
-| `11` | `ERROR_DMA_SRC_WILL_OVERFLOW` | DMA source range would exceed the 128 KiB MIA RAM region. |
-| `12` | `ERROR_DMA_TGT_WILL_OVERFLOW` | DMA destination range would exceed the 128 KiB MIA RAM region. |
+| `11` | `ERROR_DMA_SRC_WILL_OVERFLOW` | DMA source range would exceed the 256 KiB MIA RAM region. |
+| `12` | `ERROR_DMA_TGT_WILL_OVERFLOW` | DMA destination range would exceed the 256 KiB MIA RAM region. |
 | `20` | `ERROR_CMD_QUEUE_FULL` | Command trigger could not be queued for core 0. |
 | `21` | `ERROR_CMD_UNKNOWN` | Unknown command id. |
 | `30` | `ERROR_WIFI_INIT_FAILED` | CYW43/Wi-Fi chip initialization failed. |

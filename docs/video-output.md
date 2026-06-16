@@ -48,7 +48,7 @@ compact tile/sprite state. The client renders the final pixels locally.
 ## Firmware Context
 
 MIA appears to Clementina as a 32-byte register block at `$FFE0-$FFFF`. It owns
-128 KiB of internal RAM and exposes that RAM through indexed windows.
+256 KiB of internal RAM and exposes that RAM through indexed windows.
 
 Core split:
 
