@@ -15,7 +15,7 @@ The firmware executes most code from flash/XIP while keeping the time-critical P
 
 ## Boot and runtime modes
 
-MIA starts in loader mode. During initialization it writes a tiny 6502 program into the register block and points the reset vector at `$FFE0`. The loader streams `kernel.bin`, embedded at build time as `kernel_data`, into Clementina RAM starting at `$4000`. Once the embedded kernel bytes are consumed, MIA switches to normal mode and sets `MIA_STAT_MASTER_MODE`.
+MIA starts in loader mode. During initialization it writes a tiny 6502 program into the register block and points the reset vector at `$FFE0`. The loader streams `kernel.bin`, embedded at build time as `kernel_data`, into Clementina RAM starting at `$0400`. Once the embedded kernel bytes are consumed, MIA switches to normal mode and sets `MIA_STAT_MASTER_MODE`.
 
 In normal mode, register reads and writes operate as the interface described below. The main loop also services requested `PHI2` speed changes and reset requests.
 
@@ -144,35 +144,42 @@ Only two index descriptors are active on the CPU bus at a time: window A selecte
 
 The config interface uses `CFG_SELECT` and `CFG_PORT`. Write a config id to `$FFE2` (`CFG_SELECT`) to load its current value into `$FFE3` (`CFG_PORT`); read or write `$FFE3` to access the selected config id.
 
-Config ids `$00-$1F` configure index descriptors 0 and 1 directly. The high nibble selects the index id (`0` for index 0, `1` for index 1) and the low nibble selects the field. Higher index descriptors are still usable by the index windows and commands, but this config window currently only maps indexes 0 and 1.
+Config ids `$00-$1F` configure the index descriptor currently selected in a
+window: ids `$00-$0F` act on the index selected in window A (`IDXA_SELECT`), and
+ids `$10-$1F` act on the index selected in window B (`IDXB_SELECT`). The low
+nibble selects the field. This lets any of the 256 index descriptors be
+configured: bind it to a window with `IDXA_SELECT`/`IDXB_SELECT`, then write its
+fields through `CFG_SELECT`/`CFG_PORT`. Writing a current-address byte refreshes
+that window's data port from the new address, so a read right after
+repositioning the index returns the new location's byte without re-selecting.
 
 | # | CFG Index | Description |
 | - | --------- | ----------- |
-| `00` | `IDX0_ADDR_L` | Low byte of index 0 current address. |
-| `01` | `IDX0_ADDR_M` | Middle byte of index 0 current address. |
-| `02` | `IDX0_ADDR_H` | High byte of index 0 current address. |
-| `03` | `IDX0_DEF_L` | Low byte of index 0 default address. |
-| `04` | `IDX0_DEF_M` | Middle byte of index 0 default address. |
-| `05` | `IDX0_DEF_H` | High byte of index 0 default address. |
-| `06` | `IDX0_LIM_L` | Low byte of index 0 limit address. |
-| `07` | `IDX0_LIM_M` | Middle byte of index 0 limit address. |
-| `08` | `IDX0_LIM_H` | High byte of index 0 limit address. |
-| `09` | `IDX0_STP_L` | Low byte of index 0 step magnitude. |
-| `0A` | `IDX0_STP_H` | High byte of index 0 step magnitude. |
-| `0B` | `IDX0_FLAGS` | Index 0 flags. |
+| `00` | `IDXA_ADDR_L` | Low byte of window A index current address. |
+| `01` | `IDXA_ADDR_M` | Middle byte of window A index current address. |
+| `02` | `IDXA_ADDR_H` | High byte of window A index current address. |
+| `03` | `IDXA_DEF_L` | Low byte of window A index default address. |
+| `04` | `IDXA_DEF_M` | Middle byte of window A index default address. |
+| `05` | `IDXA_DEF_H` | High byte of window A index default address. |
+| `06` | `IDXA_LIM_L` | Low byte of window A index limit address. |
+| `07` | `IDXA_LIM_M` | Middle byte of window A index limit address. |
+| `08` | `IDXA_LIM_H` | High byte of window A index limit address. |
+| `09` | `IDXA_STP_L` | Low byte of window A index step magnitude. |
+| `0A` | `IDXA_STP_H` | High byte of window A index step magnitude. |
+| `0B` | `IDXA_FLAGS` | Window A index flags. |
 | `0C-0F` | Reserved | Reads as zero; writes are ignored. |
-| `10` | `IDX1_ADDR_L` | Low byte of index 1 current address. |
-| `11` | `IDX1_ADDR_M` | Middle byte of index 1 current address. |
-| `12` | `IDX1_ADDR_H` | High byte of index 1 current address. |
-| `13` | `IDX1_DEF_L` | Low byte of index 1 default address. |
-| `14` | `IDX1_DEF_M` | Middle byte of index 1 default address. |
-| `15` | `IDX1_DEF_H` | High byte of index 1 default address. |
-| `16` | `IDX1_LIM_L` | Low byte of index 1 limit address. |
-| `17` | `IDX1_LIM_M` | Middle byte of index 1 limit address. |
-| `18` | `IDX1_LIM_H` | High byte of index 1 limit address. |
-| `19` | `IDX1_STP_L` | Low byte of index 1 step magnitude. |
-| `1A` | `IDX1_STP_H` | High byte of index 1 step magnitude. |
-| `1B` | `IDX1_FLAGS` | Index 1 flags. |
+| `10` | `IDXB_ADDR_L` | Low byte of window B index current address. |
+| `11` | `IDXB_ADDR_M` | Middle byte of window B index current address. |
+| `12` | `IDXB_ADDR_H` | High byte of window B index current address. |
+| `13` | `IDXB_DEF_L` | Low byte of window B index default address. |
+| `14` | `IDXB_DEF_M` | Middle byte of window B index default address. |
+| `15` | `IDXB_DEF_H` | High byte of window B index default address. |
+| `16` | `IDXB_LIM_L` | Low byte of window B index limit address. |
+| `17` | `IDXB_LIM_M` | Middle byte of window B index limit address. |
+| `18` | `IDXB_LIM_H` | High byte of window B index limit address. |
+| `19` | `IDXB_STP_L` | Low byte of window B index step magnitude. |
+| `1A` | `IDXB_STP_H` | High byte of window B index step magnitude. |
+| `1B` | `IDXB_FLAGS` | Window B index flags. |
 | `1C-1F` | Reserved | Reads as zero; writes are ignored. |
 | `20` | `SPEED_L` | Low byte of applied/requested `PHI2` frequency in Hz. |
 | `21` | `SPEED_M` | Middle byte of applied/requested `PHI2` frequency in Hz. |
@@ -204,7 +211,7 @@ Commands are requested by writing parameters to `CMD_PARAM1-3`, then writing the
 | `05` | none | Reset all 256 indexes to their default addresses. |
 | `06` | `p1 = index id` | Peek the specified index's current RAM byte into `IDXA_PORT` without stepping. |
 | `07` | `p1 = index id` | Peek the specified index's current RAM byte into `IDXB_PORT` without stepping. |
-| `10` | `p1 = source index`, `p2 = destination index`, `p3 = byte count` | Start a DMA copy inside MIA RAM. Source and destination indexes are not moved. |
+| `10` | `p1 = source index`, `p2 = destination index`, `p3 = byte count` | Start a DMA copy inside MIA RAM. Source and destination indexes are not moved. If byte count is zero, DMA will copy bytes until it reached the index limit configures in the source index |
 | `30` | none | Pause 6502 execution by stopping `PHI2`. Once stopped, resume normally comes from the terminal with `exec resume`. |
 | `42` | none | Force a full video refresh by marking every syncable video page dirty. |
 | `43` | `p1 = video mode` | Update the `VIDEO_MODE` byte. |

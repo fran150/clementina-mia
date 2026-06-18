@@ -54,6 +54,35 @@ static inline __force_inline void __not_in_flash_func(mia_video_mark_dirty)(uint
     dirty[page >> 3] |= (uint8_t)(1u << (page & 7u));
 }
 
+static inline __force_inline void __not_in_flash_func(mia_video_mark_dirty_range)(uint32_t start, uint32_t len) {
+    if (len == 0) {
+        return;
+    }
+
+    uint32_t end = start + len - 1u;
+    if (end < start) {
+        end = UINT32_MAX;
+    }
+    if (start >= MIA_VIDEO_STATE_SIZE || end < MIA_VIDEO_SYNC_START) {
+        return;
+    }
+
+    if (start < MIA_VIDEO_SYNC_START) {
+        start = MIA_VIDEO_SYNC_START;
+    }
+    if (end >= MIA_VIDEO_STATE_SIZE) {
+        end = MIA_VIDEO_STATE_SIZE - 1u;
+    }
+
+    uint32_t first_page = start >> MIA_VIDEO_PAGE_SHIFT;
+    uint32_t last_page = end >> MIA_VIDEO_PAGE_SHIFT;
+    uint8_t *dirty = mia_video_dirty_maps[mia_video_active_dirty_index];
+
+    for (uint32_t page = first_page; page <= last_page; page++) {
+        dirty[page >> 3] |= (uint8_t)(1u << (page & 7u));
+    }
+}
+
 static inline __force_inline void __not_in_flash_func(mia_video_mark_all_active_dirty)(void) {
     uint8_t *dirty = mia_video_dirty_maps[mia_video_active_dirty_index];
 

@@ -35,7 +35,7 @@
 
 // Configuration for the kernel loader
 uint32_t kernel_index = 0;                      // Index pointing to the next byte to be read from the kernel
-uint16_t kernel_target_address = 0x4000;        // Target address in where kernel is being written
+uint16_t kernel_target_address = 0x0400;        // Target address in where kernel is being written
 
 static bool can_update_kernel_pointer = false;  // Flag to allow updating the kernel pointer only after the data is read at least once.
 
@@ -255,6 +255,7 @@ __attribute__((optimize("O1"))) static void __no_inline_not_in_flash_func(act_lo
                             // that may not have landed this same-cycle byte yet. The
                             // params were written in earlier cycles, so reading them
                             // back from the register block is safe.
+                            mia_status_set_flag(MIA_STAT_CMD_RUNNING);
                             uint32_t msg = (data << 24) |
                                         (mia_regs->cmd_param1 << 16)  |
                                         (mia_regs->cmd_param2 << 8)   |

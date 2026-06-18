@@ -850,8 +850,8 @@ static void sd_job_step_load(void) {
     for (UINT i = 0; i < br; i++) {
         uint32_t offset = sd_job.addr + i;
         mem[offset] = sd_job_buffer[i];
-        mia_video_mark_dirty(offset);
     }
+    mia_video_mark_dirty_range(sd_job.addr, br);
 
     sd_job.addr += br;
     sd_job.total += br;

@@ -204,10 +204,19 @@ uint32_t monitor_disassemble(uint32_t addr, uint32_t count) {
 }
 
 void monitor_poke(uint32_t addr, const uint8_t *bytes, uint32_t count) {
-    for (uint32_t i = 0; i < count && addr + i < MIA_RAM_SIZE; i++) {
-        mem[addr + i] = bytes[i];
-        mia_video_mark_dirty(addr + i);
+    if (addr >= MIA_RAM_SIZE) {
+        return;
     }
+
+    uint32_t writable = MIA_RAM_SIZE - addr;
+    if (count > writable) {
+        count = writable;
+    }
+
+    for (uint32_t i = 0; i < count; i++) {
+        mem[addr + i] = bytes[i];
+    }
+    mia_video_mark_dirty_range(addr, count);
 }
 
 // ---- Interactive command dispatch ----------------------------------------

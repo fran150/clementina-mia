@@ -86,13 +86,28 @@ void command_peek_from_index_to_b(uint8_t param[]) {
 
 
 // Triggers a dma transfer of the specified number of bytes from the source index to the 
-// destination index. Index are not moved.
+// destination index. If count is zero, copy up to the source index limit.
+// Indexes are not moved.
 void command_copy_indexes(uint8_t param[]) {
     uint8_t from = param[0];    // index id that points to the source addess
     uint8_t to = param[1];      // index id that points to the destination address
-    uint8_t count = param[2];   // number of bytes to move
+    uint16_t count = param[2];  // number of bytes to move
 
-    // Trigger the pico DMA transfer
+    if (count == 0) {
+        uint32_t current = index_get_current_addr(from);
+        uint32_t limit = index_get_limit_addr(from);
+        uint32_t length = limit - current;
+
+        if (limit <= current) {
+            length = 0;
+        } else if (length > 0xFFFFu) {
+            error_push(ERROR_DMA_SRC_WILL_OVERFLOW);
+            return;
+        }
+        count = (uint16_t)length;
+    }
+
+    // Trigger the pico DMA transfer.
     mia_dma_transfer_init(idx[from].current_addr, idx[to].current_addr, count);
 }
 

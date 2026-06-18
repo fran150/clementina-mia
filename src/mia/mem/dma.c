@@ -4,13 +4,18 @@
 #include "irq/irq.h"
 #include "hardware/dma.h"
 #include "hardware/irq.h"
+#include "video/video_dirty.h"
 
 int mia_dma_chan;
 dma_channel_config config;
+static volatile uint32_t mia_dma_dirty_dst;
+static volatile uint16_t mia_dma_dirty_len;
 
 // Callback used when DMA transfer is completed
 void on_mia_dma_complete() {
     dma_irqn_acknowledge_channel(0, mia_dma_chan);
+    mia_video_mark_dirty_range(mia_dma_dirty_dst, mia_dma_dirty_len);
+    mia_dma_dirty_len = 0;
     mia_status_clear_flag(MIA_STAT_DMA_RUNNING);
 
     // The asynchronous copy command has finished; signal command completion.
@@ -52,6 +57,8 @@ bool mia_dma_transfer_init(uint32_t src_offset, uint32_t dst_offset, uint16_t le
         return false;
     }
 
+    mia_dma_dirty_dst = dst_offset;
+    mia_dma_dirty_len = len;
     mia_status_set_flag(MIA_STAT_DMA_RUNNING);
 
     dma_channel_configure(
