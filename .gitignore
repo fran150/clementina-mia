@@ -6,6 +6,7 @@ cmake-build-*/
 *.uf2
 *.bin
 !kernel.bin
+!charsets/*.bin
 *.hex
 *.elf
 *.map
@@ -39,4 +40,5 @@ cmake_install.cmake
 !CMakeLists.txt
 !pico_sdk_import.cmake
 !scripts/generate_kernel_data.cmake
+!scripts/generate_charset_data.cmake
 setup-env.sh

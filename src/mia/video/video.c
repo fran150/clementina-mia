@@ -13,7 +13,7 @@
 #include "mem/indexes.h"
 #include "mem/mem.h"
 #include "video_packets.h"
-#include "petscii_font.h"
+#include "charset_data.h"
 
 #define MIA_VIDEO_MAX_CHUNKS 154u
 #define MIA_VIDEO_SEND_BUDGET 4u
@@ -291,12 +291,23 @@ void mia_video_service(void) {
 }
 
 static void video_load_default_font(void) {
-    // Preload CHR bank 0 with the PETSCII font so 1bpp text works out of the
-    // box: plane 0 = uppercase/graphics set, plane 1 = lowercase/uppercase set.
-    // Bytes are already in MIA pixel order (see petscii_font.h).
-    uint8_t *bank0 = &mem[MIA_VIDEO_CHR_OFFSET];
-    memcpy(bank0 + 0x000u, mia_petscii_font_plane0, MIA_PETSCII_FONT_PLANE_SIZE);
-    memcpy(bank0 + 0x800u, mia_petscii_font_plane1, MIA_PETSCII_FONT_PLANE_SIZE);
+    // Split-load the selected charset (build-time MIA_CHARSET). The image is a
+    // sequence of 2048-byte blocks (256 glyphs each); block i loads into plane 0
+    // of CHR bank i, so a 512-glyph charset fills plane 0 of banks 0 and 1 and
+    // both halves can be selected per cell via the CHR_ALT attribute. Bank 0
+    // plane 0 is the ASCII text set the kernel renders; bank 1 plane 0 is the
+    // alternate (graphics) set. mia_video_enable zeroed CHR first, so blocks the
+    // image omits stay blank.
+    const uint32_t plane_size = 2048u;
+    const uint32_t bank_stride = 6144u;  // 3 planes of 2048
+    size_t remaining = mia_charset_size;
+    const uint8_t *src = mia_charset;
+    for (uint32_t bank = 0u; bank < 8u && remaining != 0u; bank++) {
+        uint32_t chunk = remaining < plane_size ? (uint32_t)remaining : plane_size;
+        memcpy(&mem[MIA_VIDEO_CHR_OFFSET + bank * bank_stride], src, chunk);
+        src += chunk;
+        remaining -= chunk;
+    }
 }
 
 void mia_video_enable(void) {

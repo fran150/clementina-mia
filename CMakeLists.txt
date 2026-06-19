@@ -55,6 +55,24 @@ add_custom_command(
     VERBATIM
 )
 
+# Select the character set to embed (one of the files in charsets/<name>.bin).
+# Override with: cmake -DMIA_CHARSET=unscii8 ..
+set(MIA_CHARSET "openroms" CACHE STRING "Character set embedded into the firmware")
+set(CHARSET_BIN_FILE "${CMAKE_SOURCE_DIR}/charsets/${MIA_CHARSET}.bin")
+set(CHARSET_DATA_FILE "${CMAKE_BINARY_DIR}/generated/charset_data.c")
+
+# Custom command to generate charset_data.c from the selected charsets/<name>.bin
+add_custom_command(
+    OUTPUT ${CHARSET_DATA_FILE}
+    COMMAND ${CMAKE_COMMAND}
+        -DCHARSET_BIN_FILE=${CHARSET_BIN_FILE}
+        -DCHARSET_DATA_FILE=${CHARSET_DATA_FILE}
+        -P ${CMAKE_SOURCE_DIR}/scripts/generate_charset_data.cmake
+    DEPENDS ${CHARSET_BIN_FILE} ${CMAKE_SOURCE_DIR}/scripts/generate_charset_data.cmake
+    COMMENT "Generating charset data from ${MIA_CHARSET}.bin"
+    VERBATIM
+)
+
 # Add executable
 add_executable(mia
     src/mia/main.c
@@ -81,7 +99,8 @@ add_executable(mia
     src/mia/sys/reset.c
     src/mia/sys/speed.c
     src/mia/video/video.c
-    ${KERNEL_DATA_FILE}  # Add generated kernel data
+    ${KERNEL_DATA_FILE}   # Add generated kernel data
+    ${CHARSET_DATA_FILE}  # Add generated charset data
 )
 
 # Generate PIO headers
