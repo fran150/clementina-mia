@@ -254,9 +254,27 @@ static void input_handle_hid_event(const uint8_t *payload, uint16_t payload_len)
 
     input_set_hid_usage(usage_page, usage_id, down);
 
-    if (usage_page == HID_PAGE_KEYBOARD && down && text != 0) {
+    if (usage_page != HID_PAGE_KEYBOARD) {
+        return;
+    }
+
+    if (!down) {
+        input_repeat_release(usage_id);
+        return;
+    }
+
+    // The client attaches a text byte for keys it already resolved (printable
+    // characters arrive via TEXT packets instead and carry 0 here). When none is
+    // attached, MIA decodes the non-text editing keys itself.
+    if (text == 0) {
+        text = input_decode_key_usage(usage_id);
+    }
+    if (text != 0) {
         input_enqueue_text(text);
         input_recompute_status();
+        if (input_key_repeats(usage_id)) {
+            input_repeat_arm(usage_id, text);
+        }
     }
 }
 

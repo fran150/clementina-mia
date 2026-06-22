@@ -2,6 +2,8 @@
 
 #include <string.h>
 
+#include "pico/time.h"
+
 #include "irq/irq.h"
 
 bool input_bitmap_any(const uint8_t *bitmap) {
@@ -190,6 +192,110 @@ void input_clear_live_state(bool publish_events) {
     input_clear_gamepads(publish_events);
     input_set_device_flags(0);
     input_recompute_status();
+}
+
+uint8_t input_decode_key_usage(uint16_t usage_id) {
+    // Maps a keyboard HID usage to the control byte MIA pushes into the text FIFO
+    // for non-text editing keys: cursor moves, Home, and the editing control
+    // keys. Returns 0 for everything else - printable characters reach the FIFO
+    // as text instead, so they must not decode here or they would be enqueued
+    // twice. MIA owns this table (rather than the input client) so the keyboard
+    // decode lives in one place, mirroring how the C64 KERNAL, not the keyboard,
+    // owns the decode table. Cursor and Home codes use PETSCII values; the
+    // control keys reuse their ASCII codes.
+    switch (usage_id) {
+    case 0x28u: // Enter
+    case 0x58u: // Keypad Enter
+        return 0x0Du;
+    case 0x2Bu: // Tab
+        return 0x09u;
+    case 0x2Au: // Backspace
+        return 0x08u;
+    case 0x29u: // Escape
+        return 0x1Bu;
+    case 0x49u: // Insert
+        return 0x94u;
+    case 0x4Au: // Home
+        return 0x13u;
+    case 0x4Cu: // Delete (forward)
+        return 0x7Fu;
+    case 0x4Fu: // Right Arrow
+        return 0x1Du;
+    case 0x50u: // Left Arrow
+        return 0x9Du;
+    case 0x51u: // Down Arrow
+        return 0x11u;
+    case 0x52u: // Up Arrow
+        return 0x91u;
+    default:
+        return 0u;
+    }
+}
+
+// Key auto-repeat. While repeat_usage is held, repeat_byte is re-enqueued into
+// the text FIFO after an initial delay, then at a steady interval, matching a
+// typewriter-style repeat. repeat_usage == 0 means nothing is repeating.
+#define KEY_REPEAT_DELAY_US    400000u // wait before the first repeat
+#define KEY_REPEAT_INTERVAL_US 60000u  // ~16 repeats/sec while held
+
+static uint16_t repeat_usage = 0;
+static uint8_t repeat_byte = 0;
+static uint64_t repeat_deadline_us = 0;
+
+bool input_key_repeats(uint16_t usage_id) {
+    // Only the keys where holding is useful repeat (cursor moves and Backspace);
+    // Enter and the other one-shot keys fire once per press.
+    switch (usage_id) {
+    case 0x2Au: // Backspace
+    case 0x4Cu: // Delete (forward)
+    case 0x4Fu: // Right Arrow
+    case 0x50u: // Left Arrow
+    case 0x51u: // Down Arrow
+    case 0x52u: // Up Arrow
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool input_usage_down(uint16_t usage_id) {
+    if (usage_id > 0x00FFu) {
+        return false;
+    }
+    const uint8_t *bitmap = input_keyboard_bitmap();
+    return (bitmap[usage_id >> 3] & (uint8_t)(1u << (usage_id & 7u))) != 0;
+}
+
+void input_repeat_arm(uint16_t usage_id, uint8_t byte) {
+    repeat_usage = usage_id;
+    repeat_byte = byte;
+    repeat_deadline_us = time_us_64() + KEY_REPEAT_DELAY_US;
+}
+
+void input_repeat_release(uint16_t usage_id) {
+    if (usage_id == repeat_usage) {
+        repeat_usage = 0;
+    }
+}
+
+void input_repeat_service(void) {
+    if (repeat_usage == 0) {
+        return;
+    }
+    if (!input_usage_down(repeat_usage)) {
+        // Released without going through the HID-event path (e.g. bitmap replace).
+        repeat_usage = 0;
+        return;
+    }
+
+    uint64_t now = time_us_64();
+    if (now < repeat_deadline_us) {
+        return;
+    }
+
+    input_enqueue_text(repeat_byte);
+    input_recompute_status();
+    repeat_deadline_us = now + KEY_REPEAT_INTERVAL_US;
 }
 
 void input_set_hid_usage(uint16_t usage_page, uint16_t usage_id, bool down) {

@@ -336,5 +336,6 @@ void mia_input_console_end_capture(void) {
 
 void mia_input_service(void) {
     input_apply_event_acks();
+    input_repeat_service();
     input_update_irqs();
 }
