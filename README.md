@@ -53,7 +53,7 @@ The console command `input console` feeds terminal key presses into the input
 FIFO until `Ctrl+Q`. The console command `input wifi` enables the Wi-Fi input
 listener on UDP port `6503` and accepts one client at a time. The build-time
 default input mode for USB-device builds is selected with
-`MIA_INPUT_DEFAULT_MODE` and defaults to `console`. Building with
+`MIA_INPUT_DEFAULT_MODE` and defaults to `wifi`. Building with
 `MIA_USB_MODE=host` disables USB stdio and boots MIA in the USB host input
 source; USB HID device decoding is reserved for the TinyUSB host integration.
 The 6502 can change input modes at any point in either USB role with the

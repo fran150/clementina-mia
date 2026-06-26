@@ -10,7 +10,7 @@ Input packets are small and independent of video update packets.
 
 Wi-Fi input is enabled by issuing the 6502-facing `CMD_INPUT_SET_MODE` command
 with `INPUT_MODE_WIFI`, by the terminal console command `input wifi`, or, in a
-USB-device build, by building with `MIA_INPUT_DEFAULT_MODE=wifi`.
+USB-device build, at boot by default (`MIA_INPUT_DEFAULT_MODE=wifi`).
 
 ## Transport
 

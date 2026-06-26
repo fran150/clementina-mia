@@ -22,8 +22,8 @@ Only one input mode owns the live input state at a time.
 
 | Mode | Activation | State Supported | Release |
 | --- | --- | --- | --- |
-| Console | `input console` in the Pico terminal console, or USB-device build default `MIA_INPUT_DEFAULT_MODE=console` | text FIFO | `Ctrl+Q` |
-| Wi-Fi | `input wifi` in the Pico terminal console, or USB-device build default `MIA_INPUT_DEFAULT_MODE=wifi` | text FIFO, keyboard, consumer, mouse, gamepads | disconnect packet, replacement `HELLO`, terminal `input` command, or `CMD_INPUT_SET_MODE` |
+| Console | `input console` in the Pico terminal console, or USB-device build option `MIA_INPUT_DEFAULT_MODE=console` | text FIFO | `Ctrl+Q` |
+| Wi-Fi | `input wifi` in the Pico terminal console, or USB-device build default (`MIA_INPUT_DEFAULT_MODE=wifi`) | text FIFO, keyboard, consumer, mouse, gamepads | disconnect packet, replacement `HELLO`, terminal `input` command, or `CMD_INPUT_SET_MODE` |
 | USB host | USB-host build `MIA_USB_MODE=host` | reserved for USB HID host input | source shutdown |
 
 When a mode is released, MIA clears live held-state and device-state fields for
@@ -39,7 +39,8 @@ device decoding is reserved for the TinyUSB host integration.
 
 `MIA_INPUT_DEFAULT_MODE` selects the input mode entered at boot in a
 `MIA_USB_MODE=device` build. Valid values are `console` and `wifi`. The default
-is `console`.
+is `wifi`; if the Wi-Fi input listener is unavailable at boot, MIA falls back to
+`console`.
 
 The terminal console command `input console` enters console text input mode.
 While this mode is active, terminal key presses are forwarded to the text FIFO

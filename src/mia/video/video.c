@@ -14,6 +14,7 @@
 #include "mem/mem.h"
 #include "video_packets.h"
 #include "charset_data.h"
+#include "palette_data.h"
 
 #define MIA_VIDEO_MAX_CHUNKS 154u
 #define MIA_VIDEO_SEND_BUDGET 4u
@@ -290,16 +291,38 @@ void mia_video_service(void) {
     }
 }
 
+static void video_load_default_palette(void) {
+    const size_t palette_capacity = 16u * 8u * 2u;
+    size_t n = mia_palette_size;
+    if (n > palette_capacity) {
+        n = palette_capacity;
+    }
+    memcpy(&mem[MIA_VIDEO_PALETTE_OFFSET], mia_palette, n);
+}
+
 static void video_load_default_font(void) {
-    // Split-load the selected charset (build-time MIA_CHARSET). The image is a
-    // sequence of 2048-byte blocks (256 glyphs each); block i loads into plane 0
-    // of CHR bank i, so a 512-glyph charset fills plane 0 of banks 0 and 1 and
-    // both halves can be selected per cell via the CHR_ALT attribute. Bank 0
-    // plane 0 is the ASCII text set the kernel renders; bank 1 plane 0 is the
-    // alternate (graphics) set. mia_video_enable zeroed CHR first, so blocks the
-    // image omits stay blank.
+    // Load the selected charset (build-time MIA_CHARSET). Two layouts, by size:
+    //   * Full CHR dump - a nonzero multiple of a full 6144-byte CHR bank (3
+    //     planes). This is the tile editor's "CHR - all banks" (49152 B) and
+    //     "current bank" (6144 B) export: a raw copy of the CHR region, loaded
+    //     flat (every plane of every bank). clascii uses this format.
+    //   * Plane-0 blocks (legacy) - a sequence of 2048-byte blocks; block i loads
+    //     into plane 0 of CHR bank i (e.g. openroms = text + graphics).
+    // Either way bank 0 plane 0 is the ASCII set the kernel renders and bank 1
+    // plane 0 is the alternate set CHR_ALT reaches. mia_video_enable zeroed CHR
+    // first, so anything the image omits stays blank. Keep in sync with the
+    // emulator's videoLoadDefaultFont (clementina-6502 pkg/components/mia/video.go).
     const uint32_t plane_size = 2048u;
     const uint32_t bank_stride = 6144u;  // 3 planes of 2048
+    const uint32_t chr_capacity = 8u * bank_stride;  // 8 banks
+    if (mia_charset_size != 0u && (mia_charset_size % bank_stride) == 0u) {
+        size_t n = mia_charset_size;
+        if (n > chr_capacity) {
+            n = chr_capacity;
+        }
+        memcpy(&mem[MIA_VIDEO_CHR_OFFSET], mia_charset, n);
+        return;
+    }
     size_t remaining = mia_charset_size;
     const uint8_t *src = mia_charset;
     for (uint32_t bank = 0u; bank < 8u && remaining != 0u; bank++) {
@@ -313,6 +336,7 @@ static void video_load_default_font(void) {
 void mia_video_enable(void) {
     memset(mem, 0, MIA_VIDEO_STATE_SIZE);
     mem[MIA_VIDEO_LOCAL_VERSION_OFFSET] = MIA_VIDEO_LAYOUT_VERSION;
+    video_load_default_palette();
     video_load_default_font();
     video_set_frame_id(0);
     video_set_last_response_dirty_pages(0);

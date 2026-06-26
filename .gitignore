@@ -7,6 +7,7 @@ cmake-build-*/
 *.bin
 !kernel.bin
 !charsets/*.bin
+!palettes/*.palette.bin
 *.hex
 *.elf
 *.map
@@ -41,4 +42,5 @@ cmake_install.cmake
 !pico_sdk_import.cmake
 !scripts/generate_kernel_data.cmake
 !scripts/generate_charset_data.cmake
+!scripts/generate_palette_data.cmake
 setup-env.sh

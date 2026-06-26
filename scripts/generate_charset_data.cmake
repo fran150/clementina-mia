@@ -1,11 +1,12 @@
 # CMake script to convert a charset .bin into a C array.
 # Usage: cmake -DCHARSET_BIN_FILE=openroms.bin -DCHARSET_DATA_FILE=charset_data.c -P generate_charset_data.cmake
 #
-# The .bin is a sequence of 2048-byte blocks (256 glyphs each) in MIA pixel order,
-# produced offline by scripts/generate_charset.py. The firmware split-loads it:
-# block i goes into plane 0 of CHR bank i (block 0 = ASCII text in bank 0, block 1
-# = graphics in bank 1). The file's true length drives the generated
-# mia_charset_size.
+# The .bin is a raw charset image in MIA pixel order. This script just embeds the
+# bytes verbatim as mia_charset[] / mia_charset_size; video_load_default_font picks
+# the layout at runtime by size: a multiple of a full 6144-byte CHR bank (3 planes)
+# is a flat CHR dump loaded flat (clascii, the tile-editor "all banks" export),
+# otherwise it is a sequence of 2048-byte plane-0 blocks, block i -> plane 0 of CHR
+# bank i (openroms). The file's true length drives mia_charset_size.
 
 if(NOT CHARSET_BIN_FILE)
     message(FATAL_ERROR "CHARSET_BIN_FILE not specified")

@@ -56,8 +56,10 @@ add_custom_command(
 )
 
 # Select the character set to embed (one of the files in charsets/<name>.bin).
-# Override with: cmake -DMIA_CHARSET=unscii8 ..
-set(MIA_CHARSET "openroms" CACHE STRING "Character set embedded into the firmware")
+# Override with: cmake -DMIA_CHARSET=openroms ..
+# clascii is the Clementina charset (Phase 5): a flat 8-bank CHR dump that
+# video_load_default_font loads flat; openroms remains a plane-0-blocks fallback.
+set(MIA_CHARSET "clascii" CACHE STRING "Character set embedded into the firmware")
 set(CHARSET_BIN_FILE "${CMAKE_SOURCE_DIR}/charsets/${MIA_CHARSET}.bin")
 set(CHARSET_DATA_FILE "${CMAKE_BINARY_DIR}/generated/charset_data.c")
 
@@ -70,6 +72,24 @@ add_custom_command(
         -P ${CMAKE_SOURCE_DIR}/scripts/generate_charset_data.cmake
     DEPENDS ${CHARSET_BIN_FILE} ${CMAKE_SOURCE_DIR}/scripts/generate_charset_data.cmake
     COMMENT "Generating charset data from ${MIA_CHARSET}.bin"
+    VERBATIM
+)
+
+# Select the default video palette to embed (one of palettes/<name>.palette.bin).
+# Override with: cmake -DMIA_PALETTE=other-palette ..
+set(MIA_PALETTE "clementina-text" CACHE STRING "Default video palette embedded into the firmware")
+set(PALETTE_BIN_FILE "${CMAKE_SOURCE_DIR}/palettes/${MIA_PALETTE}.palette.bin")
+set(PALETTE_DATA_FILE "${CMAKE_BINARY_DIR}/generated/palette_data.c")
+
+# Custom command to generate palette_data.c from the selected palette file.
+add_custom_command(
+    OUTPUT ${PALETTE_DATA_FILE}
+    COMMAND ${CMAKE_COMMAND}
+        -DPALETTE_BIN_FILE=${PALETTE_BIN_FILE}
+        -DPALETTE_DATA_FILE=${PALETTE_DATA_FILE}
+        -P ${CMAKE_SOURCE_DIR}/scripts/generate_palette_data.cmake
+    DEPENDS ${PALETTE_BIN_FILE} ${CMAKE_SOURCE_DIR}/scripts/generate_palette_data.cmake
+    COMMENT "Generating palette data from ${MIA_PALETTE}.palette.bin"
     VERBATIM
 )
 
@@ -101,6 +121,7 @@ add_executable(mia
     src/mia/video/video.c
     ${KERNEL_DATA_FILE}   # Add generated kernel data
     ${CHARSET_DATA_FILE}  # Add generated charset data
+    ${PALETTE_DATA_FILE}  # Add generated palette data
 )
 
 # Generate PIO headers
@@ -254,14 +275,14 @@ if(DEFINED ENV{MIA_SD_SERVICE_BUDGET_US})
     target_compile_definitions(mia PRIVATE MIA_SD_SERVICE_BUDGET_US=$ENV{MIA_SD_SERVICE_BUDGET_US})
 endif()
 
-# MIA_INPUT_DEFAULT_MODE is used in USB-device builds: console (default) or wifi.
+# MIA_INPUT_DEFAULT_MODE is used in USB-device builds: wifi (default) or console.
 if(DEFINED ENV{MIA_INPUT_DEFAULT_MODE})
     string(TOLOWER "$ENV{MIA_INPUT_DEFAULT_MODE}" _input_default_mode)
-    if(_input_default_mode STREQUAL "wifi")
-        target_compile_definitions(mia PRIVATE MIA_INPUT_DEFAULT_MODE=1)
-    else()
+    if(_input_default_mode STREQUAL "console")
         target_compile_definitions(mia PRIVATE MIA_INPUT_DEFAULT_MODE=0)
+    else()
+        target_compile_definitions(mia PRIVATE MIA_INPUT_DEFAULT_MODE=1)
     endif()
 else()
-    target_compile_definitions(mia PRIVATE MIA_INPUT_DEFAULT_MODE=0)
+    target_compile_definitions(mia PRIVATE MIA_INPUT_DEFAULT_MODE=1)
 endif()
