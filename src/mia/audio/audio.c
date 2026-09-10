@@ -49,6 +49,7 @@ typedef struct {
     uint16_t freq_q4;
     uint32_t phase_inc;
     uint8_t pulse_width;
+    uint8_t volume;
     uint8_t attack;
     uint8_t decay;
     uint8_t sustain;
@@ -69,6 +70,7 @@ typedef struct {
 
 static int8_t audio_sine_table[256];
 static audio_voice_t audio_voices[MIA_AUDIO_VOICE_COUNT];
+static uint8_t audio_master_volume = MIA_AUDIO_MASTER_VOLUME_DEFAULT;
 
 static volatile bool audio_active;
 static volatile bool audio_queue_overflow;
@@ -157,6 +159,12 @@ static uint32_t audio_phase_inc(uint16_t freq_q4) {
                       ((uint64_t)MIA_AUDIO_SAMPLE_RATE * 16u));
 }
 
+// Master volume maps 0..15 to a 0..255 gain (unity at 15), mirroring the SID
+// $D418 master level. Applied to the summed stereo mix before the output clamp.
+static inline uint16_t audio_master_gain(void) {
+    return (uint16_t)(audio_master_volume & MIA_AUDIO_MASTER_VOLUME_MAX) * 17u;
+}
+
 static uint32_t audio_voice_base(uint8_t voice) {
     return MIA_AUDIO_VOICE_OFFSET(voice);
 }
@@ -179,6 +187,7 @@ static void audio_reset_voice_state(uint8_t voice) {
 
     memset(state, 0, sizeof(*state));
     state->pulse_width = 128;
+    state->volume = MIA_AUDIO_VOICE_VOLUME_DEFAULT;
     state->adsr = audio_release;
     state->noise1 = 0x67452301u + (uint32_t)voice * 0x11111111u;
     state->noise2 = 0xEFCDAB89u - (uint32_t)voice * 0x01010101u;
@@ -198,6 +207,7 @@ static void audio_sync_voice_registers(uint8_t voice) {
     state->freq_q4 = freq_q4;
     state->phase_inc = audio_phase_inc(freq_q4);
     state->pulse_width = mem[base + MIA_AUDIO_VOICE_PULSE_WIDTH];
+    state->volume = mem[base + MIA_AUDIO_VOICE_VOLUME];
     state->attack = attack_decay >> 4;
     state->decay = attack_decay & 0x0Fu;
     state->sustain = sustain_release >> 4;
@@ -220,6 +230,7 @@ static void audio_sync_voice_registers(uint8_t voice) {
 }
 
 static void audio_sync_from_memory(void) {
+    audio_master_volume = mem[MIA_AUDIO_HEADER_OFFSET + MIA_AUDIO_HEADER_VOLUME];
     for (uint8_t voice = 0; voice < MIA_AUDIO_VOICE_COUNT; voice++) {
         audio_sync_voice_registers(voice);
     }
@@ -232,6 +243,11 @@ static void audio_update_frequency(uint8_t voice) {
 }
 
 static void audio_apply_register(uint8_t loc, uint8_t value) {
+    if (loc == MIA_AUDIO_HEADER_VOLUME) {
+        audio_master_volume = value;
+        return;
+    }
+
     if (loc < MIA_AUDIO_HEADER_SIZE ||
         loc >= MIA_AUDIO_HEADER_SIZE + MIA_AUDIO_VOICE_COUNT * MIA_AUDIO_VOICE_SIZE) {
         return;
@@ -254,6 +270,9 @@ static void audio_apply_register(uint8_t loc, uint8_t value) {
             break;
         case MIA_AUDIO_VOICE_PULSE_WIDTH:
             state->pulse_width = value;
+            break;
+        case MIA_AUDIO_VOICE_VOLUME:
+            state->volume = value;
             break;
         case MIA_AUDIO_VOICE_ATTACK_DECAY:
             state->attack = value >> 4;
@@ -392,10 +411,15 @@ __time_critical_func(audio_irq_handler)(void) {
         int16_t sample = audio_next_sample(voice);
         audio_update_envelope(voice);
         sample = ((int32_t)sample * (int32_t)(voice->vol >> 16)) >> 8;
+        sample = ((int32_t)sample * (int32_t)voice->volume) >> 8;
 
         sample_l += ((int32_t)sample * voice->pan_l) >> 7;
         sample_r += ((int32_t)sample * voice->pan_r) >> 7;
     }
+
+    uint16_t master_gain = audio_master_gain();
+    sample_l = (int16_t)(((int32_t)sample_l * master_gain) >> 8);
+    sample_r = (int16_t)(((int32_t)sample_r * master_gain) >> 8);
 
     int16_t max_val = (1 << (AUDIO_PWM_BITS - 1)) - 1;
     int16_t min_val = -(1 << (AUDIO_PWM_BITS - 1));
@@ -509,9 +533,11 @@ void mia_audio_reset_runtime_state(void) {
 
     memset(&mem[MIA_AUDIO_STATE_OFFSET], 0, MIA_AUDIO_STATE_SIZE);
     mem[MIA_AUDIO_HEADER_OFFSET + MIA_AUDIO_HEADER_VERSION] = MIA_AUDIO_VERSION;
+    mem[MIA_AUDIO_HEADER_OFFSET + MIA_AUDIO_HEADER_VOLUME] = MIA_AUDIO_MASTER_VOLUME_DEFAULT;
     mem[MIA_AUDIO_HEADER_OFFSET + MIA_AUDIO_HEADER_CHANNELS] = MIA_AUDIO_VOICE_COUNT;
     audio_write_u16(MIA_AUDIO_HEADER_OFFSET + MIA_AUDIO_HEADER_RATE_L, MIA_AUDIO_SAMPLE_RATE);
     mem[MIA_AUDIO_HEADER_OFFSET + MIA_AUDIO_HEADER_FLAGS] = MIA_AUDIO_FLAG_STEREO;
+    audio_master_volume = MIA_AUDIO_MASTER_VOLUME_DEFAULT;
 
     for (uint8_t voice = 0; voice < MIA_AUDIO_VOICE_COUNT; voice++) {
         uint32_t base = audio_voice_base(voice);
@@ -519,6 +545,7 @@ void mia_audio_reset_runtime_state(void) {
         mem[base + MIA_AUDIO_VOICE_SUSTAIN_RELEASE] = 0xF5;
         mem[base + MIA_AUDIO_VOICE_WAVEFORM] = MIA_AUDIO_WAVE_PULSE;
         mem[base + MIA_AUDIO_VOICE_PAN] = 0;
+        mem[base + MIA_AUDIO_VOICE_VOLUME] = MIA_AUDIO_VOICE_VOLUME_DEFAULT;
         audio_reset_voice_state(voice);
     }
 
@@ -567,6 +594,7 @@ void mia_audio_print_status(void) {
     printf("  state:     %s\n", audio_active ? "active" : "stopped");
     printf("  rate:      %u Hz\n", MIA_AUDIO_SAMPLE_RATE);
     printf("  voices:    %u\n", MIA_AUDIO_VOICE_COUNT);
+    printf("  volume:    %u/15 (master)\n", audio_master_volume & MIA_AUDIO_MASTER_VOLUME_MAX);
     printf("  pins:      L GPIO%u  R GPIO%u  IRQ-slice GPIO%u\n",
            MIA_AUDIO_L_PIN, MIA_AUDIO_R_PIN, MIA_AUDIO_IRQ_PIN);
     printf("  block:     $%05X-$%05X\n",
@@ -591,12 +619,13 @@ void mia_audio_print_status(void) {
         uint8_t sustain_release = mem[base + MIA_AUDIO_VOICE_SUSTAIN_RELEASE];
         uint8_t control = mem[base + MIA_AUDIO_VOICE_CONTROL];
 
-        printf("  ch%u:      freq:%u.%u Hz  wave:%u  pulse:%u  pan:%d  AD:%X/%X  SR:%X/%X  gate:%s\n",
+        printf("  ch%u:      freq:%u.%u Hz  wave:%u  pulse:%u  vol:%u  pan:%d  AD:%X/%X  SR:%X/%X  gate:%s\n",
                voice,
                freq_q4 >> 4,
                (unsigned)((freq_q4 & 0x0Fu) * 10u / 16u),
                (unsigned)mem[base + MIA_AUDIO_VOICE_WAVEFORM],
                (unsigned)mem[base + MIA_AUDIO_VOICE_PULSE_WIDTH],
+               (unsigned)mem[base + MIA_AUDIO_VOICE_VOLUME],
                (int8_t)mem[base + MIA_AUDIO_VOICE_PAN],
                attack_decay >> 4,
                attack_decay & 0x0Fu,

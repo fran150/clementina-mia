@@ -19,6 +19,8 @@ The first implementation provides:
 | Waveforms | sine, pulse, saw, triangle, noise |
 | Envelope | attack, decay, sustain, release |
 | Panning | signed 8-bit, clamped to `-64..63` |
+| Master volume | 4-bit, `0..15` (SID `$D418`-style) |
+| Per-voice volume | linear 8-bit, `0..255` |
 
 The audio IRQ runs on core 0. Core 1 only observes indexed RAM writes to the
 audio block and queues byte updates for the audio IRQ to consume. This keeps the
@@ -40,17 +42,16 @@ slice that is not used by either audio output pin.
 
 ## Memory Map
 
-Audio state lives in MIA RAM at `$12000-$1203F`. It is outside the syncable video
+Audio state lives in MIA RAM at `$12000-$1204F`. It is outside the syncable video
 region, so audio writes do not dirty video pages.
 
 | Range | Size | Description |
 | ---: | ---: | --- |
 | `$12000-$1200F` | 16 | Audio header |
-| `$12010-$12017` | 8 | Voice 0 |
-| `$12018-$1201F` | 8 | Voice 1 |
-| `$12020-$12027` | 8 | Voice 2 |
-| `$12028-$1202F` | 8 | Voice 3 |
-| `$12030-$1203F` | 16 | Reserved |
+| `$12010-$1201F` | 16 | Voice 0 |
+| `$12020-$1202F` | 16 | Voice 1 |
+| `$12030-$1203F` | 16 | Voice 2 |
+| `$12040-$1204F` | 16 | Voice 3 |
 
 ### Header
 
@@ -58,8 +59,8 @@ Offsets in this table are relative to `$12000`.
 
 | Offset | Name | Access | Description |
 | ---: | --- | --- | --- |
-| `$00` | `AUDIO_VERSION` | read | Audio memory layout version. Current value is `1`. |
-| `$01` | `AUDIO_CONTROL` | reserved | Reserved for future global controls. Write zero. |
+| `$00` | `AUDIO_VERSION` | read | Audio memory layout version. Current value is `2`. Version `2` widened each voice record from 8 to 16 bytes and added `AUDIO_VOLUME` and per-voice `VOLUME`. |
+| `$01` | `AUDIO_VOLUME` | read/write | Master volume, `0..15`. `0` is silent, `15` is full. Only the low nibble is used. Defaults to `15`. |
 | `$02` | `AUDIO_STATUS` | read | Audio status flags. |
 | `$03` | `AUDIO_CHANNELS` | read | Number of voices. Current value is `4`. |
 | `$04-$05` | `AUDIO_SAMPLE_RATE` | read | Little-endian sample rate. Current value is `24000`. |
@@ -78,8 +79,9 @@ Enabling or resetting audio clears the overflow status bit.
 
 ### Voice Registers
 
-Each voice is 8 bytes. Offsets in this table are relative to the start of a
-voice record.
+Each voice is 16 bytes. Offsets in this table are relative to the start of a
+voice record. Offsets `$09-$0F` are reserved for future per-voice controls;
+write zero.
 
 | Offset | Name | Description |
 | ---: | --- | --- |
@@ -91,6 +93,8 @@ voice record.
 | `$05` | `WAVEFORM` | Waveform selector. |
 | `$06` | `PAN` | Signed pan. `-64` left, `0` center, `63` right. |
 | `$07` | `CONTROL` | Gate and phase control bits. |
+| `$08` | `VOLUME` | Linear per-voice volume, `0..255`. `255` is unity. Defaults to `255`. |
+| `$09-$0F` | reserved | Write zero. |
 
 Frequency uses `value = frequency_hz * 16`. For example, A4 at 440 Hz is
 `440 * 16 = 7040`, or `$1B80`.
@@ -164,21 +168,46 @@ Sustain level is a 4-bit linear level where `$0` is silent and `$F` is full.
 Attack always rises toward full level, decay falls toward the sustain level, and
 release falls toward silence.
 
+## Volume
+
+Two gain stages sit after the envelope:
+
+| Stage | Register | Range | Where it applies |
+| --- | --- | ---: | --- |
+| Per-voice volume | voice `$08` `VOLUME` | `0..255` linear | Multiplies that voice's post-envelope sample, before panning. |
+| Master volume | header `$01` `AUDIO_VOLUME` | `0..15` | Multiplies the summed stereo mix, before the output clamp. |
+
+The full per-voice chain is:
+
+```text
+oscillator -> envelope (ADSR) -> VOLUME (0..255) -> PAN -> mix -> AUDIO_VOLUME (0..15) -> clamp
+```
+
+The envelope still governs the note contour, and `SUSTAIN` still sets the held
+level. `VOLUME` is an independent trim: unlike `SUSTAIN` it also scales the
+attack and decay peaks, so it can make a percussive or plucked voice quiet, do
+per-voice fades and tremolo, and balance voices without disturbing their
+envelopes. `AUDIO_VOLUME` is the SID `$D418`-style master; `0` mutes all output.
+Both default to full and both accept live updates while audio is active.
+
 ## Indexes
 
 MIA configures fixed indexes for audio during runtime reset:
 
 | Index | Range | Description |
 | ---: | ---: | --- |
-| `$D0` | `$12000-$1203F` | Whole audio block. |
-| `$D1` | `$12010-$12017` | Voice 0. |
-| `$D2` | `$12018-$1201F` | Voice 1. |
-| `$D3` | `$12020-$12027` | Voice 2. |
-| `$D4` | `$12028-$1202F` | Voice 3. |
+| `$D0` | `$12000-$1204F` | Whole audio block. |
+| `$D1` | `$12010-$1201F` | Voice 0. |
+| `$D2` | `$12020-$1202F` | Voice 1. |
+| `$D3` | `$12030-$1203F` | Voice 2. |
+| `$D4` | `$12040-$1204F` | Voice 3. |
 | `$D5` | `$12000-$1200F` | Header. |
 
 All audio indexes step on reads and writes and wrap within their configured
-range.
+range. Each voice index now spans the full 16-byte record: a program that writes
+only the first nine bytes (`FREQ_L` through `VOLUME`) leaves the index parked
+mid-record, so re-select the voice index (or write all 16 bytes) before the next
+voice event.
 
 ## Commands
 
@@ -197,7 +226,8 @@ and issue `AUDIO_ENABLE` before playing notes.
 
 While audio is active, byte writes through `IDXA_PORT` or `IDXB_PORT` into the
 audio block are queued and applied by the audio IRQ. This makes changes audible
-on the next audio tick, normally within about 42 microseconds at 24 kHz.
+on the next audio tick, normally within about 42 microseconds at 24 kHz. This
+includes the header `AUDIO_VOLUME` byte and each voice's `VOLUME` byte.
 
 Bulk DMA copies inside MIA RAM update the bytes but do not generate live audio
 queue entries. If a program bulk-copies a prepared audio register block while

@@ -42,9 +42,13 @@ AUDIO_WAVE_NOISE    = $04
 
 AUDIO_GATE        = %00000001
 AUDIO_RESET_PHASE = %00000010
+
+; Header byte $01 (reach it via IIDX_AUDIO_HEADER, offset 1): master volume
+; 0..15, SID $D418-style. 0 mutes all output, 15 is full. Defaults to 15.
+AUDIO_MASTER_VOLUME_OFFSET = $01
 ```
 
-Each voice index points at an 8-byte record:
+Each voice index points at a 16-byte record (offsets 9..15 reserved, write zero):
 
 | Offset | Register |
 | ---: | --- |
@@ -56,6 +60,7 @@ Each voice index points at an 8-byte record:
 | 5 | `WAVEFORM` |
 | 6 | `PAN` |
 | 7 | `CONTROL` |
+| 8 | `VOLUME` (linear 0..255, 255 = unity) |
 
 ## Enabling Audio
 
@@ -127,6 +132,9 @@ audio_note_a4:
 
     lda #AUDIO_GATE | AUDIO_RESET_PHASE
     sta IDXA_PORT
+
+    lda #$FF            ; VOLUME: unity (offset 8)
+    sta IDXA_PORT
     rts
 ```
 
@@ -151,16 +159,20 @@ audio_note_off_ch0:
     sta IDXA_PORT
     lda #$00            ; PAN
     sta IDXA_PORT
-    lda #$00
+    lda #$00            ; CONTROL: gate cleared -> release
+    sta IDXA_PORT
+    lda #$FF            ; VOLUME
     sta IDXA_PORT
     rts
 ```
 
 For a real music engine, it is usually better to keep a small shadow copy of
-each voice in 6502 RAM and rewrite the full 8-byte voice record when a note
-starts or stops. Four voices are only 32 bytes total, so whole-record writes are
-cheap and predictable. If every event writes all 8 bytes, the fixed voice index
-wraps back to the start of the record after each event.
+each voice in 6502 RAM and rewrite the voice record when a note starts or stops.
+The record is 16 bytes but only the first nine (`FREQ_L` through `VOLUME`) are
+defined, so write those nine and re-select the voice index before the next
+event, or write all 16 so the fixed voice index wraps back to the start of the
+record after each event. Four voices are 64 bytes of shadow total, so
+whole-record writes stay cheap and predictable.
 
 ## Envelope Use
 
@@ -204,6 +216,21 @@ often and sound brighter.
 
 Values outside `-64..63` are clamped by MIA.
 
+## Volume
+
+There are two gain stages after the envelope:
+
+- **Per-voice** `VOLUME` (voice offset 8), linear `0..255`, `255` is unity.
+  Unlike `SUSTAIN` it scales the attack and decay peaks too, so it can make a
+  plucked or percussive voice quiet, fade or tremolo a single voice, and trim
+  the mix balance between voices without touching their envelopes.
+- **Master** `AUDIO_VOLUME` (header offset 1), `0..15`, SID `$D418`-style. `0`
+  mutes all output. Reach it through `IIDX_AUDIO_HEADER` (offset 1).
+
+Both default to full, and both take effect on the next audio tick when written
+while audio is active. Leave `SUSTAIN` for the note contour and use `VOLUME` for
+level.
+
 ## Updating Live Audio
 
 When audio is active, writes through `IDXA_PORT` or `IDXB_PORT` to the audio
@@ -222,11 +249,13 @@ know the command has completed, then issue `AUDIO_ENABLE`.
 
 ## Suggested Engine Shape
 
-A simple music driver can keep four 8-byte voice shadows in ordinary 6502 RAM:
+A simple music driver can keep four 9-byte voice shadows in ordinary 6502 RAM:
 
-1. Build the target voice record in the shadow.
+1. Build the target voice record in the shadow (offsets 0..8).
 2. Select `IIDX_AUDIO_CHn`.
-3. Write all 8 bytes through `IDXA_PORT`.
+3. Write the nine defined bytes through `IDXA_PORT` (`FREQ_L` .. `VOLUME`).
 4. Set `GATE` for note-on, clear `GATE` for note-off.
 
-This costs only eight indexed writes per voice event and keeps timing simple.
+This costs nine indexed writes per voice event and keeps timing simple. Step 2
+also re-parks the index at the start of the record, so writing only nine of the
+sixteen bytes each event is fine.
