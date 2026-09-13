@@ -33,9 +33,27 @@
 
 #include "sys.pio.h"
 
-// Configuration for the kernel loader
+// Configuration for the kernel loader.
+//
+// 2026-09 RAM/ROM reorg (clementina-rom): the loader now writes DESCENDING
+// instead of ascending, so the image ends exactly at $BFFF regardless of how
+// large it grows. kernel_index still counts 0..kernel_data_size-1 exactly as
+// before (no underflow risk); it's kernel_data[] that's read back-to-front
+// (kernel_data_size-1-kernel_index) so the array's last byte - meant for the
+// highest address - is sent first, while REGSW(0xFFE3) decrements instead of
+// incrementing. Two separate fixed constants now, where there used to be one:
+//   - kernel_load_top_address ($BFFF): where the loader starts writing. This
+//     one never needs to change as clementina-rom's image grows or shrinks -
+//     that's the whole point of anchoring to the fixed top of the map.
+//   - kernel_target_address ($BFD0): the RESET/NMI/IRQ vector target, i.e.
+//     the start of clementina-rom's kernel jump table (KERN_BASE, always the
+//     image's *last* KERN_JUMPTAB_SIZE bytes, ending at $BFFF - see
+//     docs/memory-map.md in clementina-rom). Only changes if
+//     KERN_JUMPTAB_SIZE itself changes (rare, deliberate), unlike the image's
+//     overall size (constant churn as commands are added).
 uint32_t kernel_index = 0;                      // Index pointing to the next byte to be read from the kernel
-uint16_t kernel_target_address = 0x0400;        // Target address in where kernel is being written
+uint16_t kernel_load_top_address = 0xBFFF;      // Where the descending loader starts writing (fixed forever)
+uint16_t kernel_target_address = 0xBFD0;        // RESET/NMI/IRQ vector target = jump table start (fixed forever)
 
 static bool can_update_kernel_pointer = false;  // Flag to allow updating the kernel pointer only after the data is read at least once.
 
@@ -166,10 +184,14 @@ __attribute__((optimize("O1"))) static void __no_inline_not_in_flash_func(act_lo
                             }
 
                             // If there are are values still on the kernel we set the new value
-                            // and increment the destination address to the next byte
+                            // and decrement the destination address to the next (lower) byte.
+                            // kernel_data[] is read back-to-front - see the comment on
+                            // kernel_load_top_address above - so kernel_index itself still
+                            // just counts 0..kernel_data_size-1 as before.
                             if (kernel_index < kernel_data_size) {
-                                REGS(0xFFE1) = kernel_data[kernel_index++];
-                                REGSW(0xFFE3) += 1;
+                                REGS(0xFFE1) = kernel_data[kernel_data_size - 1 - kernel_index];
+                                kernel_index++;
+                                REGSW(0xFFE3) -= 1;
                             } else {
                                 // The final queued byte has now been consumed. Change BRA $FFE0
                                 // into BRA $FFEA so the CPU has a safe parking loop until reset asserts.
@@ -584,13 +606,19 @@ static void mia_enter_normal_mode(void) {
 
 // Builds the 6502 loader program in the MIA register block and points the reset vector at it.
 static void fast_loader_init(void) {
-    // // Self-modifying fast load
+    // // Self-modifying fast load - descending: first byte sent is
+    // kernel_data[kernel_data_size-1] (meant for the highest address),
+    // written to kernel_load_top_address; each subsequent byte/address pair
+    // steps backward together (see the loader-advance handler above).
     REGS(0xFFE0) = 0xA9;                            // FFE0:  A9 xx     LDA #xx ; The MIA will respond with the byte of the kernel
-    REGS(0xFFE1) = kernel_data[kernel_index++];
-    
+    if (kernel_data_size > 0) {
+        REGS(0xFFE1) = kernel_data[kernel_data_size - 1 - kernel_index];
+        kernel_index++;
+    }
+
     REGS(0xFFE2) = 0x8D;                            // FFE2:  8D xx xx  STA $xxxx ; The target address to write the kernel
-    REGS(0xFFE3) = kernel_target_address & 0xFF;
-    REGS(0xFFE4) = kernel_target_address >> 8;
+    REGS(0xFFE3) = kernel_load_top_address & 0xFF;
+    REGS(0xFFE4) = kernel_load_top_address >> 8;
 
     REGS(0xFFE5) = 0x8D;                            // FFE5:  8D F1 FF  STA $FFF1 ; Gets the next instruction in the kernel data port
     REGS(0xFFE6) = 0xF1;
