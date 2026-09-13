@@ -44,6 +44,8 @@
 #define ERROR_FS_DELETE_FAILED          0x84        // FAT delete failed
 #define ERROR_FS_RENAME_FAILED          0x85        // FAT rename failed
 #define ERROR_FS_FREE_FAILED            0x86        // FAT free-space query failed
+#define ERROR_FS_HANDLE_ALREADY_OPEN    0x87        // FS_OPEN requested on a handle slot that is already open
+#define ERROR_FS_INVALID_HANDLE         0x88        // SD_HANDLE_SELECT names a slot outside the supported range
 
 #define ERROR_DEFER_CMD_QUEUE_FULL      (1u << 0)
 #define ERROR_DEFER_AUDIO_QUEUE_OVERFLOW (1u << 1)

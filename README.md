@@ -224,22 +224,29 @@ Commands are requested by writing parameters to `CMD_PARAM1-3`, then writing the
 | `71` | `SD_LBA` in SD control block | Read one 512-byte raw sector into the SD sector buffer. |
 | `72` | `SD_LBA` and sector buffer | Write one 512-byte raw sector from the SD sector buffer. |
 | `73` | none | Refresh/read SD card info fields. |
-| `78` | none | Mount the FAT filesystem. |
-| `79` | path buffer | Open a FAT directory cursor. |
+| `78` | none | Mount the FAT filesystem. Also resets the current directory to the root. |
+| `79` | path buffer | Open a FAT directory cursor. Shared by the whole session - independent of any file handle. |
 | `7A` | none | Read one directory entry into the directory-entry buffer. |
-| `7B` | path buffer, `SD_OPEN_MODE` | Open one file for reading and/or writing. |
-| `7C` | `SD_REQUEST_LEN` in SD control block | Read file bytes into the transfer buffer. |
-| `7D` | none | Close the implicit file handle and directory cursor. |
-| `7E` | path buffer, `SD_DEST_ADDR`, `SD_REQUEST_LEN` | Load a file directly into MIA RAM. |
-| `7F` | `SD_REQUEST_LEN` and transfer buffer | Write file bytes from the transfer buffer. |
-| `80` | none | Flush the open file to the card. |
-| `81` | `SD_FILE_POS` in SD control block | Seek the open file. |
+| `7B` | `SD_HANDLE_SELECT`, path buffer, `SD_OPEN_MODE` | Open one file for reading and/or writing on the selected handle slot (0-15). Fails with `ERROR_FS_HANDLE_ALREADY_OPEN` if that slot is already open. |
+| `7C` | `SD_HANDLE_SELECT`, `SD_REQUEST_LEN` in SD control block | Read file bytes from the selected slot into the transfer buffer. |
+| `7D` | `SD_HANDLE_SELECT` | Close the selected file handle slot. Does not touch the directory cursor. |
+| `7E` | path buffer, `SD_DEST_ADDR`, `SD_REQUEST_LEN` | Load a file directly into MIA RAM. Uses its own file, independent of any handle slot. |
+| `7F` | `SD_HANDLE_SELECT`, `SD_REQUEST_LEN` and transfer buffer | Write file bytes from the transfer buffer to the selected slot's open file. |
+| `80` | `SD_HANDLE_SELECT` | Flush the selected slot's open file to the card. |
+| `81` | `SD_HANDLE_SELECT`, `SD_FILE_POS` in SD control block | Seek the selected slot's open file. |
 | `82` | path buffer | Stat a file or directory into the directory-entry buffer. |
 | `83` | path buffer | Create a directory. |
 | `84` | path buffer | Delete a file or empty directory. |
 | `85` | path buffer and secondary path buffer | Rename or move a file or directory. |
 | `86` | none | Query FAT free space into the SD control block. |
 | `87` | path buffer, `SD_DEST_ADDR`, `SD_TRANSFER_LEN`, `SD_OPEN_MODE` | Save bytes from MIA RAM to a file in chunks. |
+| `88` | path buffer | Change the current directory (`f_chdir`). Persists, per mounted volume, until the next `78`/`FS_MOUNT`. |
+
+Every file handle command above (`7B`, `7C`, `7D`, `7F`, `80`, `81`) acts on
+whichever of MIA's 16 independent handle slots `SD_HANDLE_SELECT` currently
+names - there is no single "the open file" any more, and up to 16 files can
+be open at once. See `docs/sd.md`/`docs/sd-programmer-guide.md` for the full
+protocol.
 
 Unassigned command ids report `ERROR_CMD_UNKNOWN`.
 
@@ -352,6 +359,8 @@ Errors are stored in a 16-entry ring buffer. Reading `$FFEC` pulls one error int
 | `84` | `ERROR_FS_DELETE_FAILED` | FAT delete failed. |
 | `85` | `ERROR_FS_RENAME_FAILED` | FAT rename failed. |
 | `86` | `ERROR_FS_FREE_FAILED` | FAT free-space query failed. |
+| `87` | `ERROR_FS_HANDLE_ALREADY_OPEN` | `FS_OPEN` requested on a handle slot that is already open. |
+| `88` | `ERROR_FS_INVALID_HANDLE` | `SD_HANDLE_SELECT` names a slot outside the supported range. |
 
 ## PHI2 Speed Control
 

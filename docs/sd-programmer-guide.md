@@ -62,6 +62,7 @@ CMD_FS_DELETE       = $84
 CMD_FS_RENAME       = $85
 CMD_FS_GET_FREE     = $86
 CMD_FS_SAVE_MIA     = $87
+CMD_FS_CHDIR        = $88
 
 IIDX_SD_CONTROL     = $E0
 IIDX_SD_SECTOR      = $E1
@@ -131,6 +132,7 @@ SD_FREE_CLUSTERS0 = $20
 SD_TOTAL_CLUSTERS0 = $24
 SD_CLUSTER_SECTORS_L = $28
 SD_TRANSFER_LEN0  = $2A
+SD_HANDLE_SELECT  = $2E
 ```
 
 Directory entry offsets, relative to `IIDX_FS_DIR_ENTRY`:
@@ -162,6 +164,53 @@ mia_cmd:
     sta CMD_TRIGGER
     rts
 ```
+
+## Selecting A File Handle
+
+MIA holds 16 file-handle slots, each with its own open/mode/size/position/EOF
+state. `FS_OPEN`, `FS_READ`, `FS_WRITE`, `FS_SEEK`, `FS_SYNC`, and `FS_CLOSE`
+all act on whichever slot `SD_HANDLE_SELECT` currently names - select one
+before using any of them:
+
+```asm
+mia_select_handle:
+    ; A = slot (0-15)
+    pha
+    lda #IIDX_SD_CONTROL
+    sta IDXA_SELECT
+    ldx #SD_HANDLE_SELECT
+@skip:
+    lda IDXA_PORT
+    dex
+    bne @skip
+    pla
+    sta IDXA_PORT
+    rts
+```
+
+There is no allocator: a program picks which slot to use for a given file,
+the same way it already picks a BASIC/application-level file number.
+`SD_HANDLE_SELECT` defaults to `0` on reset, so a program that only ever
+touches one file - everything up through this guide's examples so far - needs
+no changes at all.
+
+Opening a slot that is already open fails with `ERROR_FS_HANDLE_ALREADY_OPEN`
+rather than silently replacing it; close it first. Selecting a slot outside
+`0`-`15` fails with `ERROR_FS_INVALID_HANDLE`.
+
+`SD_FILE_HANDLE`, `SD_EOF`, and their `SD_STATUS` bits always describe
+whichever slot is currently selected, refreshed by any SD/FS command that
+completes - even one on a different slot. `SD_FILE_SIZE`/`SD_FILE_POS` only
+refresh when a command actually runs against the selected slot (open, read,
+write, sync, seek, or close on it). Practically, this only matters if you
+check a handle's status with no operation pending on it: reselect it and
+issue a real command (even `FS_SEEK` to its current position) rather than
+trusting values left over from whatever slot a previous command touched.
+
+The directory cursor (`FS_OPENDIR`/`FS_READDIR`) and the whole-file
+`FS_LOAD_TO_MIA_RAM`/`FS_SAVE_FROM_MIA_RAM` jobs are unaffected by
+`SD_HANDLE_SELECT` - both stay singular, and `FS_CLOSE` no longer closes the
+directory cursor as a side effect the way the single-handle protocol used to.
 
 ## Polling For Completion
 
@@ -322,10 +371,15 @@ After completion:
 ## Opening And Streaming A File
 
 Use `FS_OPEN` and repeated `FS_READ` when your program wants to process a file
-in chunks.
+in chunks. This example uses handle slot `0` (see
+[Selecting A File Handle](#selecting-a-file-handle)); any unused slot works
+the same way, and several files can be open on different slots at once.
 
 ```asm
 fs_open_demo:
+    lda #0
+    jsr mia_select_handle
+
     jsr fs_write_path
 
     lda #IIDX_SD_CONTROL
@@ -344,7 +398,7 @@ fs_open_demo:
     lda #CMD_FS_OPEN
     jsr mia_cmd
     jsr sd_wait
-    jsr sd_last_error
+    jsr sd_last_error   ; A = ERROR_FS_HANDLE_ALREADY_OPEN if slot 0 was still open
     rts
 ```
 
@@ -384,7 +438,8 @@ If `SD_REQUEST_LEN` is zero, `FS_READ` fills as much of the 1984-byte transfer
 buffer as possible. `SD_EOF` becomes nonzero after the read that reaches the end
 of the file.
 
-Close the implicit file handle when finished:
+Close the handle when finished (`SD_HANDLE_SELECT` still names slot `0` here;
+reselect a different slot first if you moved on to another file in between):
 
 ```asm
 fs_close:
@@ -410,6 +465,10 @@ save_bytes:
 save_bytes_end:
 
 fs_save_demo:
+    lda #0
+    jsr mia_select_handle    ; any unused slot; relies on reset's slot-0 default
+                              ; if you skip this call entirely
+
     lda #IIDX_FS_PATH
     sta IDXA_SELECT
     ldy #$00
@@ -551,9 +610,10 @@ count and `SD_FILE_POS` contains the full 32-bit saved byte count.
 
 ## Seeking
 
-`FS_SEEK` uses `SD_FILE_POS` as its input. Write the target offset, trigger
-`FS_SEEK`, then read `SD_FILE_POS` again to learn the actual position. This is
-most useful with `FS_OPEN_READ_WRITE`.
+`FS_SEEK` acts on whichever slot `SD_HANDLE_SELECT` currently names. It uses
+`SD_FILE_POS` as its input: write the target offset, trigger `FS_SEEK`, then
+read `SD_FILE_POS` again to learn the actual position. This is most useful
+with `FS_OPEN_READ_WRITE`.
 
 ```asm
 fs_seek_start:
@@ -578,6 +638,164 @@ fs_seek_start:
     jsr sd_last_error
     rts
 ```
+
+## Multiple Files At Once
+
+Because each handle slot keeps its own open/position/EOF state, a program can
+stream between two files without closing either one - a true copy, not the
+open/read/close/open-the-other/write/close dance the single-handle protocol
+used to require. This example copies `/SRC.BIN` to `/DST.BIN` in 256-byte
+chunks, source on slot `0` and destination on slot `1`:
+
+```asm
+copy_src_path:
+    .byte "/SRC.BIN",0
+copy_dst_path:
+    .byte "/DST.BIN",0
+
+fs_copy_demo:
+    lda #0
+    jsr mia_select_handle
+    lda #IIDX_FS_PATH
+    sta IDXA_SELECT
+    ldy #$00
+@src_path:
+    lda copy_src_path,y
+    sta IDXA_PORT
+    beq @src_path_done
+    iny
+    bne @src_path
+@src_path_done:
+    lda #IIDX_SD_CONTROL
+    sta IDXA_SELECT
+    ldx #SD_OPEN_MODE
+@skip_src_mode:
+    lda IDXA_PORT
+    dex
+    bne @skip_src_mode
+    lda #FS_OPEN_READ
+    sta IDXA_PORT
+    lda #CMD_FS_OPEN
+    jsr mia_cmd
+    jsr sd_wait
+    jsr sd_last_error
+    bne @done
+
+    lda #1
+    jsr mia_select_handle
+    lda #IIDX_FS_PATH
+    sta IDXA_SELECT
+    ldy #$00
+@dst_path:
+    lda copy_dst_path,y
+    sta IDXA_PORT
+    beq @dst_path_done
+    iny
+    bne @dst_path
+@dst_path_done:
+    lda #IIDX_SD_CONTROL
+    sta IDXA_SELECT
+    ldx #SD_OPEN_MODE
+@skip_dst_mode:
+    lda IDXA_PORT
+    dex
+    bne @skip_dst_mode
+    lda #FS_OPEN_WRITE_CREATE
+    sta IDXA_PORT
+    lda #CMD_FS_OPEN
+    jsr mia_cmd
+    jsr sd_wait
+    jsr sd_last_error
+    bne @close_src
+
+    ; Both files are open now - slot 0 for reading, slot 1 for writing.
+@loop:
+    lda #0
+    jsr mia_select_handle
+    lda #IIDX_SD_CONTROL
+    sta IDXA_SELECT
+    ldx #SD_REQUEST_LEN_L
+@skip_req:
+    lda IDXA_PORT
+    dex
+    bne @skip_req
+    lda #$00
+    sta IDXA_PORT       ; low byte of 256
+    lda #$01
+    sta IDXA_PORT       ; high byte of 256
+    lda #CMD_FS_READ
+    jsr mia_cmd
+    jsr sd_wait
+    jsr sd_last_error
+    bne @close_both
+
+    lda #IIDX_SD_CONTROL
+    sta IDXA_SELECT
+    ldx #SD_RESULT_LEN_L
+@skip_result:
+    lda IDXA_PORT
+    dex
+    bne @skip_result
+    lda IDXA_PORT       ; SD_RESULT_LEN_L
+    sta chunk_len
+    lda IDXA_PORT       ; SD_RESULT_LEN_H (chunks here are always < 256)
+
+    lda chunk_len
+    beq @close_both     ; slot 0 hit EOF with nothing left to copy
+
+    lda #1
+    jsr mia_select_handle
+    lda #IIDX_SD_CONTROL
+    sta IDXA_SELECT
+    ldx #SD_REQUEST_LEN_L
+@skip_wreq:
+    lda IDXA_PORT
+    dex
+    bne @skip_wreq
+    lda chunk_len
+    sta IDXA_PORT       ; low byte
+    stz IDXA_PORT        ; high byte
+    lda #CMD_FS_WRITE
+    jsr mia_cmd
+    jsr sd_wait
+    jsr sd_last_error
+    bne @close_both
+
+    lda #0
+    jsr mia_select_handle
+    lda #IIDX_SD_CONTROL
+    sta IDXA_SELECT
+    ldx #SD_EOF
+@skip_eof:
+    lda IDXA_PORT
+    dex
+    bne @skip_eof
+    lda IDXA_PORT
+    beq @loop           ; slot 0 not at EOF yet - copy another chunk
+
+@close_both:
+    lda #1
+    jsr mia_select_handle
+    lda #CMD_FS_CLOSE
+    jsr mia_cmd
+    jsr sd_wait
+@close_src:
+    lda #0
+    jsr mia_select_handle
+    lda #CMD_FS_CLOSE
+    jsr mia_cmd
+    jsr sd_wait
+@done:
+    rts
+
+chunk_len: .byte 0
+```
+
+For a whole file that comfortably fits in spare MIA RAM, `FS_LOAD_TO_MIA_RAM`
+into a scratch address followed by `FS_SAVE_FROM_MIA_RAM` from that same
+address is simpler than this loop and does not need a second handle at all -
+reach for that first, and fall back to a two-handle streaming copy only for
+files too large for whatever scratch RAM budget you are willing to spend.
 
 ## Managing Files And Directories
 
@@ -619,6 +837,22 @@ fs_mkdir_path:
 fs_delete_path:
     jsr fs_write_path
     lda #CMD_FS_DELETE
+    jsr mia_cmd
+    jsr sd_wait
+    jsr sd_last_error
+    rts
+```
+
+`FS_CHDIR` changes the current directory (`f_chdir`), using `IIDX_FS_PATH`
+exactly like `FS_MKDIR`/`FS_DELETE`. It requires an existing directory. Once
+changed, it persists - every other path-taking command above resolves a
+relative path against it (FatFs's own current-directory tracking, per mounted
+volume) until the next `FS_MOUNT`, which always resets it back to the root.
+
+```asm
+fs_chdir_path:
+    jsr fs_write_path
+    lda #CMD_FS_CHDIR
     jsr mia_cmd
     jsr sd_wait
     jsr sd_last_error
@@ -703,24 +937,12 @@ fs_read_dir_entry:
     jsr sd_last_error
     bne @done
 
-    lda #IIDX_SD_CONTROL
-    sta IDXA_SELECT
-
-    ; Skip to SD_EOF.
-    ldx #SD_EOF
-@skip_eof:
-    lda IDXA_PORT
-    dex
-    bne @skip_eof
-
-    lda IDXA_PORT       ; SD_EOF
-    bne @end_of_dir
-
     lda #IIDX_FS_DIR_ENTRY
     sta IDXA_SELECT
     lda IDXA_PORT       ; DIR_ATTR
     sta dir_attr
     lda IDXA_PORT       ; DIR_NAME_LEN
+    beq @end_of_dir     ; 0 -> no more entries
     sta dir_name_len
     ; Continue reading fields/name as needed.
 @done:
@@ -731,7 +953,22 @@ fs_read_dir_entry:
     rts
 ```
 
+Check `DIR_NAME_LEN` for zero to detect the end of the listing, not `SD_EOF`:
+`SD_EOF` is shared with per-handle file I/O and reads back whichever
+`SD_HANDLE_SELECT` slot is currently selected - the *file's* EOF, not the
+*directory cursor's*, if that slot happens to be open while you list a
+directory. `DIR_NAME_LEN` has no such ambiguity: `FS_OPENDIR` and a
+just-exhausted `FS_READDIR` both zero the whole entry buffer, and a real
+entry's name is never zero length.
+
 If `DIR_ATTR & DIR_ATTR_DIRECTORY` is nonzero, the entry is a directory.
+
+Read the whole name out to CPU RAM before doing anything else with window A -
+in particular, before calling any console/print routine of your own. Nothing
+stops your own code from also using `IDXA_SELECT`/`IDXA_PORT` (MIA's video
+output does), and switching the window mid-read silently repositions it out
+from under you: only the first character would come out right, with the rest
+replaced by whatever the window was left pointing at afterwards.
 
 ## Reading A Raw Sector
 
@@ -810,6 +1047,8 @@ Common MIA SD/FS errors:
 | `$84` | `ERROR_FS_DELETE_FAILED` |
 | `$85` | `ERROR_FS_RENAME_FAILED` |
 | `$86` | `ERROR_FS_FREE_FAILED` |
+| `$87` | `ERROR_FS_HANDLE_ALREADY_OPEN` |
+| `$88` | `ERROR_FS_INVALID_HANDLE` |
 
 The terminal command `status sd` is the fastest way to inspect the last SD/FS
 state during bring-up.
@@ -827,3 +1066,7 @@ state during bring-up.
 - Use `FS_MKDIR` before saving into a new directory; it creates one level only.
 - Close open files and directory cursors before deleting or renaming paths.
 - Keep raw writes behind explicit tools; they bypass file-level safety.
+- Reach for a second handle slot only when you genuinely need two files open
+  at once (see [Multiple Files At Once](#multiple-files-at-once)); simple
+  sequential work is one line simpler when it just uses the reset-time slot-0
+  default and never touches `SD_HANDLE_SELECT` at all.

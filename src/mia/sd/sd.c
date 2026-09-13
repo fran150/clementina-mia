@@ -89,6 +89,7 @@ typedef enum {
     sd_request_rename = MIA_CMD_FS_RENAME,
     sd_request_get_free = MIA_CMD_FS_GET_FREE,
     sd_request_save = MIA_CMD_FS_SAVE_FROM_MIA_RAM,
+    sd_request_chdir = MIA_CMD_FS_CHDIR,
 } sd_request_t;
 
 typedef enum {
@@ -111,17 +112,21 @@ static volatile bool sd_request_pending;
 static bool sd_spi_ready;
 static bool sd_initialized;
 static bool sd_mounted;
-static bool sd_file_open;
+// Per-handle file state, indexed by slot (0..MIA_SD_MAX_HANDLES-1). BASIC-visible
+// file numbers map directly onto these slots - see MIA_SD_CONTROL_HANDLE_SELECT
+// in sd.h. Size/position/EOF are never cached: f_size()/f_tell()/f_eof() read
+// them live off the slot's own FIL, same as the single-handle code did.
+static bool sd_file_open[MIA_SD_MAX_HANDLES];
+static uint8_t sd_current_open_mode[MIA_SD_MAX_HANDLES];
+static FIL sd_file[MIA_SD_MAX_HANDLES];
 static bool sd_dir_open;
 static bool sd_eof;
 static uint8_t sd_last_error;
 static uint8_t sd_last_fatfs_result;
 static uint8_t sd_type;
-static uint8_t sd_current_open_mode;
 static uint32_t sd_sectors;
 
 static FATFS sd_fatfs;
-static FIL sd_file;
 static DIR sd_dir;
 static sd_job_state_t sd_job;
 static uint8_t sd_job_buffer[SD_JOB_CHUNK_SIZE];
@@ -132,6 +137,19 @@ static void sd_publish_state(void);
 static void sd_finish(bool ok, uint8_t error, FRESULT fatfs_result, bool fs_event);
 static void sd_set_busy(bool busy);
 static void sd_service_job(void);
+static void sd_update_file_position(uint8_t slot);
+
+// Reads SD_HANDLE_SELECT and validates it against MIA_SD_MAX_HANDLES. Returns
+// false (leaving *out_slot untouched) when the selected value is out of range,
+// so callers can fail the command with ERROR_FS_INVALID_HANDLE.
+static bool sd_require_valid_handle(uint8_t *out_slot) {
+    uint8_t slot = mem[MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_HANDLE_SELECT];
+    if (slot >= MIA_SD_MAX_HANDLES) {
+        return false;
+    }
+    *out_slot = slot;
+    return true;
+}
 
 static uint16_t sd_read_u16(uint32_t offset) {
     return (uint16_t)mem[offset] | ((uint16_t)mem[offset + 1u] << 8);
@@ -297,10 +315,12 @@ bool mia_sd_card_init(void) {
 
     sd_initialized = false;
     sd_mounted = false;
-    sd_file_open = false;
+    for (uint8_t i = 0; i < MIA_SD_MAX_HANDLES; i++) {
+        sd_file_open[i] = false;
+        sd_current_open_mode[i] = MIA_FS_OPEN_READ;
+    }
     sd_dir_open = false;
     sd_eof = false;
-    sd_current_open_mode = MIA_FS_OPEN_READ;
     memset(&sd_job, 0, sizeof(sd_job));
     sd_type = MIA_SD_CARD_NONE;
     sd_sectors = 0;
@@ -474,16 +494,21 @@ void mia_sd_reset_runtime_state(void) {
     }
     memset(&sd_job, 0, sizeof(sd_job));
     sd_mounted = false;
-    sd_file_open = false;
+    for (uint8_t i = 0; i < MIA_SD_MAX_HANDLES; i++) {
+        if (sd_file_open[i]) {
+            f_close(&sd_file[i]);
+        }
+        sd_file_open[i] = false;
+        sd_current_open_mode[i] = MIA_FS_OPEN_READ;
+        memset(&sd_file[i], 0, sizeof(sd_file[i]));
+    }
     sd_dir_open = false;
     sd_eof = false;
-    sd_current_open_mode = MIA_FS_OPEN_READ;
     sd_last_error = 0;
     sd_last_fatfs_result = FR_OK;
 
     f_mount(NULL, "0:", 0);
     memset(&sd_fatfs, 0, sizeof(sd_fatfs));
-    memset(&sd_file, 0, sizeof(sd_file));
     memset(&sd_dir, 0, sizeof(sd_dir));
 
     sd_clear_buffers();
@@ -523,6 +548,7 @@ bool mia_sd_request(uint8_t command) {
         case MIA_CMD_FS_RENAME:
         case MIA_CMD_FS_GET_FREE:
         case MIA_CMD_FS_SAVE_FROM_MIA_RAM:
+        case MIA_CMD_FS_CHDIR:
             break;
         default:
             return false;
@@ -579,6 +605,15 @@ static void sd_finish(bool ok, uint8_t error, FRESULT fatfs_result, bool fs_even
 static void sd_publish_state(void) {
     uint8_t status = 0;
 
+    // FILE_HANDLE/EOF describe whichever slot SD_HANDLE_SELECT currently names.
+    // EOF falls back to the transient sd_eof (set by FS_READDIR / the load-save
+    // jobs, neither of which has "a slot") when the selected slot has no file
+    // open - this is exactly today's single-handle behavior for anyone who
+    // never touches SD_HANDLE_SELECT, since slot 0 is the reset-time default.
+    uint8_t sel;
+    bool sel_open = sd_require_valid_handle(&sel) && sd_file_open[sel];
+    bool sel_eof = sel_open ? (f_eof(&sd_file[sel]) != 0) : sd_eof;
+
     if (sd_initialized) {
         status |= MIA_SD_STATUS_PRESENT | MIA_SD_STATUS_INITIALIZED;
     }
@@ -588,13 +623,13 @@ static void sd_publish_state(void) {
     if (mia_regs->mia_status & MIA_STAT_SD_BUSY) {
         status |= MIA_SD_STATUS_BUSY;
     }
-    if (sd_file_open) {
+    if (sel_open) {
         status |= MIA_SD_STATUS_FILE_OPEN;
     }
     if (sd_dir_open) {
         status |= MIA_SD_STATUS_DIR_OPEN;
     }
-    if (sd_eof) {
+    if (sel_eof) {
         status |= MIA_SD_STATUS_EOF;
     }
     if (sd_last_error != 0) {
@@ -604,8 +639,8 @@ static void sd_publish_state(void) {
     mem[MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_STATUS] = status;
     mem[MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_LAST_ERROR] = sd_last_error;
     mem[MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_CARD_TYPE] = sd_type;
-    mem[MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_EOF] = sd_eof ? 1u : 0u;
-    mem[MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_FILE_HANDLE] = sd_file_open ? 1u : 0u;
+    mem[MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_EOF] = sel_eof ? 1u : 0u;
+    mem[MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_FILE_HANDLE] = sel_open ? 1u : 0u;
     mem[MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_FATFS_RESULT] = sd_last_fatfs_result;
     sd_write_u32(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_CARD_SECTORS0, sd_sectors);
 
@@ -661,9 +696,14 @@ static void sd_prepare_fatfs_path_from(uint32_t offset, uint32_t size, char out[
 
     out[out_i++] = '0';
     out[out_i++] = ':';
-    if (in[0] == '\0') {
-        out[out_i++] = '/';
-    }
+    // An empty path buffer is left as bare "0:" (FatFs's own notation for "the
+    // current directory of drive 0", available since FF_FS_RPATH enables
+    // per-volume CWD tracking - see sd_request_chdir) rather than forced to
+    // "0:/" (root). This is what makes FS_CHDIR affect every other command
+    // for free: nothing here needs to know or prepend the current directory
+    // itself, FatFs already resolves it. Before FS_CHDIR existed the CWD was
+    // always root anyway, so this is not a behavior change for anyone who
+    // never calls CHDIR.
 
     for (uint32_t i = 0; i < size - 1u && in[i] != '\0' && out_i < MIA_FS_PATH_SIZE + 2u; i++) {
         out[out_i++] = in[i] == '\\' ? '/' : in[i];
@@ -700,15 +740,17 @@ static void sd_fill_dir_entry(const FILINFO *info) {
     sd_write_u16(MIA_FS_DIR_ENTRY_OFFSET + MIA_FS_DIR_TIME_L, info->ftime);
 }
 
-static void sd_update_file_position(void) {
-    if (!sd_file_open) {
+// Publishes SD_FILE_SIZE/SD_FILE_POS for the given slot (pass anything >=
+// MIA_SD_MAX_HANDLES, or a closed slot, to publish the "no file" zeros).
+static void sd_update_file_position(uint8_t slot) {
+    if (slot >= MIA_SD_MAX_HANDLES || !sd_file_open[slot]) {
         sd_write_u32(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_FILE_SIZE0, 0);
         sd_write_u32(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_FILE_POS0, 0);
         return;
     }
 
-    sd_write_u32(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_FILE_SIZE0, (uint32_t)f_size(&sd_file));
-    sd_write_u32(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_FILE_POS0, (uint32_t)f_tell(&sd_file));
+    sd_write_u32(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_FILE_SIZE0, (uint32_t)f_size(&sd_file[slot]));
+    sd_write_u32(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_FILE_POS0, (uint32_t)f_tell(&sd_file[slot]));
 }
 
 static bool sd_mount_filesystem(FRESULT *out_result) {
@@ -1006,6 +1048,13 @@ void mia_sd_service(void) {
         }
 
         case sd_request_open: {
+            uint8_t slot;
+            if (!sd_require_valid_handle(&slot)) {
+                ok = false;
+                error = ERROR_FS_INVALID_HANDLE;
+                fr = FR_INVALID_PARAMETER;
+                break;
+            }
             if (!sd_require_mounted(&fr)) {
                 ok = false;
                 error = ERROR_FS_MOUNT_FAILED;
@@ -1019,24 +1068,36 @@ void mia_sd_service(void) {
                 fr = FR_DENIED;
                 break;
             }
-            if (sd_file_open) {
-                f_close(&sd_file);
-                sd_file_open = false;
-                sd_current_open_mode = MIA_FS_OPEN_READ;
+            // Multi-handle FS_OPEN requires an explicit FS_CLOSE first, unlike the
+            // old single-handle behavior that silently replaced whatever was open -
+            // an unexpected re-open of a slot is much more likely a program bug
+            // than an intentional replace.
+            if (sd_file_open[slot]) {
+                ok = false;
+                error = ERROR_FS_HANDLE_ALREADY_OPEN;
+                fr = FR_DENIED;
+                break;
             }
             char path[MIA_FS_PATH_SIZE + 3u];
             sd_prepare_fatfs_path(path);
-            fr = f_open(&sd_file, path, fatfs_mode);
+            fr = f_open(&sd_file[slot], path, fatfs_mode);
             ok = (fr == FR_OK);
-            sd_file_open = ok;
-            sd_current_open_mode = ok ? open_mode : MIA_FS_OPEN_READ;
+            sd_file_open[slot] = ok;
+            sd_current_open_mode[slot] = ok ? open_mode : MIA_FS_OPEN_READ;
             error = ERROR_FS_OPEN_FAILED;
-            sd_update_file_position();
+            sd_update_file_position(slot);
             break;
         }
 
         case sd_request_read: {
-            if (!sd_file_open) {
+            uint8_t slot;
+            if (!sd_require_valid_handle(&slot)) {
+                ok = false;
+                error = ERROR_FS_INVALID_HANDLE;
+                fr = FR_INVALID_PARAMETER;
+                break;
+            }
+            if (!sd_file_open[slot]) {
                 ok = false;
                 error = ERROR_FS_NO_FILE_OPEN;
                 fr = FR_INVALID_OBJECT;
@@ -1047,19 +1108,25 @@ void mia_sd_service(void) {
                 requested = MIA_FS_TRANSFER_SIZE;
             }
             UINT br = 0;
-            fr = f_read(&sd_file, &mem[MIA_FS_TRANSFER_OFFSET], requested, &br);
+            fr = f_read(&sd_file[slot], &mem[MIA_FS_TRANSFER_OFFSET], requested, &br);
             ok = (fr == FR_OK);
             error = ERROR_FS_READ_FAILED;
             if (ok) {
                 sd_write_u16(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_RESULT_LEN_L, (uint16_t)br);
-                sd_eof = f_eof(&sd_file) != 0;
             }
-            sd_update_file_position();
+            sd_update_file_position(slot);
             break;
         }
 
         case sd_request_write: {
-            if (!sd_file_open) {
+            uint8_t slot;
+            if (!sd_require_valid_handle(&slot)) {
+                ok = false;
+                error = ERROR_FS_INVALID_HANDLE;
+                fr = FR_INVALID_PARAMETER;
+                break;
+            }
+            if (!sd_file_open[slot]) {
                 ok = false;
                 error = ERROR_FS_NO_FILE_OPEN;
                 fr = FR_INVALID_OBJECT;
@@ -1070,39 +1137,55 @@ void mia_sd_service(void) {
                 requested = MIA_FS_TRANSFER_SIZE;
             }
             UINT bw = 0;
-            fr = f_write(&sd_file, &mem[MIA_FS_TRANSFER_OFFSET], requested, &bw);
+            fr = f_write(&sd_file[slot], &mem[MIA_FS_TRANSFER_OFFSET], requested, &bw);
             ok = (fr == FR_OK) && (bw == requested);
             error = ERROR_FS_WRITE_FAILED;
             sd_write_u16(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_RESULT_LEN_L, (uint16_t)bw);
-            sd_update_file_position();
+            sd_update_file_position(slot);
             break;
         }
 
-        case sd_request_sync:
-            if (!sd_file_open) {
+        case sd_request_sync: {
+            uint8_t slot;
+            if (!sd_require_valid_handle(&slot)) {
+                ok = false;
+                error = ERROR_FS_INVALID_HANDLE;
+                fr = FR_INVALID_PARAMETER;
+                break;
+            }
+            if (!sd_file_open[slot]) {
                 ok = false;
                 error = ERROR_FS_NO_FILE_OPEN;
                 fr = FR_INVALID_OBJECT;
                 break;
             }
-            fr = f_sync(&sd_file);
+            fr = f_sync(&sd_file[slot]);
             ok = (fr == FR_OK);
             error = ERROR_FS_SYNC_FAILED;
-            sd_update_file_position();
+            sd_update_file_position(slot);
             break;
+        }
 
-        case sd_request_seek:
-            if (!sd_file_open) {
+        case sd_request_seek: {
+            uint8_t slot;
+            if (!sd_require_valid_handle(&slot)) {
+                ok = false;
+                error = ERROR_FS_INVALID_HANDLE;
+                fr = FR_INVALID_PARAMETER;
+                break;
+            }
+            if (!sd_file_open[slot]) {
                 ok = false;
                 error = ERROR_FS_NO_FILE_OPEN;
                 fr = FR_INVALID_OBJECT;
                 break;
             }
-            fr = f_lseek(&sd_file, sd_control_file_pos());
+            fr = f_lseek(&sd_file[slot], sd_control_file_pos());
             ok = (fr == FR_OK);
             error = ERROR_FS_SEEK_FAILED;
-            sd_update_file_position();
+            sd_update_file_position(slot);
             break;
+        }
 
         case sd_request_stat: {
             if (!sd_require_mounted(&fr)) {
@@ -1134,6 +1217,27 @@ void mia_sd_service(void) {
             fr = f_mkdir(path);
             ok = (fr == FR_OK);
             error = ERROR_FS_MKDIR_FAILED;
+            break;
+        }
+
+        case sd_request_chdir: {
+            if (!sd_require_mounted(&fr)) {
+                ok = false;
+                error = ERROR_FS_MOUNT_FAILED;
+                break;
+            }
+            // f_chdir persists across requests as part of the mounted FATFS
+            // work area (FF_FS_RPATH >= 1 in ffconf.h) - it is not reset until
+            // the next f_mount (see sd_mount_filesystem/sd_require_mounted),
+            // so this needs no dedicated "current directory" state of its
+            // own here. Every other path-taking command already resolves a
+            // relative path against it for free, once sd_prepare_fatfs_path
+            // stops forcing an empty path to root (see that function).
+            char path[MIA_FS_PATH_SIZE + 3u];
+            sd_prepare_fatfs_path(path);
+            fr = f_chdir(path);
+            ok = (fr == FR_OK);
+            error = ERROR_FS_DIR_FAILED;
             break;
         }
 
@@ -1189,25 +1293,30 @@ void mia_sd_service(void) {
             break;
         }
 
-        case sd_request_close:
-            if (sd_file_open) {
-                fr = f_close(&sd_file);
+        case sd_request_close: {
+            // FS_CLOSE now closes only the selected file-handle slot. It used to
+            // also close the (then-singular, now-shared) directory cursor as a
+            // side effect - dropped, since with multiple handles that coupling
+            // would let closing an unrelated file silently kill an in-progress
+            // FS_OPENDIR/FS_READDIR listing. The directory cursor is closed by a
+            // fresh FS_OPENDIR or by mia_sd_reset_runtime_state, same as before.
+            uint8_t slot;
+            if (!sd_require_valid_handle(&slot)) {
+                ok = false;
+                error = ERROR_FS_INVALID_HANDLE;
+                fr = FR_INVALID_PARAMETER;
+                break;
+            }
+            if (sd_file_open[slot]) {
+                fr = f_close(&sd_file[slot]);
                 ok = (fr == FR_OK);
                 error = ERROR_FS_CLOSE_FAILED;
             }
-            if (sd_dir_open) {
-                FRESULT dir_fr = f_closedir(&sd_dir);
-                if (ok && dir_fr != FR_OK) {
-                    fr = dir_fr;
-                    ok = false;
-                    error = ERROR_FS_DIR_FAILED;
-                }
-            }
-            sd_file_open = false;
-            sd_dir_open = false;
-            sd_current_open_mode = MIA_FS_OPEN_READ;
-            sd_update_file_position();
+            sd_file_open[slot] = false;
+            sd_current_open_mode[slot] = MIA_FS_OPEN_READ;
+            sd_update_file_position(slot);
             break;
+        }
 
         case sd_request_load: {
             if (!sd_require_mounted(&fr)) {
@@ -1262,15 +1371,31 @@ void mia_sd_print_summary(void) {
 }
 
 void mia_sd_print_status(void) {
+    uint8_t sel;
+    bool sel_valid = sd_require_valid_handle(&sel);
+    bool sel_open = sel_valid && sd_file_open[sel];
+    bool sel_eof = sel_open ? (f_eof(&sd_file[sel]) != 0) : sd_eof;
+    uint8_t open_count = 0;
+    for (uint8_t i = 0; i < MIA_SD_MAX_HANDLES; i++) {
+        if (sd_file_open[i]) {
+            open_count++;
+        }
+    }
+
     printf("SD/FS:\n");
-    printf("  state:     initialized:%s mounted:%s busy:%s file:%s dir:%s job:%u eof:%s\n",
+    printf("  state:     initialized:%s mounted:%s busy:%s dir:%s job:%u\n",
            sd_initialized ? "yes" : "no",
            sd_mounted ? "yes" : "no",
            (mia_regs->mia_status & MIA_STAT_SD_BUSY) ? "yes" : "no",
-           sd_file_open ? "open" : "closed",
            sd_dir_open ? "open" : "closed",
-           (unsigned)sd_job.type,
-           sd_eof ? "yes" : "no");
+           (unsigned)sd_job.type);
+    printf("  handles:   max:%u open:%u selected:%u (%s) selected-file:%s eof:%s\n",
+           (unsigned)MIA_SD_MAX_HANDLES,
+           (unsigned)open_count,
+           (unsigned)sel,
+           sel_valid ? "valid" : "invalid",
+           sel_open ? "open" : "closed",
+           sel_eof ? "yes" : "no");
     printf("  card:      type:%u sectors:%lu capacity:%lu MiB\n",
            (unsigned)sd_type,
            (unsigned long)sd_sectors,
@@ -1313,7 +1438,7 @@ void mia_sd_print_status(void) {
            (unsigned long)sd_read_u32(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_FILE_SIZE0),
            (unsigned long)sd_read_u32(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_FILE_POS0));
     printf("             mode:%u requested-open-mode:%u\n",
-           (unsigned)sd_current_open_mode,
+           (unsigned)(sel_valid ? sd_current_open_mode[sel] : MIA_FS_OPEN_READ),
            (unsigned)mem[MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_OPEN_MODE]);
     printf("  free:      clusters:%lu/%lu cluster-sectors:%u\n",
            (unsigned long)sd_read_u32(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_FREE_CLUSTERS0),

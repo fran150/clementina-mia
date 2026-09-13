@@ -22,7 +22,7 @@ The first implementation provides:
 | File management | stat, mkdir, delete, rename, free-space query |
 | Whole-file jobs | chunked load to MIA RAM, chunked save from MIA RAM |
 | Raw block API | read and write single 512-byte sectors |
-| Open files | one implicit file handle |
+| Open files | up to 16 concurrent file handles (`SD_HANDLE_SELECT`) |
 | Open directories | one implicit directory cursor |
 | Path encoding | ASCII/CP437-safe paths recommended |
 
@@ -94,7 +94,7 @@ Offsets in this table are relative to `$13000`.
 
 | Offset | Name | Access | Description |
 | ---: | --- | --- | --- |
-| `$00` | `SD_VERSION` | read | SD/FS memory layout version. Current value is `4`. |
+| `$00` | `SD_VERSION` | read | SD/FS memory layout version. Current value is `5`. |
 | `$01` | `SD_STATUS` | read | SD/FS status flags. |
 | `$02` | `SD_LAST_ERROR` | read | Last MIA SD/FS error code, or zero. |
 | `$03` | `SD_CARD_TYPE` | read | Card type code. |
@@ -102,19 +102,20 @@ Offsets in this table are relative to `$13000`.
 | `$08-$09` | `SD_REQUEST_LEN` | read/write | Requested byte count for `FS_READ`/`FS_WRITE`, or max load length for `FS_LOAD_TO_MIA_RAM`. |
 | `$0A-$0B` | `SD_RESULT_LEN` | read | Bytes produced by the last transfer. |
 | `$0C-$0E` | `SD_DEST_ADDR` | read/write | 24-bit MIA RAM destination for `FS_LOAD_TO_MIA_RAM`. |
-| `$0F` | `SD_FILE_HANDLE` | read | `1` when the implicit file handle is open, otherwise `0`. |
-| `$10` | `SD_OPEN_MODE` | read/write | File open policy for `FS_OPEN`. |
-| `$11` | `SD_EOF` | read | Nonzero when the last file or directory operation reached EOF. |
+| `$0F` | `SD_FILE_HANDLE` | read | `1` when the slot named by `SD_HANDLE_SELECT` is open, otherwise `0`. |
+| `$10` | `SD_OPEN_MODE` | read/write | File open policy for `FS_OPEN`, applied to the selected slot. |
+| `$11` | `SD_EOF` | read | Nonzero when the selected slot's open file is at EOF; falls back to the last directory-read/load-save-job EOF when the selected slot has no file open. See [File Handles](#file-handles). |
 | `$12` | `SD_FATFS_RESULT` | read | Raw FatFs `FRESULT` code from the last filesystem operation. |
 | `$13` | `SD_FLAGS` | reserved | Write zero. |
 | `$14-$17` | `SD_CARD_SECTORS` | read | Little-endian card capacity in 512-byte sectors, when known. |
-| `$18-$1B` | `SD_FILE_SIZE` | read | Size of the currently open file. |
-| `$1C-$1F` | `SD_FILE_POS` | read/write | Current file position. Write before `FS_SEEK` to choose the target offset. After `FS_LOAD_TO_MIA_RAM`, this contains the full 32-bit loaded byte count. |
+| `$18-$1B` | `SD_FILE_SIZE` | read | Size of the selected slot's open file. Refreshed by `FS_OPEN`/`FS_READ`/`FS_WRITE`/`FS_SYNC`/`FS_SEEK`/`FS_CLOSE` on that slot, not by other commands. |
+| `$1C-$1F` | `SD_FILE_POS` | read/write | Selected slot's file position. Write before `FS_SEEK` to choose the target offset. After `FS_LOAD_TO_MIA_RAM`, this contains the full 32-bit loaded byte count (the load/save jobs use their own file, independent of any slot - see [File Handles](#file-handles)). |
 | `$20-$23` | `SD_FREE_CLUSTERS` | read | Free FAT clusters after `FS_GET_FREE`. |
 | `$24-$27` | `SD_TOTAL_CLUSTERS` | read | Total usable FAT clusters after `FS_GET_FREE`. |
 | `$28-$29` | `SD_CLUSTER_SECTORS` | read | Sectors per FAT cluster after `FS_GET_FREE`. |
 | `$2A-$2D` | `SD_TRANSFER_LEN` | read/write | 32-bit byte count for `FS_SAVE_FROM_MIA_RAM`. |
-| `$2E-$3F` | reserved | reserved | Write zero. |
+| `$2E` | `SD_HANDLE_SELECT` | read/write | File-handle slot (`0`-`15`) that `FS_OPEN`/`FS_READ`/`FS_WRITE`/`FS_SEEK`/`FS_SYNC`/`FS_CLOSE` act on. Defaults to `0` on reset. See [File Handles](#file-handles). |
+| `$2F-$3F` | reserved | reserved | Write zero. |
 
 `SD_OPEN_MODE` values:
 
@@ -133,9 +134,9 @@ Offsets in this table are relative to `$13000`.
 | 1 | `SD_STATUS_INITIALIZED` | The SD block driver is initialized. |
 | 2 | `SD_STATUS_MOUNTED` | The FAT filesystem is mounted. |
 | 3 | `SD_STATUS_BUSY` | An SD/FS command is in progress. |
-| 4 | `SD_STATUS_FILE_OPEN` | The implicit file handle is open. |
+| 4 | `SD_STATUS_FILE_OPEN` | The slot named by `SD_HANDLE_SELECT` is open. |
 | 5 | `SD_STATUS_DIR_OPEN` | The implicit directory cursor is open. |
-| 6 | `SD_STATUS_EOF` | The last operation reached EOF. |
+| 6 | `SD_STATUS_EOF` | The selected slot's open file is at EOF (or, with no file open on that slot, the last directory-read/load-save-job EOF). |
 | 7 | `SD_STATUS_ERROR` | `SD_LAST_ERROR` is nonzero. |
 
 `SD_CARD_TYPE` values:
@@ -146,6 +147,51 @@ Offsets in this table are relative to `$13000`.
 | `$01` | SD v1 | Standard-capacity SD v1 card. |
 | `$02` | SD v2 | Standard-capacity SD v2 card. |
 | `$03` | SDHC/SDXC | High-capacity card using block addressing. |
+
+## File Handles
+
+MIA holds up to **16 file-handle slots** (`SD_HANDLE_SELECT` values `0`-`15`),
+each with its own open/mode/size/position/EOF state - independent SD/FS
+commands can have several files open at once. There is no allocator: a program
+picks which slot to use for a given file, the same way it already picks a
+BASIC/application-level file number. `FS_OPEN` on a slot that is already open
+fails with `ERROR_FS_HANDLE_ALREADY_OPEN` rather than silently replacing it;
+`SD_HANDLE_SELECT` outside `0`-`15` fails with `ERROR_FS_INVALID_HANDLE`.
+
+Select a slot before any of `FS_OPEN`/`FS_READ`/`FS_WRITE`/`FS_SEEK`/`FS_SYNC`/
+`FS_CLOSE`:
+
+```asm
+lda #IIDX_SD_CONTROL
+sta IDXA_SELECT
+ldx #SD_HANDLE_SELECT
+@skip: lda IDXA_PORT : dex : bne @skip
+lda #2          ; use slot 2
+sta IDXA_PORT
+```
+
+`SD_HANDLE_SELECT` defaults to `0` on reset, so code that never touches it sees
+exactly the single-handle behavior of protocol versions before `5`.
+
+`SD_FILE_HANDLE`, `SD_EOF`, and the `SD_STATUS_FILE_OPEN`/`SD_STATUS_EOF` bits
+always describe whichever slot is currently selected, refreshed whenever any
+SD/FS command completes (even one against a different slot) - so switching
+`SD_HANDLE_SELECT` and then issuing any command is enough to see the newly
+selected slot's own open/EOF state, not a stale value left over from whichever
+slot a previous command touched. `SD_FILE_SIZE`/`SD_FILE_POS`, by contrast,
+only update when a command actually runs *against* the selected slot
+(`FS_OPEN`/`FS_READ`/`FS_WRITE`/`FS_SYNC`/`FS_SEEK`/`FS_CLOSE`) - the same rule
+that applied to the single implicit handle before protocol version `5`.
+
+`FS_CLOSE` closes only the selected slot. It no longer also closes the
+directory cursor (a side effect of the old single-handle design): closing one
+file never disturbs an in-progress `FS_OPENDIR`/`FS_READDIR` listing.
+
+The directory cursor and the whole-file `FS_LOAD_TO_MIA_RAM`/
+`FS_SAVE_FROM_MIA_RAM` jobs are unaffected by `SD_HANDLE_SELECT` - both stay
+singular/self-contained, exactly as before. A load/save job never collides
+with an explicitly open handle: it opens, transfers, and closes its own file
+internally.
 
 ## Directory Entry Buffer
 
@@ -215,19 +261,20 @@ by the command dispatcher; it is not the SD/FS completion event.
 | `FS_MOUNT` | `$78` | none | Mount the FAT filesystem. Also initializes the SD card if needed. |
 | `FS_OPENDIR` | `$79` | path buffer | Open a directory cursor. |
 | `FS_READDIR` | `$7A` | none | Read the next directory entry into the directory buffer. |
-| `FS_OPEN` | `$7B` | path buffer, `SD_OPEN_MODE` | Open one file for reading and/or writing. |
-| `FS_READ` | `$7C` | `SD_REQUEST_LEN` | Read up to `SD_REQUEST_LEN` bytes into the transfer buffer. |
-| `FS_CLOSE` | `$7D` | none | Close the implicit file handle and directory cursor. |
-| `FS_LOAD_TO_MIA_RAM` | `$7E` | path buffer, `SD_DEST_ADDR`, `SD_REQUEST_LEN` | Open a file, load it into MIA RAM, then close it. |
-| `FS_WRITE` | `$7F` | `SD_REQUEST_LEN`, transfer buffer | Write up to `SD_REQUEST_LEN` bytes from the transfer buffer to the open file. |
-| `FS_SYNC` | `$80` | none | Flush the open file's dirty FAT/data sectors to the card. |
-| `FS_SEEK` | `$81` | `SD_FILE_POS` | Seek the open file to `SD_FILE_POS`. |
+| `FS_OPEN` | `$7B` | `SD_HANDLE_SELECT`, path buffer, `SD_OPEN_MODE` | Open one file on the selected slot for reading and/or writing. Fails with `ERROR_FS_HANDLE_ALREADY_OPEN` if that slot is already open. |
+| `FS_READ` | `$7C` | `SD_HANDLE_SELECT`, `SD_REQUEST_LEN` | Read up to `SD_REQUEST_LEN` bytes from the selected slot into the transfer buffer. |
+| `FS_CLOSE` | `$7D` | `SD_HANDLE_SELECT` | Close the selected slot. Does not touch the directory cursor. |
+| `FS_LOAD_TO_MIA_RAM` | `$7E` | path buffer, `SD_DEST_ADDR`, `SD_REQUEST_LEN` | Open a file, load it into MIA RAM, then close it. Uses its own file, independent of any `SD_HANDLE_SELECT` slot. |
+| `FS_WRITE` | `$7F` | `SD_HANDLE_SELECT`, `SD_REQUEST_LEN`, transfer buffer | Write up to `SD_REQUEST_LEN` bytes from the transfer buffer to the selected slot's open file. |
+| `FS_SYNC` | `$80` | `SD_HANDLE_SELECT` | Flush the selected slot's dirty FAT/data sectors to the card. |
+| `FS_SEEK` | `$81` | `SD_HANDLE_SELECT`, `SD_FILE_POS` | Seek the selected slot's open file to `SD_FILE_POS`. |
 | `FS_STAT` | `$82` | path buffer | Fill the directory entry buffer with metadata for one file or directory. |
 | `FS_MKDIR` | `$83` | path buffer | Create one directory. Parent directories must already exist. |
 | `FS_DELETE` | `$84` | path buffer | Delete one file or empty directory. |
 | `FS_RENAME` | `$85` | path buffer, secondary path buffer | Rename or move one file or directory. |
 | `FS_GET_FREE` | `$86` | none | Update free-space fields in the control block. |
 | `FS_SAVE_FROM_MIA_RAM` | `$87` | path buffer, `SD_DEST_ADDR`, `SD_TRANSFER_LEN`, `SD_OPEN_MODE` | Open a file, save bytes from MIA RAM, then close it. |
+| `FS_CHDIR` | `$88` | path buffer | Change the current directory (`f_chdir`). Persists, per mounted volume, until the next `FS_MOUNT` - see the path buffer note below. |
 
 For `FS_READ` and `FS_WRITE`, a `SD_REQUEST_LEN` of zero means the full transfer
 buffer size (`1984` bytes). `SD_RESULT_LEN` contains the actual byte count read
@@ -318,6 +365,8 @@ SD/FS failures are reported through the normal MIA error queue and mirrored in
 | `$84` | `ERROR_FS_DELETE_FAILED` | File or directory delete failed. |
 | `$85` | `ERROR_FS_RENAME_FAILED` | File or directory rename failed. |
 | `$86` | `ERROR_FS_FREE_FAILED` | Free-space query failed. |
+| `$87` | `ERROR_FS_HANDLE_ALREADY_OPEN` | `FS_OPEN` was requested on a slot that is already open. |
+| `$88` | `ERROR_FS_INVALID_HANDLE` | `SD_HANDLE_SELECT` names a slot outside `0`-`15`. |
 
 For filesystem errors, `SD_FATFS_RESULT` contains the raw FatFs result code for
 more detailed diagnosis.
@@ -343,8 +392,9 @@ The USB terminal exposes:
   card-internal erase/program latency.
 - Raw sector write exists for advanced tools, but it bypasses FAT consistency
   checks at the MIA API level.
-- Only one implicit file handle and one implicit directory cursor are exposed to
-  the 6502.
+- Up to 16 concurrent file-handle slots are exposed (`SD_HANDLE_SELECT`), but
+  only one implicit directory cursor. There is no allocator: a program picks
+  which slot to use, same as picking a BASIC/application-level file number.
 - No physical card-detect or write-protect GPIO is wired into MIA yet. Present
   means "initialization succeeded."
 - FAT long filename support comes from the bundled FatFs configuration. Keep

@@ -16,7 +16,15 @@
 #define MIA_FS_TRANSFER_OFFSET 0x13440u
 #define MIA_FS_TRANSFER_SIZE 0x07C0u
 
-#define MIA_SD_VERSION 4u
+#define MIA_SD_VERSION 5u
+
+// Number of concurrent file handles. Each FS_OPEN/FS_READ/FS_WRITE/FS_SEEK/
+// FS_SYNC/FS_CLOSE acts on whichever slot SD_HANDLE_SELECT names (0..N-1);
+// BASIC-visible file numbers map directly onto these slots, one-to-one, with
+// no allocator in between. The directory cursor (FS_OPENDIR/FS_READDIR) and
+// the whole-file load/save jobs are unaffected - both stay singular, as
+// before.
+#define MIA_SD_MAX_HANDLES 16u
 
 #define MIA_SD_CONTROL_VERSION 0x00u
 #define MIA_SD_CONTROL_STATUS 0x01u
@@ -64,6 +72,7 @@
 #define MIA_SD_CONTROL_TRANSFER_LEN1 0x2Bu
 #define MIA_SD_CONTROL_TRANSFER_LEN2 0x2Cu
 #define MIA_SD_CONTROL_TRANSFER_LEN3 0x2Du
+#define MIA_SD_CONTROL_HANDLE_SELECT 0x2Eu
 
 #define MIA_SD_STATUS_PRESENT     (1u << 0)
 #define MIA_SD_STATUS_INITIALIZED (1u << 1)
@@ -129,6 +138,7 @@
 #define MIA_CMD_FS_RENAME 0x85u
 #define MIA_CMD_FS_GET_FREE 0x86u
 #define MIA_CMD_FS_SAVE_FROM_MIA_RAM 0x87u
+#define MIA_CMD_FS_CHDIR 0x88u
 
 void mia_sd_init(void);
 void mia_sd_reset_runtime_state(void);
