@@ -22,6 +22,7 @@
 #define IRQ_SD_DONE              (1u << 11)
 #define IRQ_SD_ERROR             (1u << 12)
 #define IRQ_FS_EVENT             (1u << 13)
+#define IRQ_AUDIO_SEQ_DONE       (1u << 14)   // a sequenced voice reached END with no loop set
 #define IRQ_TRIGGERED            (1u << 15)   // summary bit, maintained by core 1
 
 // IRQ ownership model

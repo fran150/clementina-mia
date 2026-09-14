@@ -177,6 +177,32 @@ void command_audio_reset(uint8_t param[]) {
     mia_audio_reset();
 }
 
+// Background sequencer (TRACK/BAND/VTAKE/VGIVE). Each takes one parameter
+// byte: a voice bitmask, bit v = voice v. See docs/audio-sequencer.md.
+void command_audio_seq_load(uint8_t param[]) {
+    for (uint8_t v = 0; v < MIA_AUDIO_VOICE_COUNT; v++) {
+        if (param[0] & (1u << v)) {
+            mia_audio_seq_load_track(v);
+        }
+    }
+}
+
+void command_audio_seq_start(uint8_t param[]) {
+    mia_audio_seq_start(param[0]);
+}
+
+void command_audio_seq_stop(uint8_t param[]) {
+    mia_audio_seq_stop(param[0]);
+}
+
+void command_audio_voice_take(uint8_t param[]) {
+    mia_audio_voice_take(param[0]);
+}
+
+void command_audio_voice_release(uint8_t param[]) {
+    mia_audio_voice_release(param[0]);
+}
+
 void command_sd_init(uint8_t param[]) {
     UNUSED(param);
 
@@ -377,6 +403,11 @@ void mia_command_init() {
     commands[MIA_CMD_AUDIO_ENABLE] = command_audio_enable;
     commands[MIA_CMD_AUDIO_STOP] = command_audio_stop;
     commands[MIA_CMD_AUDIO_RESET] = command_audio_reset;
+    commands[MIA_CMD_AUDIO_SEQ_LOAD] = command_audio_seq_load;
+    commands[MIA_CMD_AUDIO_SEQ_START] = command_audio_seq_start;
+    commands[MIA_CMD_AUDIO_SEQ_STOP] = command_audio_seq_stop;
+    commands[MIA_CMD_AUDIO_VOICE_TAKE] = command_audio_voice_take;
+    commands[MIA_CMD_AUDIO_VOICE_RELEASE] = command_audio_voice_release;
 
     commands[MIA_CMD_SD_INIT] = command_sd_init;
     commands[MIA_CMD_SD_READ_SECTOR] = command_sd_read_sector;

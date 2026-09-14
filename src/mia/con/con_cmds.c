@@ -514,12 +514,66 @@ static void cmd_input(const char *args) {
     printf("Usage: input [status|console|wifi]\n");
 }
 
+static void cmd_audio_seq(const char *args) {
+    args = skip_ws(args);
+
+    if (!*args || strcmp(args, "status") == 0) {
+        mia_audio_seq_print_status();
+        return;
+    }
+
+    // Every remaining subcommand takes a voice number.
+    const char *rest = args;
+    while (*rest && *rest != ' ') {
+        rest++;
+    }
+    size_t verb_len = (size_t)(rest - args);
+    uint8_t voice;
+
+    if (!parse_u8_arg(skip_ws(rest), &voice) || voice >= MIA_AUDIO_VOICE_COUNT) {
+        printf("Usage: audio seq [status|test|stop|take|give] <voice 0-3>\n");
+        return;
+    }
+    uint8_t mask = (uint8_t)(1u << voice);
+
+    if (verb_len == 4 && strncmp(args, "test", 4) == 0) {
+        mia_audio_seq_write_test_track(voice);
+        mia_audio_seq_load_track(voice);
+        mia_audio_seq_start(mask);
+        if (!mia_audio_is_active()) {
+            mia_audio_enable();
+        }
+        printf("Audio: voice %u playing built-in test arpeggio\n", voice);
+        return;
+    }
+
+    if (verb_len == 4 && strncmp(args, "stop", 4) == 0) {
+        mia_audio_seq_stop(mask);
+        printf("Audio: voice %u sequencer stopped\n", voice);
+        return;
+    }
+
+    if (verb_len == 4 && strncmp(args, "take", 4) == 0) {
+        mia_audio_voice_take(mask);
+        printf("Audio: voice %u taken from the sequencer\n", voice);
+        return;
+    }
+
+    if (verb_len == 4 && strncmp(args, "give", 4) == 0) {
+        mia_audio_voice_release(mask);
+        printf("Audio: voice %u released back to the sequencer\n", voice);
+        return;
+    }
+
+    printf("Usage: audio seq [status|test|stop|take|give] <voice 0-3>\n");
+}
+
 static void cmd_audio(const char *args) {
     args = skip_ws(args);
 
     if (!*args || strcmp(args, "status") == 0) {
         mia_audio_print_status();
-        printf("Usage: audio [status|enable|stop|reset]\n");
+        printf("Usage: audio [status|enable|stop|reset|seq]\n");
         return;
     }
 
@@ -541,7 +595,12 @@ static void cmd_audio(const char *args) {
         return;
     }
 
-    printf("Usage: audio [status|enable|stop|reset]\n");
+    if (strncmp(args, "seq", 3) == 0 && (args[3] == '\0' || args[3] == ' ')) {
+        cmd_audio_seq(skip_ws(args + 3));
+        return;
+    }
+
+    printf("Usage: audio [status|enable|stop|reset|seq]\n");
 }
 
 static void cmd_sd(const char *args) {
@@ -620,7 +679,7 @@ static const con_cmd_t commands[] = {
     { "speed",   cmd_speed,   "speed HZ  — set PHI2 clock frequency"     },
     { "wifi",    cmd_wifi,    "wifi [status|off|connect|ap]"             },
     { "input",   cmd_input,   "input [status|console|wifi]"              },
-    { "audio",   cmd_audio,   "audio [status|enable|stop|reset]"         },
+    { "audio",   cmd_audio,   "audio [status|enable|stop|reset|seq]"     },
     { "sd",      cmd_sd,      "sd [status|init|mount]"                   },
     { "exec",    cmd_exec,    "exec [status|pause|resume]"               },
     { "monitor", cmd_monitor, "Enter 65C02 machine language monitor"     },
