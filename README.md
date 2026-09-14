@@ -15,7 +15,7 @@ The firmware executes most code from flash/XIP while keeping the time-critical P
 
 ## Boot and runtime modes
 
-MIA starts in loader mode. During initialization it writes a tiny 6502 program into the register block and points the reset vector at `$FFE0`. The loader streams `kernel.bin`, embedded at build time as `kernel_data`, into Clementina RAM starting at `$0400`. Once the embedded kernel bytes are consumed, MIA switches to normal mode and sets `MIA_STAT_MASTER_MODE`.
+MIA starts in loader mode. During initialization it writes a tiny 6502 program into the register block and points the reset vector at `$FFE0`. The loader streams `kernel.bin`, embedded at build time as `kernel_data`, into Clementina RAM starting at `$04B7` (right after working RAM; the kernel+WozMon+BASIC image grows upward from there). Once the embedded kernel bytes are consumed, MIA switches to normal mode and sets `MIA_STAT_MASTER_MODE`.
 
 In normal mode, register reads and writes operate as the interface described below. The main loop also services requested `PHI2` speed changes and reset requests.
 
