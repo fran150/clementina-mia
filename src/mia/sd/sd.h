@@ -16,7 +16,7 @@
 #define MIA_FS_TRANSFER_OFFSET 0x13440u
 #define MIA_FS_TRANSFER_SIZE 0x07C0u
 
-#define MIA_SD_VERSION 5u
+#define MIA_SD_VERSION 6u
 
 // Number of concurrent file handles. Each FS_OPEN/FS_READ/FS_WRITE/FS_SEEK/
 // FS_SYNC/FS_CLOSE acts on whichever slot SD_HANDLE_SELECT names (0..N-1);
@@ -139,6 +139,7 @@
 #define MIA_CMD_FS_GET_FREE 0x86u
 #define MIA_CMD_FS_SAVE_FROM_MIA_RAM 0x87u
 #define MIA_CMD_FS_CHDIR 0x88u
+#define MIA_CMD_FS_FILE_INFO 0x89u
 
 void mia_sd_init(void);
 void mia_sd_reset_runtime_state(void);

@@ -94,7 +94,7 @@ Offsets in this table are relative to `$13000`.
 
 | Offset | Name | Access | Description |
 | ---: | --- | --- | --- |
-| `$00` | `SD_VERSION` | read | SD/FS memory layout version. Current value is `5`. |
+| `$00` | `SD_VERSION` | read | SD/FS memory layout version. Current value is `6`. |
 | `$01` | `SD_STATUS` | read | SD/FS status flags. |
 | `$02` | `SD_LAST_ERROR` | read | Last MIA SD/FS error code, or zero. |
 | `$03` | `SD_CARD_TYPE` | read | Card type code. |
@@ -108,7 +108,7 @@ Offsets in this table are relative to `$13000`.
 | `$12` | `SD_FATFS_RESULT` | read | Raw FatFs `FRESULT` code from the last filesystem operation. |
 | `$13` | `SD_FLAGS` | reserved | Write zero. |
 | `$14-$17` | `SD_CARD_SECTORS` | read | Little-endian card capacity in 512-byte sectors, when known. |
-| `$18-$1B` | `SD_FILE_SIZE` | read | Size of the selected slot's open file. Refreshed by `FS_OPEN`/`FS_READ`/`FS_WRITE`/`FS_SYNC`/`FS_SEEK`/`FS_CLOSE` on that slot, not by other commands. |
+| `$18-$1B` | `SD_FILE_SIZE` | read | Size of the selected slot's open file. Refreshed by `FS_OPEN`/`FS_READ`/`FS_WRITE`/`FS_SYNC`/`FS_SEEK`/`FS_CLOSE`/`FS_FILE_INFO` on that slot, not by other commands. |
 | `$1C-$1F` | `SD_FILE_POS` | read/write | Selected slot's file position. Write before `FS_SEEK` to choose the target offset. After `FS_LOAD_TO_MIA_RAM`, this contains the full 32-bit loaded byte count (the load/save jobs use their own file, independent of any slot - see [File Handles](#file-handles)). |
 | `$20-$23` | `SD_FREE_CLUSTERS` | read | Free FAT clusters after `FS_GET_FREE`. |
 | `$24-$27` | `SD_TOTAL_CLUSTERS` | read | Total usable FAT clusters after `FS_GET_FREE`. |
@@ -180,7 +180,7 @@ SD/FS command completes (even one against a different slot) - so switching
 selected slot's own open/EOF state, not a stale value left over from whichever
 slot a previous command touched. `SD_FILE_SIZE`/`SD_FILE_POS`, by contrast,
 only update when a command actually runs *against* the selected slot
-(`FS_OPEN`/`FS_READ`/`FS_WRITE`/`FS_SYNC`/`FS_SEEK`/`FS_CLOSE`) - the same rule
+(`FS_OPEN`/`FS_READ`/`FS_WRITE`/`FS_SYNC`/`FS_SEEK`/`FS_CLOSE`/`FS_FILE_INFO`) - the same rule
 that applied to the single implicit handle before protocol version `5`.
 
 `FS_CLOSE` closes only the selected slot. It no longer also closes the
@@ -401,3 +401,15 @@ The USB terminal exposes:
   filenames ASCII/CP437-safe for predictable 6502 programs.
 - `FS_SYNC`, `FS_CLOSE`, metadata updates, and raw sector writes may still block
   core 0 while the card commits data internally.
+
+## Protocol version 6: selected-file information
+
+FS_FILE_INFO ($89) reads SD_HANDLE_SELECT and refreshes the existing
+32-bit SD_FILE_SIZE and SD_FILE_POS fields for that open slot. It uses
+the normal asynchronous SD request/completion path. Invalid slots and closed
+handles report the existing invalid-handle/no-file-open errors. Results must
+only be consumed after successful completion.
+
+This query does not flush, move the position, or change EOF state. It accesses
+the open FatFs object on Core 0; the Core 1 bus-service loop is unchanged.
+Version 6 retains all existing command IDs and buffer layouts.

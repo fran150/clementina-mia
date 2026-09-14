@@ -249,6 +249,11 @@ void command_fs_write(uint8_t param[]) {
     (void)mia_sd_request(MIA_CMD_FS_WRITE);
 }
 
+void command_fs_file_info(uint8_t param[]) {
+    UNUSED(param);
+    (void)mia_sd_request(MIA_CMD_FS_FILE_INFO);
+}
+
 void command_fs_sync(uint8_t param[]) {
     UNUSED(param);
 
@@ -386,6 +391,7 @@ void mia_command_init() {
     commands[MIA_CMD_FS_LOAD_TO_MIA_RAM] = command_fs_load;
     commands[MIA_CMD_FS_WRITE] = command_fs_write;
     commands[MIA_CMD_FS_SYNC] = command_fs_sync;
+    commands[MIA_CMD_FS_FILE_INFO] = command_fs_file_info;
     commands[MIA_CMD_FS_SEEK] = command_fs_seek;
     commands[MIA_CMD_FS_STAT] = command_fs_stat;
     commands[MIA_CMD_FS_MKDIR] = command_fs_mkdir;

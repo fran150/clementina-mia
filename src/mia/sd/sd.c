@@ -82,6 +82,7 @@ typedef enum {
     sd_request_load = MIA_CMD_FS_LOAD_TO_MIA_RAM,
     sd_request_write = MIA_CMD_FS_WRITE,
     sd_request_sync = MIA_CMD_FS_SYNC,
+    sd_request_file_info = MIA_CMD_FS_FILE_INFO,
     sd_request_seek = MIA_CMD_FS_SEEK,
     sd_request_stat = MIA_CMD_FS_STAT,
     sd_request_mkdir = MIA_CMD_FS_MKDIR,
@@ -540,6 +541,7 @@ bool mia_sd_request(uint8_t command) {
         case MIA_CMD_FS_CLOSE:
         case MIA_CMD_FS_LOAD_TO_MIA_RAM:
         case MIA_CMD_FS_WRITE:
+        case MIA_CMD_FS_FILE_INFO:
         case MIA_CMD_FS_SYNC:
         case MIA_CMD_FS_SEEK:
         case MIA_CMD_FS_STAT:
@@ -1142,6 +1144,26 @@ void mia_sd_service(void) {
             error = ERROR_FS_WRITE_FAILED;
             sd_write_u16(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_RESULT_LEN_L, (uint16_t)bw);
             sd_update_file_position(slot);
+            break;
+        }
+
+        case sd_request_file_info: {
+            uint8_t slot;
+            if (!sd_require_valid_handle(&slot)) {
+                ok = false;
+                error = ERROR_FS_INVALID_HANDLE;
+                fr = FR_INVALID_PARAMETER;
+                break;
+            }
+            if (!sd_file_open[slot]) {
+                ok = false;
+                error = ERROR_FS_NO_FILE_OPEN;
+                fr = FR_INVALID_OBJECT;
+                break;
+            }
+            sd_update_file_position(slot);
+            fr = FR_OK;
+            ok = true;
             break;
         }
 
