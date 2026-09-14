@@ -235,27 +235,44 @@ uint8_t input_decode_key_usage(uint16_t usage_id) {
 // Key auto-repeat. While repeat_usage is held, repeat_byte is re-enqueued into
 // the text FIFO after an initial delay, then at a steady interval, matching a
 // typewriter-style repeat. repeat_usage == 0 means nothing is repeating.
-#define KEY_REPEAT_DELAY_US    400000u // wait before the first repeat
-#define KEY_REPEAT_INTERVAL_US 60000u  // ~16 repeats/sec while held
 
 static uint16_t repeat_usage = 0;
 static uint8_t repeat_byte = 0;
 static uint64_t repeat_deadline_us = 0;
 
+static uint32_t repeat_delay_us = 400000u;
+static uint32_t repeat_interval_us = 60000u;
+static uint8_t repeat_keys[32] = {[5] = 4, [9] = 0x90, [10] = 7};
+
+void mia_input_repeat_reset(void) {
+    repeat_usage = 0;
+    repeat_delay_us = 400000u;
+    repeat_interval_us = 60000u;
+    memset(repeat_keys, 0, sizeof(repeat_keys));
+    repeat_keys[5] = 4;
+    repeat_keys[9] = 0x90;
+    repeat_keys[10] = 7;
+}
+
+void mia_input_repeat_delay(uint16_t ms) {
+    repeat_delay_us = (uint32_t)ms * 1000u;
+    repeat_usage = 0;
+}
+void mia_input_repeat_interval(uint16_t ms) {
+    if (ms == 0) return;
+    repeat_interval_us = (uint32_t)ms * 1000u;
+    repeat_usage = 0;
+}
+void mia_input_repeat_key(uint8_t usage, uint8_t enabled) {
+    if (enabled > 1) return;
+    uint8_t mask = (uint8_t)(1u << (usage & 7));
+    if (enabled) repeat_keys[usage >> 3] |= mask;
+    else repeat_keys[usage >> 3] &= (uint8_t)~mask;
+    if (repeat_usage == usage) repeat_usage = 0;
+}
 bool input_key_repeats(uint16_t usage_id) {
-    // Only the keys where holding is useful repeat (cursor moves and Backspace);
-    // Enter and the other one-shot keys fire once per press.
-    switch (usage_id) {
-    case 0x2Au: // Backspace
-    case 0x4Cu: // Delete (forward)
-    case 0x4Fu: // Right Arrow
-    case 0x50u: // Left Arrow
-    case 0x51u: // Down Arrow
-    case 0x52u: // Up Arrow
-        return true;
-    default:
-        return false;
-    }
+    return repeat_delay_us != 0 && usage_id < 256 &&
+        (repeat_keys[usage_id >> 3] & (1u << (usage_id & 7))) != 0;
 }
 
 static bool input_usage_down(uint16_t usage_id) {
@@ -267,9 +284,10 @@ static bool input_usage_down(uint16_t usage_id) {
 }
 
 void input_repeat_arm(uint16_t usage_id, uint8_t byte) {
+    if (!input_key_repeats(usage_id) || byte == 0) return;
     repeat_usage = usage_id;
     repeat_byte = byte;
-    repeat_deadline_us = time_us_64() + KEY_REPEAT_DELAY_US;
+    repeat_deadline_us = time_us_64() + repeat_delay_us;
 }
 
 void input_repeat_release(uint16_t usage_id) {
@@ -295,7 +313,7 @@ void input_repeat_service(void) {
 
     input_enqueue_text(repeat_byte);
     input_recompute_status();
-    repeat_deadline_us = now + KEY_REPEAT_INTERVAL_US;
+    repeat_deadline_us = now + repeat_interval_us;
 }
 
 void input_set_hid_usage(uint16_t usage_page, uint16_t usage_id, bool down) {

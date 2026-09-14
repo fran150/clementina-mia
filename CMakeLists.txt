@@ -117,6 +117,7 @@ add_executable(mia
     src/mia/sys/led.c
     src/mia/sys/mia.c
     src/mia/sys/reset.c
+    src/mia/sys/timing.c
     src/mia/sys/speed.c
     src/mia/video/video.c
     ${KERNEL_DATA_FILE}   # Add generated kernel data

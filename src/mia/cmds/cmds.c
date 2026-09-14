@@ -12,6 +12,7 @@
 #include "mem/regs.h"
 #include "sd/sd.h"
 #include "sys/exec.h"
+#include "sys/timing.h"
 #include "video/video.h"
 
 #define UNUSED(x) (void)(x)
@@ -127,10 +128,29 @@ void command_exec_pause(uint8_t param[]) {
     mia_exec_pause();
 }
 
+void command_clock_snapshot(uint8_t param[]) {
+    UNUSED(param);
+    mia_timing_snapshot();
+}
+void command_clock_set_ti(uint8_t param[]) {
+    mia_timing_set_ti((uint32_t)param[0] | ((uint32_t)param[1] << 8) |
+        ((uint32_t)param[2] << 16));
+}
+
 void command_input_set_mode(uint8_t param[]) {
     if (!mia_input_set_mode((mia_input_mode_t)param[0])) {
         error_push(ERROR_INPUT_MODE_UNAVAILABLE);
     }
+}
+
+void command_input_repeat_delay(uint8_t param[]) {
+    mia_input_repeat_delay((uint16_t)param[0] | ((uint16_t)param[1] << 8));
+}
+void command_input_repeat_interval(uint8_t param[]) {
+    mia_input_repeat_interval((uint16_t)param[0] | ((uint16_t)param[1] << 8));
+}
+void command_input_repeat_key(uint8_t param[]) {
+    mia_input_repeat_key(param[0], param[1]);
 }
 
 void command_input_set_probe(uint8_t param[]) {
@@ -343,6 +363,11 @@ void mia_command_init() {
 
     commands[0x50] = command_input_set_mode;
     commands[0x51] = command_input_set_probe;
+    commands[0x52] = command_input_repeat_delay;
+    commands[0x53] = command_input_repeat_interval;
+    commands[0x54] = command_input_repeat_key;
+    commands[MIA_CMD_CLOCK_SNAPSHOT] = command_clock_snapshot;
+    commands[MIA_CMD_CLOCK_SET_TI] = command_clock_set_ti;
 
     commands[MIA_CMD_AUDIO_ENABLE] = command_audio_enable;
     commands[MIA_CMD_AUDIO_STOP] = command_audio_stop;

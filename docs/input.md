@@ -224,7 +224,9 @@ video client.
 | `$1105A` | 10 | `GAMEPAD_1` | Gamepad slot 1. |
 | `$11064` | 10 | `GAMEPAD_2` | Gamepad slot 2. |
 | `$1106E` | 10 | `GAMEPAD_3` | Gamepad slot 3. |
-| `$11078` | 8 | reserved | Reads as zero. |
+| `$11078` | 4 | `CLOCK_MS` | Command-latched milliseconds, unsigned little-endian. |
+| `$1107C` | 3 | `CLOCK_TI` | Command-latched 60 Hz ticks, little-endian, modulo 5,184,000. |
+| `$1107F` | 1 | `CLOCK_VERSION` | Snapshot protocol version, 1 after command `$55`. |
 
 The input block occupies `$11000-$1107F`.
 
@@ -473,3 +475,38 @@ Programs that use input IRQs enable `IRQ_INPUT_KEYBOARD`, `IRQ_INPUT_MOUSE`, or
 event bits they care about in the corresponding input event mask byte. The IRQ
 handler reads the detailed event flags, samples the relevant input state, and
 writes the handled bits to the matching event acknowledge byte.
+
+## Configurable keyboard repeat
+
+The 6502 can configure MIA-generated text repeat with these commands. Parameter
+3 is zero. Changes cancel the active repeat; the next eligible key press arms it.
+
+| Command | Parameters | Meaning |
+| --- | --- | --- |
+| `$52` | p1 low, p2 high | Initial delay in milliseconds (1–65535); zero disables repeat. |
+| `$53` | p1 low, p2 high | Interval in milliseconds (1–65535); zero is ignored. |
+| `$54` | p1 usage, p2 enabled | Keyboard usage 0–255 repeat eligibility; enabled must be 0 or 1. Other values are ignored. |
+
+Runtime reset restores 400 ms delay, 60 ms interval, and eligibility for
+Backspace ($2A), Delete ($4C), and arrows ($4F–$52). Eligibility alone does not
+create text: a key event must supply or decode a nonzero text byte. Printable
+text sent as TEXT packets and terminal repeat remain controlled by the client.
+The BASIC interface is `KEYREPEAT delay,interval`, `KEYREPEAT 0`, and
+`KEYRPT usage,enabled`.
+
+## Wall-time clock
+
+Command `$55` (parameters zero) latches an eight-byte snapshot at `$11078`.
+The first four bytes contain milliseconds since runtime reset, modulo 2^32;
+the next three contain TI's 60 Hz counter, modulo 5,184,000 (24 hours); the
+last byte is version 1. Index `$60` covers the snapshot. It is owned by the
+system timer rather than the active input source and remains fixed until the
+next snapshot command or runtime reset. This permits coherent reads at any
+6502 speed without racing a periodic writer.
+
+Command `$56` sets TI from a 24-bit little-endian value in p1/p2/p3. Values at
+or above 5,184,000 are ignored. Setting TI restarts its fractional tick phase
+but leaves milliseconds untouched. The hardware microsecond timer supplies
+both clocks, independently of PHI2 and VIA IRQs. CPU pause and input-source
+changes do not reset the clock; MIA runtime reset resets it. BASIC exposes
+`TI`, `TI=n`, `TICKS(0)`, and `DELAY n`. See `src/mia/sys/timing.h`.

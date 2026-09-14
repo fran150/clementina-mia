@@ -111,6 +111,7 @@ static bool input_mode_available(mia_input_mode_t mode) {
 }
 
 void mia_input_reset_runtime_state(void) {
+    mia_input_repeat_reset();
     input_clear_text_fifo();
     memset(&mem[MIA_INPUT_STATE_OFFSET], 0, MIA_INPUT_STATE_SIZE);
     input_wifi_reset_runtime_state();

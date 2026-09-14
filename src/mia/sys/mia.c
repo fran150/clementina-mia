@@ -28,6 +28,7 @@
 #include "sys/exec.h"
 #include "sys/reset.h"
 #include "sys/speed.h"
+#include "sys/timing.h"
 #include "video/video.h"
 #include "video/video_dirty.h"
 
@@ -134,6 +135,7 @@ void mia_reset_runtime_state(void) {
     // is released from reset, preventing races with VIDEO_ENABLE.
     mia_video_enable();
     mia_input_reset_runtime_state();
+    mia_timing_reset();
     mia_audio_reset_runtime_state();
     mia_sd_reset_runtime_state();
 
@@ -584,6 +586,7 @@ static void mia_enter_normal_mode(void) {
     // the path taken to get here.
     mia_video_enable();
     mia_input_reset_runtime_state();
+    mia_timing_reset();
     mia_audio_reset_runtime_state();
     mia_net_wifi_report_errors();
     mia_video_report_errors();

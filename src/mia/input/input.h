@@ -62,6 +62,11 @@ typedef enum {
     MIA_INPUT_MODE_USB_HOST = 2,
 } mia_input_mode_t;
 
+// CPU commands $52/$53 accept a little-endian millisecond word; $54 a key/flag.
+void mia_input_repeat_reset(void);
+void mia_input_repeat_delay(uint16_t ms);
+void mia_input_repeat_interval(uint16_t ms);
+void mia_input_repeat_key(uint8_t usage, uint8_t enabled);
 void mia_input_init(void);
 void mia_input_reset_runtime_state(void);
 void mia_input_service(void);
