@@ -106,7 +106,7 @@ ISR's worst-case cost.
 
 ## Commands
 
-All four take one parameter byte: a voice bitmask (bit *v* = voice *v*).
+All five take one parameter byte: a voice bitmask (bit *v* = voice *v*).
 There's no "0 means all" special case — the caller always spells out exactly
 which voices it means (`$0F` for every voice, `1<<v` for one).
 

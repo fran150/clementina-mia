@@ -26,6 +26,11 @@ CMD_TRIGGER     = $FFE9
 CMD_AUDIO_ENABLE = $60
 CMD_AUDIO_STOP   = $61
 CMD_AUDIO_RESET  = $62
+CMD_AUDIO_SEQ_LOAD      = $63
+CMD_AUDIO_SEQ_START     = $64
+CMD_AUDIO_SEQ_STOP      = $65
+CMD_AUDIO_VOICE_TAKE    = $66
+CMD_AUDIO_VOICE_RELEASE = $67
 
 IIDX_AUDIO_ALL    = $D0
 IIDX_AUDIO_CH0    = $D1
@@ -33,6 +38,10 @@ IIDX_AUDIO_CH1    = $D2
 IIDX_AUDIO_CH2    = $D3
 IIDX_AUDIO_CH3    = $D4
 IIDX_AUDIO_HEADER = $D5
+IIDX_AUDIO_SEQ0   = $D6   ; voice 0 sequencer status (SEQ_NOTE_INDEX/SEQ_STATUS)
+IIDX_AUDIO_SEQ1   = $D7   ; voice 1
+IIDX_AUDIO_SEQ2   = $D8   ; voice 2
+IIDX_AUDIO_SEQ3   = $D9   ; voice 3
 
 AUDIO_WAVE_SINE     = $00
 AUDIO_WAVE_PULSE    = $01
@@ -48,7 +57,7 @@ AUDIO_RESET_PHASE = %00000010
 AUDIO_MASTER_VOLUME_OFFSET = $01
 ```
 
-Each voice index points at a 16-byte record (offsets 9..15 reserved, write zero):
+Each voice index points at a 16-byte record (offsets 12..15 reserved, write zero):
 
 | Offset | Register |
 | ---: | --- |
@@ -61,6 +70,7 @@ Each voice index points at a 16-byte record (offsets 9..15 reserved, write zero)
 | 6 | `PAN` |
 | 7 | `CONTROL` |
 | 8 | `VOLUME` (linear 0..255, 255 = unity) |
+| 9..11 | live background-sequencer status (read-only from a program's point of view — see [audio-sequencer.md](audio-sequencer.md)) |
 
 ## Enabling Audio
 
@@ -79,7 +89,10 @@ audio_enable:
 
 `AUDIO_ENABLE` synchronizes the live audio engine from the register bytes in MIA
 RAM. `AUDIO_STOP` stops the IRQ and preserves the bytes. `AUDIO_RESET` stops
-audio and clears the audio block back to defaults.
+audio and clears the audio block back to defaults. Five more commands
+(`AUDIO_SEQ_LOAD`/`AUDIO_SEQ_START`/`AUDIO_SEQ_STOP`/`AUDIO_VOICE_TAKE`/
+`AUDIO_VOICE_RELEASE`) drive the background sequencer described in
+[audio-sequencer.md](audio-sequencer.md).
 
 ## Frequency Values
 
@@ -259,3 +272,10 @@ A simple music driver can keep four 9-byte voice shadows in ordinary 6502 RAM:
 This costs nine indexed writes per voice event and keeps timing simple. Step 2
 also re-parks the index at the start of the record, so writing only nine of the
 sixteen bytes each event is fine.
+
+For background music, driving a shadow like this from a 6502 timer IRQ competes
+with everything else the program does. [audio-sequencer.md](audio-sequencer.md)
+describes an alternative that moves that job into MIA entirely: upload a
+pre-resolved event stream per voice once, issue `AUDIO_SEQ_LOAD`/
+`AUDIO_SEQ_START`, and MIA's own audio ISR plays it — the 6502 pays nothing
+per note once it starts.

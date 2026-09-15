@@ -80,7 +80,7 @@ Enabling or resetting audio clears the overflow status bit.
 ### Voice Registers
 
 Each voice is 16 bytes. Offsets in this table are relative to the start of a
-voice record. Offsets `$09-$0F` are reserved for future per-voice controls;
+voice record. Offsets `$0C-$0F` are reserved for future per-voice controls;
 write zero.
 
 | Offset | Name | Description |
@@ -94,7 +94,8 @@ write zero.
 | `$06` | `PAN` | Signed pan. `-64` left, `0` center, `63` right. |
 | `$07` | `CONTROL` | Gate and phase control bits. |
 | `$08` | `VOLUME` | Linear per-voice volume, `0..255`. `255` is unity. Defaults to `255`. |
-| `$09-$0F` | reserved | Write zero. |
+| `$09-$0B` | `SEQ_NOTE_INDEX`/`SEQ_STATUS` | Live background-sequencer status, continuously rewritten by the audio ISR — not a program-writable register. See [audio-sequencer.md](audio-sequencer.md). |
+| `$0C-$0F` | reserved | Write zero. |
 
 Frequency uses `value = frequency_hz * 16`. For example, A4 at 440 Hz is
 `440 * 16 = 7040`, or `$1B80`.
@@ -202,12 +203,18 @@ MIA configures fixed indexes for audio during runtime reset:
 | `$D3` | `$12030-$1203F` | Voice 2. |
 | `$D4` | `$12040-$1204F` | Voice 3. |
 | `$D5` | `$12000-$1200F` | Header. |
+| `$D6` | `$12019-$1201B` | Voice 0 sequencer status (`SEQ_NOTE_INDEX`/`SEQ_STATUS`). |
+| `$D7` | `$12029-$1202B` | Voice 1 sequencer status. |
+| `$D8` | `$12039-$1203B` | Voice 2 sequencer status. |
+| `$D9` | `$12049-$1204B` | Voice 3 sequencer status. |
 
 All audio indexes step on reads and writes and wrap within their configured
 range. Each voice index now spans the full 16-byte record: a program that writes
 only the first nine bytes (`FREQ_L` through `VOLUME`) leaves the index parked
 mid-record, so re-select the voice index (or write all 16 bytes) before the next
-voice event.
+voice event. `$D6-$D9` exist so `PLAYING`/`CUE` (see
+[audio-sequencer.md](audio-sequencer.md)) can poll a voice's sequencer status
+without stepping through the rest of its record first.
 
 ## Commands
 
@@ -218,9 +225,16 @@ Audio commands use the normal MIA command registers.
 | `AUDIO_ENABLE` | `$60` | none | Synchronize voice state from audio RAM and start the PWM audio IRQ. |
 | `AUDIO_STOP` | `$61` | none | Stop the audio IRQ and return PWM outputs to center. Audio RAM is preserved. |
 | `AUDIO_RESET` | `$62` | none | Stop audio, clear the audio RAM block, restore defaults, and reset audio indexes. |
+| `AUDIO_SEQ_LOAD` | `$63` | voice bitmask | (Re)initialize the background sequencer for each masked voice from its track buffer. See [audio-sequencer.md](audio-sequencer.md). |
+| `AUDIO_SEQ_START` | `$64` | voice bitmask | Start/resume the background sequencer for each masked voice. |
+| `AUDIO_SEQ_STOP` | `$65` | voice bitmask | Stop the background sequencer for each masked voice, gating it off. |
+| `AUDIO_VOICE_TAKE` | `$66` | voice bitmask | Freeze each masked voice's sequencer without silencing it, for direct register control. |
+| `AUDIO_VOICE_RELEASE` | `$67` | voice bitmask | Hand each masked voice back to its sequencer, reconciling elapsed time. |
 
 Audio starts stopped after MIA reset. Programs should initialize voice registers
-and issue `AUDIO_ENABLE` before playing notes.
+and issue `AUDIO_ENABLE` before playing notes. The five `AUDIO_SEQ_*`/
+`AUDIO_VOICE_*` commands drive the background sequencer, documented in full in
+[audio-sequencer.md](audio-sequencer.md).
 
 ## Live Updates
 
@@ -246,4 +260,5 @@ The USB terminal exposes:
 | `audio enable` | Start audio from the terminal. |
 | `audio stop` | Stop audio from the terminal. |
 | `audio reset` | Clear and reset the audio subsystem. |
+| `audio seq [status\|test\|stop\|take\|give] <voice 0-3>` | Background sequencer diagnostics — see [audio-sequencer.md](audio-sequencer.md). |
 
