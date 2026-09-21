@@ -7,7 +7,7 @@ The firmware executes most code from flash/XIP while keeping the time-critical P
 ## Hardware role
 
 - Emulates the top 32 bytes of the 6502 address space as MIA registers.
-- Drives `PHI2` from PIO. The MIA default rate is `1 MHz` and can be changed through configuration registers.
+- Drives `PHI2` from PIO. The MIA default rate is `1.2 MHz` and can be changed through configuration registers.
 - Drives active-low `IRQB` when enabled interrupt flags are pending.
 - Drives active-low `RESB` during startup and while the external MIA reset request line is asserted.
 - Uses PIO state machines and DMA to read and write register bytes fast enough for bus cycles.
@@ -366,7 +366,7 @@ Errors are stored in a 16-entry ring buffer. Reading `$FFEC` pulls one error int
 
 The `SPEED_L/M/H` config registers hold the desired 24-bit `PHI2` frequency in Hz. Writes are staged byte by byte; writing `SPEED_H` commits the request. `mia_service()` later clamps the requested value to the supported range, chooses the required Pico system clock, applies the PIO divider to the write/read/action state machines, clears `MIA_STAT_SPEED_CHANGING`, and raises `IRQ_SPEED_CHANGED`. Reading `SPEED_L/M/H` returns the applied frequency after clamping.
 
-The MIA default `PHI2` speed is `1 MHz`.
+The MIA default `PHI2` speed is `1.2 MHz`.
 
 Supported requests are currently clamped to `1 Hz` through `8 MHz`.
 

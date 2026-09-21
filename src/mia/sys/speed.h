@@ -12,8 +12,8 @@
 // Default PHI2 speed requested when MIA starts.
 // The speed module may change clk_sys or clamp this to the closest supported value.
 
-// #define MIA_DEFAULT_PHI2_HZ 1000000u  // MIA default for real hardware.
-#define MIA_DEFAULT_PHI2_HZ 3000u          // Temporary emulator bring-up speed.
+// Matches the emulator's default (miaDefaultPhi2Hz in clementina-6502).
+#define MIA_DEFAULT_PHI2_HZ 1200000u
 
 // Public bounds for requested PHI2 speeds through the SPEED_L/M/H config registers.
 // Values outside this range are clamped before applying the clock.
