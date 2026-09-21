@@ -193,26 +193,28 @@ Both default to full and both accept live updates while audio is active.
 
 ## Indexes
 
-MIA configures fixed indexes for audio during runtime reset:
+MIA configures fixed indexes for audio during runtime reset. They sit at
+`$E6-$EF`, directly after the SD/FS indexes (`$E0-$E5`), and deliberately clear
+of the `$C0-$DF` video OAM sprite indexes:
 
 | Index | Range | Description |
 | ---: | ---: | --- |
-| `$D0` | `$12000-$1204F` | Whole audio block. |
-| `$D1` | `$12010-$1201F` | Voice 0. |
-| `$D2` | `$12020-$1202F` | Voice 1. |
-| `$D3` | `$12030-$1203F` | Voice 2. |
-| `$D4` | `$12040-$1204F` | Voice 3. |
-| `$D5` | `$12000-$1200F` | Header. |
-| `$D6` | `$12019-$1201B` | Voice 0 sequencer status (`SEQ_NOTE_INDEX`/`SEQ_STATUS`). |
-| `$D7` | `$12029-$1202B` | Voice 1 sequencer status. |
-| `$D8` | `$12039-$1203B` | Voice 2 sequencer status. |
-| `$D9` | `$12049-$1204B` | Voice 3 sequencer status. |
+| `$E6` | `$12000-$1204F` | Whole audio block. |
+| `$E7` | `$12010-$1201F` | Voice 0. |
+| `$E8` | `$12020-$1202F` | Voice 1. |
+| `$E9` | `$12030-$1203F` | Voice 2. |
+| `$EA` | `$12040-$1204F` | Voice 3. |
+| `$EB` | `$12000-$1200F` | Header. |
+| `$EC` | `$12019-$1201B` | Voice 0 sequencer status (`SEQ_NOTE_INDEX`/`SEQ_STATUS`). |
+| `$ED` | `$12029-$1202B` | Voice 1 sequencer status. |
+| `$EE` | `$12039-$1203B` | Voice 2 sequencer status. |
+| `$EF` | `$12049-$1204B` | Voice 3 sequencer status. |
 
 All audio indexes step on reads and writes and wrap within their configured
 range. Each voice index now spans the full 16-byte record: a program that writes
 only the first nine bytes (`FREQ_L` through `VOLUME`) leaves the index parked
 mid-record, so re-select the voice index (or write all 16 bytes) before the next
-voice event. `$D6-$D9` exist so `PLAYING`/`CUE` (see
+voice event. `$EC-$EF` exist so `PLAYING`/`CUE` (see
 [audio-sequencer.md](audio-sequencer.md)) can poll a voice's sequencer status
 without stepping through the rest of its record first.
 

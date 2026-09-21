@@ -55,12 +55,16 @@
 #define MIA_AUDIO_MASTER_VOLUME_DEFAULT 0x0Fu
 #define MIA_AUDIO_VOICE_VOLUME_DEFAULT 0xFFu
 
-#define MIA_AUDIO_INDEX_ALL 0xD0u
-#define MIA_AUDIO_INDEX_VOICE0 0xD1u
-#define MIA_AUDIO_INDEX_VOICE1 0xD2u
-#define MIA_AUDIO_INDEX_VOICE2 0xD3u
-#define MIA_AUDIO_INDEX_VOICE3 0xD4u
-#define MIA_AUDIO_INDEX_HEADER 0xD5u
+/* Index IDs $E6-$EF. $E0-$E5 belong to the SD/FS subsystem (sd.h). These must
+ * stay clear of $C0-$DF: video pre-configures that whole range as the 32 direct
+ * OAM sprite indexes, and audio init runs after video init, so any overlap
+ * silently steals sprites from the 6502. */
+#define MIA_AUDIO_INDEX_ALL 0xE6u
+#define MIA_AUDIO_INDEX_VOICE0 0xE7u
+#define MIA_AUDIO_INDEX_VOICE1 0xE8u
+#define MIA_AUDIO_INDEX_VOICE2 0xE9u
+#define MIA_AUDIO_INDEX_VOICE3 0xEAu
+#define MIA_AUDIO_INDEX_HEADER 0xEBu
 
 #define MIA_CMD_AUDIO_ENABLE 0x60u
 #define MIA_CMD_AUDIO_STOP 0x61u
@@ -110,10 +114,13 @@
 
 // Dedicated indexes parked at voice offset $09, so a status poll doesn't have
 // to step through the rest of the record first.
-#define MIA_AUDIO_INDEX_SEQ_VOICE0 0xD6u
-#define MIA_AUDIO_INDEX_SEQ_VOICE1 0xD7u
-#define MIA_AUDIO_INDEX_SEQ_VOICE2 0xD8u
-#define MIA_AUDIO_INDEX_SEQ_VOICE3 0xD9u
+#define MIA_AUDIO_INDEX_SEQ_VOICE0 0xECu
+#define MIA_AUDIO_INDEX_SEQ_VOICE1 0xEDu
+#define MIA_AUDIO_INDEX_SEQ_VOICE2 0xEEu
+#define MIA_AUDIO_INDEX_SEQ_VOICE3 0xEFu
+
+_Static_assert(MIA_AUDIO_INDEX_ALL > 0xDFu,
+               "audio indexes must not overlap the $C0-$DF video OAM sprite indexes");
 
 // Commands. Each takes one parameter byte: a voice bitmask (bit v = voice
 // v). There is no "0 means all" case - callers always spell out the mask.

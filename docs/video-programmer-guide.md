@@ -286,7 +286,9 @@ after a read or write and wraps at its limit.
 | `$B9` | `VIDX_OVERLAY_ATTR` | `$10468-$1084F` | 1,000 | stream overlay attributes |
 | `$BA-$BF` | reserved video indexes | - | - | reserved |
 | `$C0-$DF` | `VIDX_OAM_SPRITE_0-31` | `$10850 + n * 5` | 5 | stream one OAM sprite record |
-| `$E0-$FF` | reserved video indexes | - | - | reserved |
+| `$E0-$E5` | SD/FS indexes (not video) | - | - | see [sd.md](sd.md) |
+| `$E6-$EF` | audio indexes (not video) | - | - | see [audio.md](audio.md) |
+| `$F0-$FF` | unassigned | - | - | reserved |
 
 These indexes are the normal path for frequently changed video fields. The
 default OAM sprite indexes cover the first 32 sprite records. Programs that

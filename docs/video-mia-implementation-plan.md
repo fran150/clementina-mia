@@ -187,7 +187,9 @@ Do not implement `VIDEO_COMMIT_FRAME`; it belongs to the older protocol model.
 | `$B9` | `$10468-$1084F` | 1,000 |
 | `$BA-$BF` | reserved video indexes | - |
 | `$C0-$DF` | OAM sprite records, `$10850 + n * 5` | 5 each |
-| `$E0-$FF` | reserved video indexes | - |
+| `$E0-$E5` | SD/FS indexes (not video) | - |
+| `$E6-$EF` | audio indexes (not video) | - |
+| `$F0-$FF` | unassigned | - |
 
 All video indexes should use forward step-on-read, forward step-on-write, and
 wrap. Video lifecycle status is read through the normal `MIA_STATUS` register,

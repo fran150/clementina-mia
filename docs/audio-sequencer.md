@@ -203,10 +203,10 @@ default so a poll doesn't need to step through the rest of the record first:
 
 | Index | Range |
 | ---: | --- |
-| `$D6` | Voice 0 offsets `$12019-$1201B` |
-| `$D7` | Voice 1 offsets `$12029-$1202B` |
-| `$D8` | Voice 2 offsets `$12039-$1203B` |
-| `$D9` | Voice 3 offsets `$12049-$1204B` |
+| `$EC` | Voice 0 offsets `$12019-$1201B` |
+| `$ED` | Voice 1 offsets `$12029-$1202B` |
+| `$EE` | Voice 2 offsets `$12039-$1203B` |
+| `$EF` | Voice 3 offsets `$12049-$1204B` |
 
 ## Signaling completion
 
