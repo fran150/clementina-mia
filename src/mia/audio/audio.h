@@ -75,25 +75,29 @@
 // docs/audio-sequencer.md for the full contract.
 // ---------------------------------------------------------------------------
 
-// Track buffers live outside both the syncable video region ($00020-$10D4F)
-// and the audio register block ($12000-$1204F), so loading or playing a
-// track never dirties a video page and never collides with live registers.
-#define MIA_SEQ_TRACK_SIZE 0x400u   // 1024 bytes per voice
-#define MIA_SEQ_STATE_OFFSET 0x13000u
-#define MIA_SEQ_STATE_SIZE (MIA_AUDIO_VOICE_COUNT * MIA_SEQ_TRACK_SIZE)
-#define MIA_SEQ_TRACK_OFFSET(voice) (MIA_SEQ_STATE_OFFSET + (voice) * MIA_SEQ_TRACK_SIZE)
-
-// Each voice's track buffer starts with a small header, then its event
-// stream. LOOP is little-endian, relative to the event stream itself.
-#define MIA_SEQ_TRACK_HEADER_SIZE 4u
-#define MIA_SEQ_TRACK_LOOP_L 0x00u
-#define MIA_SEQ_TRACK_LOOP_H 0x01u
-#define MIA_SEQ_TRACK_EVENTS_OFFSET MIA_SEQ_TRACK_HEADER_SIZE
-#define MIA_SEQ_NO_LOOP 0xFFFFu
+// A voice's track is just bytes in MIA RAM, decoded live from wherever its
+// track_base points until an END or a run off the top of RAM stops it -
+// there is no per-track length and no header. track_base is fully
+// caller-defined via AUDIO_SEQ_SET_BASE<voice>; these constants only seed
+// the pre-configuration default (see mia_audio_reset_runtime_state), so a
+// direct AUDIO_SEQ_LOAD/START without ever calling SET_BASE still works.
+//
+// $14000-$17FFF: the old default ($13000-$13FFF, inherited from the
+// original fixed 1024-byte-per-voice layout) silently overlapped live SD/FS
+// state at $13000-$13BFF (control block, dir-entry buffer, transfer buffer -
+// see docs/sd.md) for 3 of the 4 voices. This range is unclaimed by any
+// other subsystem (video sync ends at $10D4F, input/clock at $1107F, the
+// audio register block at $1204F, SD/FS at $13BFF) and gives each voice 4x
+// the old space, comfortably inside the ~176 KiB ($14000-$3FFFF) that's
+// otherwise entirely free.
+#define MIA_SEQ_DEFAULT_TRACK_SPACING 0x1000u
+#define MIA_SEQ_DEFAULT_BASE_OFFSET 0x14000u
+#define MIA_SEQ_DEFAULT_BASE(voice) (MIA_SEQ_DEFAULT_BASE_OFFSET + (voice) * MIA_SEQ_DEFAULT_TRACK_SPACING)
+#define MIA_SEQ_DEFAULT_REGION_SIZE (MIA_AUDIO_VOICE_COUNT * MIA_SEQ_DEFAULT_TRACK_SPACING)
 
 // Event opcodes. NOTE/REST durations are 24-bit little-endian sample counts,
 // resolved once at encode time - MIA never interprets tempo or note names.
-#define MIA_SEQ_OP_END       0x00u   // stop, or loop to LOOP if set
+#define MIA_SEQ_OP_END       0x00u   // stop
 #define MIA_SEQ_OP_NOTE      0x01u   // freq_l, freq_h, dur_l, dur_m, dur_h
 #define MIA_SEQ_OP_REST      0x02u   // dur_l, dur_m, dur_h
 #define MIA_SEQ_OP_SET_WAVE  0x03u   // waveform
@@ -101,6 +105,14 @@
 #define MIA_SEQ_OP_SET_PAN   0x05u   // pan
 #define MIA_SEQ_OP_SET_VOL   0x06u   // volume
 #define MIA_SEQ_OP_SET_PULSE 0x07u   // pulse_width
+// JUMP: offset_l, offset_m, offset_h - a signed 24-bit little-endian offset,
+// relative to the address of the byte immediately after this 4-byte record
+// (self-relative, like a branch, not relative to track_base), so a track
+// keeps working unchanged if its base is relocated. Zero-duration - decoding
+// continues immediately at the new cursor, and it does not advance
+// note_index. "Loop the whole track" is just a JUMP back to the top; there
+// is no separate loop opcode or header field.
+#define MIA_SEQ_OP_JUMP      0x08u
 
 // Live sequencer status, read through the existing per-voice audio index.
 // These reuse voice-record offsets $09-$0B, documented elsewhere as
@@ -129,11 +141,28 @@ _Static_assert(MIA_AUDIO_INDEX_ALL > 0xDFu,
 #define MIA_CMD_AUDIO_SEQ_STOP      0x65u
 #define MIA_CMD_AUDIO_VOICE_TAKE    0x66u
 #define MIA_CMD_AUDIO_VOICE_RELEASE 0x67u
+// AUDIO_SEQ_SET_BASE<voice>: one command id per voice (a base address is
+// necessarily distinct per voice, unlike the other commands' shared
+// bitmask), each taking a 3-byte little-endian MIA RAM address as its
+// parameter. Sets that voice's track_base only; does not itself move
+// cursor/note_index - follow with AUDIO_SEQ_LOAD to (re)start decoding from
+// the new base.
+#define MIA_CMD_AUDIO_SEQ_SET_BASE0 0x68u
+#define MIA_CMD_AUDIO_SEQ_SET_BASE1 0x69u
+#define MIA_CMD_AUDIO_SEQ_SET_BASE2 0x6Au
+#define MIA_CMD_AUDIO_SEQ_SET_BASE3 0x6Bu
 
 // Max events silently skipped per audio tick while reconciling a
 // VOICE_RELEASE, so a long TAKE resolves over a few extra ticks instead of
 // doing unbounded work inside one sample.
 #define MIA_SEQ_CATCHUP_BUDGET 8u
+
+// Max zero-duration opcodes (SET_*/JUMP) decoded in a row within a single
+// audio_seq_advance() call before it gives up and stops the voice. Without
+// this, a track whose JUMPs form a cycle with no NOTE/REST/END in between
+// would spin the shared audio ISR forever on one sample - fail-safe, silent,
+// exactly like an unrecognized opcode byte.
+#define MIA_SEQ_DECODE_BUDGET 32u
 
 void mia_audio_init(void);
 void mia_audio_reset_runtime_state(void);
@@ -149,6 +178,7 @@ bool mia_audio_is_active(void);
 void mia_audio_print_summary(void);
 void mia_audio_print_status(void);
 
+void mia_audio_seq_set_base(uint8_t voice, uint32_t base);
 void mia_audio_seq_load_track(uint8_t voice);
 void mia_audio_seq_start(uint8_t voice_mask);
 void mia_audio_seq_stop(uint8_t voice_mask);

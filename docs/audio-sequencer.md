@@ -29,30 +29,36 @@ else the program is doing. This engine moves that job entirely into MIA:
 
 ## Memory layout
 
-Track buffers live outside both the syncable video region (`$00020-$10D4F`)
-and the audio register block (`$12000-$1204F`), for the same reason audio
-itself does: writes there must never dirty a video page or disturb live voice
-registers.
+A track has no declared length and no header: it is just bytes at some
+`track_base`, decoded live from `mem[]` until an `END`, an unrecognized byte,
+or a cursor that runs off the top of MIA RAM stops it. `track_base` is set
+per voice by `AUDIO_SEQ_SET_BASE<voice>` (see Commands) and can point
+anywhere in MIA RAM — there is no per-track size limit to outgrow, and no
+reserved carve-out protecting it from other regions by construction the way
+the old fixed layout did. The caller is responsible for picking a base that
+doesn't collide with the syncable video region (`$00020-$10D4F`), input/clock
+state (`$11000-$1107F`), the audio register block (`$12000-$1204F`), SD/FS
+state (`$13000-$13BFF` — control block, sector/path/dir/transfer buffers, see
+`sd.md`), or another voice's own track. `$14000-$3FFFF` (~176 KiB) is
+otherwise entirely unclaimed and the natural place to put a large or
+many-voice song.
 
-| Range | Size | Description |
-| ---: | ---: | --- |
-| `$13000-$133FF` | 1024 | Voice 0 track buffer |
-| `$13400-$137FF` | 1024 | Voice 1 track buffer |
-| `$13800-$13BFF` | 1024 | Voice 2 track buffer |
-| `$13C00-$13FFF` | 1024 | Voice 3 track buffer |
+Before any `AUDIO_SEQ_SET_BASE<voice>` is issued, `track_base` defaults to a
+per-voice address in that free range, so a direct `AUDIO_SEQ_LOAD`/`SEQ_START`
+(e.g. the terminal's built-in test track) keeps working unconfigured:
 
-Each voice's buffer holds a 4-byte header followed by its event stream:
+| Range | Description |
+| ---: | --- |
+| `$14000` | Voice 0 default track base |
+| `$15000` | Voice 1 default track base |
+| `$16000` | Voice 2 default track base |
+| `$17000` | Voice 3 default track base |
 
-| Offset | Size | Name | Description |
-| ---: | ---: | --- | --- |
-| `$00-$01` | 2 | `LOOP` | Little-endian offset, relative to the event stream (byte `$04` of the buffer), to resume at when `END` is reached. `$FFFF` means "no loop — stop." |
-| `$02-$03` | 2 | reserved | Write zero. |
-| `$04...` | — | events | The event stream, decoded from the top on `SEQ_START`. |
-
-A 1024-byte buffer is generous for hundreds of events; nothing about the
-design requires that exact size, it's just comfortably larger than any
-reasonable background part while costing a rounding error against MIA's
-256 KiB (4 KiB total for all four voices).
+(Earlier revisions of this design defaulted to `$13000-$13FFF`, inherited
+from the original fixed 1024-byte-per-voice layout. That silently overlapped
+live SD/FS state for 3 of the 4 voices — voice 0 aliased the SD/FS control
+block, voice 1 the FS dir-entry buffer, voice 2 the FS transfer buffer; only
+voice 3 was ever actually clean. The defaults moved here to fix that.)
 
 ## Event stream
 
@@ -63,7 +69,7 @@ the source tempo/length, never recomputed by MIA.
 
 | Opcode | Value | Payload | Effect |
 | --- | ---: | --- | --- |
-| `END` | `$00` | — | Stop, or jump to `LOOP` if it isn't `$FFFF`. |
+| `END` | `$00` | — | Stop. |
 | `NOTE` | `$01` | `freq_l, freq_h, dur_l, dur_m, dur_h` | Write `FREQ_L`/`FREQ_H`, gate on with phase reset, hold for `dur` samples. Advances the note index. |
 | `REST` | `$02` | `dur_l, dur_m, dur_h` | Gate off, hold for `dur` samples. Advances the note index. |
 | `SET_WAVE` | `$03` | `waveform` | Write `WAVEFORM`. Zero-duration; decoding continues immediately to the next opcode. |
@@ -71,6 +77,7 @@ the source tempo/length, never recomputed by MIA.
 | `SET_PAN` | `$05` | `pan` | Write `PAN`. Zero-duration. |
 | `SET_VOL` | `$06` | `volume` | Write per-voice `VOLUME`. Zero-duration. |
 | `SET_PULSE` | `$07` | `pulse_width` | Write `PULSE_WIDTH`. Zero-duration. |
+| `JUMP` | `$08` | `offset_l, offset_m, offset_h` | Set cursor to (address right after this record) + `offset`, a **signed 24-bit little-endian** value. Zero-duration; does not advance the note index. |
 
 Every register write an event makes goes through the exact same
 `audio_apply_register` path a live 6502 write already uses (mirrored into
@@ -79,9 +86,43 @@ are not reimplemented — the sequencer is just another producer feeding the
 same internal voice state live writes already feed.
 
 `NOTE`/`REST` are the only opcodes that advance the **note index** (see
-below) and consume time; the `SET_*` opcodes are configuration and are
+below) and consume time; `SET_*` and `JUMP` are all zero-duration and are
 decoded and applied within the same tick, with no delay before the next
 opcode, precisely so inserting one never shifts note numbering.
+
+### Looping, and why there is no `LOOP` opcode
+
+"Loop the whole track" (or loop just a repeating body after a non-repeating
+intro) is simply a `JUMP` placed wherever playback should return to — there
+is no separate loop opcode or header field. `JUMP`'s offset is **self-relative**
+(relative to the byte right after its own record, not to `track_base`), the
+same way a branch instruction is relative to the next instruction: this makes
+a track's internal jumps invariant under relocation, so moving a track to a
+different `track_base` via `AUDIO_SEQ_SET_BASE<voice>` never requires
+rewriting anything inside it.
+
+One consequence: the note index (`SEQ_NOTE_INDEX`, backing `CUE(v)`) is not
+reset when a `JUMP` is taken — it simply keeps counting notes/rests across
+however many passes the track has looped, unlike the old header-based `LOOP`
+field, which restored a cached index on every wrap. A composer wanting
+"position within the repeating body" computes it themselves (e.g. `CUE(v) MOD`
+the body's note count) if the track loops; a composer using `CUE` to catch a
+one-time transition (the common case — see `basic-sound.md`'s `CUE` example)
+is unaffected either way. A track that loops indefinitely for long enough
+(65536 notes/rests) will wrap `SEQ_NOTE_INDEX` back through `0`.
+
+### Runaway-jump safety: `MIA_SEQ_DECODE_BUDGET`
+
+Because `JUMP`/`SET_*` are zero-duration and decoding loops straight back for
+the next opcode without returning, a track whose jumps form a cycle with no
+`NOTE`/`REST`/`END` in between would otherwise spin the shared audio ISR
+forever on a single sample. `audio_seq_advance` bounds this to
+`MIA_SEQ_DECODE_BUDGET` (32) opcodes per call; exceeding it without reaching
+a time-consuming or stopping opcode is treated as a malformed track and stops
+it — fail-safe and silent, the same philosophy as an unrecognized opcode
+byte. (`audio_seq_catchup_step`'s existing `MIA_SEQ_CATCHUP_BUDGET` loop
+already bounds this the same way, incidentally, since it decrements its
+budget once per opcode touched regardless of kind.)
 
 ## Runtime state (Core 0 only)
 
@@ -91,11 +132,11 @@ Per voice, alongside the existing oscillator/envelope state:
 | --- | --- |
 | `running` | Set by `SEQ_START`, cleared by `SEQ_STOP`. Gates whether the voice's event stream advances at all. |
 | `taken` | Set by `VOICE_TAKE`, cleared by `VOICE_RELEASE`. While set, the stream doesn't advance, but nothing is silenced — the caller is driving registers directly. |
+| `track_base` | Set by `AUDIO_SEQ_SET_BASE<voice>`; defaults to this voice's legacy address (see Memory layout) until then. Where `AUDIO_SEQ_LOAD` resets `cursor` to. |
 | `cursor` | Absolute MIA RAM offset of the event currently active. |
 | `countdown` | Samples remaining until the current event ends. |
 | `event_duration` | Full original duration of the current event (needed to reconcile a `VOICE_RELEASE`, see below). |
-| `note_index` | 1-based index of the current note/rest within the *current pass* of the track. `0` means never started. |
-| `loop_offset` / `loop_note_index` | Cached from the track header at `SEQ_START`/on load: where to jump back to, and what note index to restore, when `END` is reached. |
+| `note_index` | Count of notes/rests decoded so far since this voice was last loaded. `0` means never started; not reset by `JUMP` (see Looping above). |
 
 All of this is decoded and applied inside the audio ISR, at the top of each
 sample, before the oscillator/envelope pass — the same point live-write queue
@@ -106,14 +147,14 @@ ISR's worst-case cost.
 
 ## Commands
 
-All five take one parameter byte: a voice bitmask (bit *v* = voice *v*).
-There's no "0 means all" special case — the caller always spells out exactly
-which voices it means (`$0F` for every voice, `1<<v` for one).
+The first five take one parameter byte: a voice bitmask (bit *v* = voice
+*v*). There's no "0 means all" special case — the caller always spells out
+exactly which voices it means (`$0F` for every voice, `1<<v` for one).
 
 | Command | Id | Effect |
 | --- | ---: | --- |
-| `AUDIO_SEQ_LOAD` | `$63` | For each masked voice: (re)initializes `cursor` to the top of its event stream and `note_index` to `0`, and caches `LOOP` from the buffer header. Does **not** start playback. Issued once by `TRACK v, s$` right after the bytes land in MIA RAM. |
-| `AUDIO_SEQ_START` | `$64` | For each masked voice: if it has a loaded track and isn't already running, starts it from wherever `cursor`/`note_index` currently sit — `$00` right after a `SEQ_LOAD`, or exactly where it was frozen by a prior `SEQ_STOP`. No time is reconciled; this is a plain resume. |
+| `AUDIO_SEQ_LOAD` | `$63` | For each masked voice: (re)initializes `cursor` to `track_base` and `note_index` to `0`. Does **not** start playback. Issued once by `TRACK v, s$` right after the bytes land in MIA RAM. |
+| `AUDIO_SEQ_START` | `$64` | For each masked voice: if it has a loaded track and isn't already running, starts it from wherever `cursor`/`note_index` currently sit — `track_base` right after a `SEQ_LOAD`, or exactly where it was frozen by a prior `SEQ_STOP`. No time is reconciled; this is a plain resume. |
 | `AUDIO_SEQ_STOP` | `$65` | For each masked voice: stops advancing its stream and gates it off (silences it). `cursor`/`note_index` are left exactly where they are, so a later `SEQ_START` picks up from there. |
 | `AUDIO_VOICE_TAKE` | `$66` | For each masked voice: stops advancing its stream **without** touching its registers — whatever it was doing keeps sounding until the caller's own writes land. Records the current sample clock for `VOICE_RELEASE` to reconcile against. |
 | `AUDIO_VOICE_RELEASE` | `$67` | For each masked voice: resumes, reconciling for however much time passed while taken (see Catch-up below). |
@@ -122,15 +163,28 @@ which voices it means (`$0F` for every voice, `1<<v` for one).
 `1<<v`) at the BASIC layer identically — a global stop is just a stop of
 every voice. `VOICE_TAKE`/`VOICE_RELEASE` back `VTAKE v`/`VGIVE v`.
 
+`AUDIO_SEQ_SET_BASE<voice>` is one command id per voice rather than a shared
+bitmask, since a base address is necessarily distinct per voice:
+
+| Command | Id | Effect |
+| --- | ---: | --- |
+| `AUDIO_SEQ_SET_BASE0` | `$68` | Sets voice 0's `track_base` to the 24-bit little-endian address in params 0-2. |
+| `AUDIO_SEQ_SET_BASE1` | `$69` | Same, voice 1. |
+| `AUDIO_SEQ_SET_BASE2` | `$6A` | Same, voice 2. |
+| `AUDIO_SEQ_SET_BASE3` | `$6B` | Same, voice 3. |
+
+Sets `track_base` only — it does not itself move `cursor`/`note_index`;
+follow with `AUDIO_SEQ_LOAD` to (re)start decoding from the new base.
+
 ## Loading a track
 
 There's no separate "upload" command: a track is just bytes in MIA RAM,
 written the same way any other MIA memory is written from the 6502 — through
-an index descriptor. `TRACK v, s$` on the BASIC side encodes the string to
-this format and writes it through the existing indexed-RAM path (a bulk DMA
-copy from a staging area, the same mechanism `BLOAD`/`BSAVE` already use, is
-the natural choice for anything past a few bytes). Loading a track resets
-that voice's `cursor` to the top of its event stream and `note_index` to `0`
+an index descriptor. `TRACK v, s$[, addr%]` on the BASIC side encodes the
+string to this format and writes it starting at `addr%` if given, or the
+default per-voice address otherwise (see Memory layout), issuing
+`AUDIO_SEQ_SET_BASE<voice>` first when an explicit address is given. Loading
+a track resets that voice's `cursor` to `track_base` and `note_index` to `0`
 — it does not itself start playback; that's what `SEQ_START` is for. This is
 what lets `TRACK` + wait-for-a-`CUE`-value + `SEQ_START` compose into "swap
 this voice's part in exactly on beat."
@@ -165,7 +219,7 @@ else:
     advance cursor to the next event
     while budget covers the next event's full duration:
         subtract it from budget, advance the note index and cursor
-        (wrapping via LOOP if an END is crossed)
+        (following any JUMP crossed along the way)
     decode and apply the first event budget doesn't fully cover, in full, live
 ```
 
@@ -190,7 +244,7 @@ rewritten by the audio ISR every sample:
 
 | Voice offset | Name | Description |
 | ---: | --- | --- |
-| `$09-$0A` | `SEQ_NOTE_INDEX` | Little-endian, 1-based index of the current note/rest within the current pass of the loop. `0` = never started. Backs `CUE(v)`. |
+| `$09-$0A` | `SEQ_NOTE_INDEX` | Little-endian count of notes/rests decoded since the track was last loaded, not reset by `JUMP` (see Looping above). `0` = never started. Backs `CUE(v)`. |
 | `$0B` | `SEQ_STATUS` | Bit 0: `running`. Bit 1: `taken`. Backs `PLAYING(v)`. |
 
 A program that writes all 16 bytes of a voice record (per the programmer's
@@ -211,8 +265,9 @@ default so a poll doesn't need to step through the rest of the record first:
 ## Signaling completion
 
 Bit 14 of `irq_status` (previously unused — see `irq/irq.h`) is
-`IRQ_AUDIO_SEQ_DONE`, raised when a voice's track reaches `END` with no loop
-set. This mirrors the existing `IRQ_COMMAND`/`IRQ_SD_DONE` pattern: producers
+`IRQ_AUDIO_SEQ_DONE`, raised when a voice's track reaches `END` (or an
+unrecognized opcode, or a decode/catch-up budget is exhausted). This mirrors
+the existing `IRQ_COMMAND`/`IRQ_SD_DONE` pattern: producers
 across any core or interrupt context set it via the existing
 `mia_irq_set_flag` accumulator, and Core 1's `act_loop` folds it into
 `irq_status` on its next pass, same as every other source.
@@ -220,7 +275,8 @@ across any core or interrupt context set it via the existing
 ## Errors
 
 No new error codes. A malformed or corrupt track is handled by treating an
-out-of-bounds cursor as an implicit `END` (stop, no loop) rather than reading
-past the voice's 1024-byte buffer — fail-safe, silent, consistent with how a
-malformed background `PLAY` string already fails silently today rather than
-raising a BASIC error from inside an interrupt context.
+out-of-bounds cursor (past the top of MIA RAM), an unrecognized opcode byte,
+or an exhausted decode/catch-up budget (a runaway `JUMP` cycle) all as an
+implicit `END` — fail-safe, silent, consistent with how a malformed
+background `PLAY` string already fails silently today rather than raising a
+BASIC error from inside an interrupt context.

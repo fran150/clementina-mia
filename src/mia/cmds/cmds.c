@@ -203,6 +203,30 @@ void command_audio_voice_release(uint8_t param[]) {
     mia_audio_voice_release(param[0]);
 }
 
+// AUDIO_SEQ_SET_BASE<voice>: param[0..2] = 24-bit little-endian MIA RAM
+// address, this voice's new track_base. One command id per voice, since a
+// base address (unlike the other sequencer commands) is necessarily
+// distinct per voice rather than a shared bitmask.
+static uint32_t command_audio_seq_base_from_param(uint8_t param[]) {
+    return (uint32_t)param[0] | (uint32_t)param[1] << 8 | (uint32_t)param[2] << 16;
+}
+
+void command_audio_seq_set_base0(uint8_t param[]) {
+    mia_audio_seq_set_base(0, command_audio_seq_base_from_param(param));
+}
+
+void command_audio_seq_set_base1(uint8_t param[]) {
+    mia_audio_seq_set_base(1, command_audio_seq_base_from_param(param));
+}
+
+void command_audio_seq_set_base2(uint8_t param[]) {
+    mia_audio_seq_set_base(2, command_audio_seq_base_from_param(param));
+}
+
+void command_audio_seq_set_base3(uint8_t param[]) {
+    mia_audio_seq_set_base(3, command_audio_seq_base_from_param(param));
+}
+
 void command_sd_init(uint8_t param[]) {
     UNUSED(param);
 
@@ -408,6 +432,10 @@ void mia_command_init() {
     commands[MIA_CMD_AUDIO_SEQ_STOP] = command_audio_seq_stop;
     commands[MIA_CMD_AUDIO_VOICE_TAKE] = command_audio_voice_take;
     commands[MIA_CMD_AUDIO_VOICE_RELEASE] = command_audio_voice_release;
+    commands[MIA_CMD_AUDIO_SEQ_SET_BASE0] = command_audio_seq_set_base0;
+    commands[MIA_CMD_AUDIO_SEQ_SET_BASE1] = command_audio_seq_set_base1;
+    commands[MIA_CMD_AUDIO_SEQ_SET_BASE2] = command_audio_seq_set_base2;
+    commands[MIA_CMD_AUDIO_SEQ_SET_BASE3] = command_audio_seq_set_base3;
 
     commands[MIA_CMD_SD_INIT] = command_sd_init;
     commands[MIA_CMD_SD_READ_SECTOR] = command_sd_read_sector;

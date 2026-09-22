@@ -71,6 +71,12 @@ initialization successfully; they are not live socket-switch state.
 
 SD and filesystem state lives in MIA RAM at `$13000-$13BFF`. It is outside the
 syncable video region, so normal SD/FS control writes do not dirty video pages.
+(This range used to also be the background audio sequencer's default
+per-voice track region for 3 of its 4 voices — a pre-existing overlap fixed
+by relocating those defaults to `$14000-$17FFF`; see
+[audio-sequencer.md](audio-sequencer.md#memory-layout). A program that
+explicitly places a track here via `AUDIO_SEQ_SET_BASE<voice>` would still
+collide with live SD/FS state.)
 
 | Range | Size | Description |
 | ---: | ---: | --- |

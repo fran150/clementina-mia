@@ -78,14 +78,12 @@ typedef struct {
     bool running;              // SEQ_START issued, not yet SEQ_STOP'd
     bool taken;                // VOICE_TAKE issued, not yet VOICE_RELEASE'd
     bool catching_up;          // VOICE_RELEASE is silently skipping past elapsed events
-    bool has_loop;             // track header named a loop point
+    uint32_t track_base;       // this voice's track base, set by AUDIO_SEQ_SET_BASE<voice>
     uint32_t cursor;           // absolute MIA RAM offset of the current event
     uint32_t countdown;        // samples remaining until the current event ends
     uint32_t event_duration;   // full duration of the current event (0 for none yet)
     uint32_t catchup_remaining;// samples still to silently skip during catch-up
     uint32_t taken_at;         // audio_seq_clock snapshot when VOICE_TAKE was issued
-    uint32_t loop_cursor;      // absolute offset to jump to on END, if has_loop
-    uint16_t loop_note_index;  // note index to restore to when looping
     uint16_t note_index;       // 1-based index of the current note/rest; 0 = not started
 } audio_seq_t;
 
@@ -483,12 +481,24 @@ static uint8_t audio_seq_record_size(uint8_t op) {
         case MIA_SEQ_OP_SET_PAN:   return 2u;
         case MIA_SEQ_OP_SET_VOL:   return 2u;
         case MIA_SEQ_OP_SET_PULSE: return 2u;
+        case MIA_SEQ_OP_JUMP:      return 4u; // op + offset(3)
         default:                   return 0u;
     }
 }
 
 static uint32_t audio_seq_read_duration24(uint32_t offset) {
     return (uint32_t)mem[offset] | ((uint32_t)mem[offset + 1] << 8) | ((uint32_t)mem[offset + 2] << 16);
+}
+
+// audio_seq_jump_target: resolves a JUMP's 3-byte signed offset (stored at
+// cursor+1) into an absolute cursor, relative to the address right after
+// this 4-byte record. A malformed offset that lands outside MIA RAM is
+// caught by the ordinary cursor >= MIA_RAM_SIZE check on the next iteration,
+// same as any other corrupt cursor.
+static uint32_t audio_seq_jump_target(uint32_t cursor) {
+    uint32_t raw = audio_seq_read_duration24(cursor + 1);
+    int32_t offset = (int32_t)(raw << 8) >> 8; // sign-extend bit 23 into 32 bits
+    return (uint32_t)((int32_t)(cursor + 4u) + offset);
 }
 
 static void audio_seq_write_status(uint8_t voice) {
@@ -510,16 +520,22 @@ static void audio_seq_finish_track(uint8_t voice) {
     mia_irq_set_flag(IRQ_AUDIO_SEQ_DONE);
 }
 
-// Decodes and applies config opcodes at the current cursor, live, until a
-// NOTE/REST becomes the new current (audible) event, or END stops/loops the
-// track. Used for normal playback, once the previous event's countdown hits
-// zero.
+// Decodes and applies config/JUMP opcodes at the current cursor, live, until
+// a NOTE/REST becomes the new current (audible) event, or END/an unrecognized
+// byte/running off the top of RAM stops the track. Used for normal playback,
+// once the previous event's countdown hits zero.
+//
+// Bounded by MIA_SEQ_DECODE_BUDGET: JUMP and the SET_* opcodes are all
+// zero-duration and loop straight back to the top of this decode without
+// returning, so a track whose jumps cycle with no NOTE/REST/END in between
+// would otherwise spin this call forever - fail-safe, silent, exactly like
+// running into an unrecognized opcode byte.
 static void audio_seq_advance(uint8_t voice) {
     audio_seq_t *seq = &audio_seq[voice];
-    uint32_t track_limit = MIA_SEQ_TRACK_OFFSET(voice) + MIA_SEQ_TRACK_SIZE;
+    uint8_t budget = MIA_SEQ_DECODE_BUDGET;
 
     while (true) {
-        if (seq->cursor >= track_limit) {
+        if (seq->cursor >= MIA_RAM_SIZE) {
             audio_seq_finish_track(voice);
             return;
         }
@@ -528,11 +544,6 @@ static void audio_seq_advance(uint8_t voice) {
         uint8_t size = audio_seq_record_size(op);
 
         if (size == 0) {
-            if (seq->has_loop) {
-                seq->cursor = seq->loop_cursor;
-                seq->note_index = seq->loop_note_index;
-                continue;
-            }
             audio_seq_finish_track(voice);
             return;
         }
@@ -551,8 +562,17 @@ static void audio_seq_advance(uint8_t voice) {
             return;
         }
 
-        audio_seq_apply_config_op(voice, seq->cursor, op);
-        seq->cursor += size;
+        if (op == MIA_SEQ_OP_JUMP) {
+            seq->cursor = audio_seq_jump_target(seq->cursor);
+        } else {
+            audio_seq_apply_config_op(voice, seq->cursor, op);
+            seq->cursor += size;
+        }
+
+        if (budget-- == 0) {
+            audio_seq_finish_track(voice);
+            return;
+        }
     }
 }
 
@@ -561,13 +581,14 @@ static void audio_seq_advance(uint8_t voice) {
 // resolves over a few extra ticks instead of doing unbounded work in one
 // sample. Stops and resumes live, in full, on the first event that isn't
 // fully covered by the remaining catch-up budget - see docs/audio-sequencer.md.
+// This same per-iteration budget also bounds a cyclical run of JUMPs/config
+// ops, the same way MIA_SEQ_DECODE_BUDGET does in audio_seq_advance.
 static void audio_seq_catchup_step(uint8_t voice) {
     audio_seq_t *seq = &audio_seq[voice];
-    uint32_t track_limit = MIA_SEQ_TRACK_OFFSET(voice) + MIA_SEQ_TRACK_SIZE;
     uint8_t budget = MIA_SEQ_CATCHUP_BUDGET;
 
     while (budget-- && seq->catching_up) {
-        if (seq->cursor >= track_limit) {
+        if (seq->cursor >= MIA_RAM_SIZE) {
             audio_seq_finish_track(voice);
             return;
         }
@@ -576,13 +597,13 @@ static void audio_seq_catchup_step(uint8_t voice) {
         uint8_t size = audio_seq_record_size(op);
 
         if (size == 0) {
-            if (seq->has_loop) {
-                seq->cursor = seq->loop_cursor;
-                seq->note_index = seq->loop_note_index;
-                continue;
-            }
             audio_seq_finish_track(voice);
             return;
+        }
+
+        if (op == MIA_SEQ_OP_JUMP) {
+            seq->cursor = audio_seq_jump_target(seq->cursor);
+            continue;
         }
 
         if (op == MIA_SEQ_OP_NOTE || op == MIA_SEQ_OP_REST) {
@@ -634,8 +655,21 @@ static void audio_seq_step(uint8_t voice) {
 }
 
 static void audio_seq_reset_voice(uint8_t voice) {
+    uint32_t base = MIA_SEQ_DEFAULT_BASE(voice);
     memset(&audio_seq[voice], 0, sizeof(audio_seq[voice]));
+    audio_seq[voice].track_base = base;
     audio_seq_write_status(voice);
+}
+
+// mia_audio_seq_set_base: stores this voice's track base only. Does not
+// itself move cursor/note_index - follow with mia_audio_seq_load_track() to
+// (re)start decoding from the new base.
+void mia_audio_seq_set_base(uint8_t voice, uint32_t base) {
+    if (voice >= MIA_AUDIO_VOICE_COUNT) {
+        return;
+    }
+
+    audio_seq[voice].track_base = base;
 }
 
 void mia_audio_seq_load_track(uint8_t voice) {
@@ -643,39 +677,12 @@ void mia_audio_seq_load_track(uint8_t voice) {
         return;
     }
 
-    uint32_t track_offset = MIA_SEQ_TRACK_OFFSET(voice);
-    uint32_t events_base = track_offset + MIA_SEQ_TRACK_EVENTS_OFFSET;
-    uint32_t track_limit = track_offset + MIA_SEQ_TRACK_SIZE;
-    uint16_t loop_rel = (uint16_t)mem[track_offset + MIA_SEQ_TRACK_LOOP_L] |
-                         ((uint16_t)mem[track_offset + MIA_SEQ_TRACK_LOOP_H] << 8);
-
     audio_seq_t *seq = &audio_seq[voice];
+    uint32_t base = seq->track_base;
+
     memset(seq, 0, sizeof(*seq));
-    seq->cursor = events_base;
-
-    if (loop_rel != MIA_SEQ_NO_LOOP && events_base + loop_rel < track_limit) {
-        seq->has_loop = true;
-        seq->loop_cursor = events_base + loop_rel;
-
-        // Count NOTE/REST events from the top of the stream up to the loop
-        // point, once, so looping restores the right note index. Bounded by
-        // the track buffer size; a malformed stream just stops the count at
-        // whatever opcode it can't recognize rather than running away.
-        uint16_t index = 0;
-        uint32_t scan = events_base;
-        while (scan < seq->loop_cursor) {
-            uint8_t op = mem[scan];
-            uint8_t size = audio_seq_record_size(op);
-            if (size == 0) {
-                break;
-            }
-            if (op == MIA_SEQ_OP_NOTE || op == MIA_SEQ_OP_REST) {
-                index++;
-            }
-            scan += size;
-        }
-        seq->loop_note_index = index;
-    }
+    seq->track_base = base;
+    seq->cursor = base;
 
     audio_seq_write_status(voice);
 }
@@ -765,19 +772,19 @@ void mia_audio_seq_write_test_track(uint8_t voice) {
         return;
     }
 
-    // LOOP=0 (loop the whole body), then attack=0/decay=3/sustain=F/release=5,
-    // then C4/E4/G4 at ~440 Hz's neighbors, 6000 samples (~0.25s) each.
+    // attack=0/decay=3/sustain=F/release=5, then C4/E4/G4 at ~440 Hz's
+    // neighbors (6000 samples/~0.25s each), then JUMP -25 back to offset 0
+    // (the SET_ADSR) to loop the whole body forever. -25 as a signed 24-bit
+    // little-endian offset is 0xFFFFE7 (0xE7, 0xFF, 0xFF).
     static const uint8_t kTestTrack[] = {
-        0x00, 0x00,                                     // LOOP
-        0x00, 0x00,                                     // reserved
         MIA_SEQ_OP_SET_ADSR, 0x03, 0xF5,
         MIA_SEQ_OP_NOTE, 0x5A, 0x10, 0x70, 0x17, 0x00,   // C4
         MIA_SEQ_OP_NOTE, 0x9A, 0x14, 0x70, 0x17, 0x00,   // E4
         MIA_SEQ_OP_NOTE, 0x80, 0x18, 0x70, 0x17, 0x00,   // G4
-        MIA_SEQ_OP_END,
+        MIA_SEQ_OP_JUMP, 0xE7, 0xFF, 0xFF,
     };
 
-    uint32_t base = MIA_SEQ_TRACK_OFFSET(voice);
+    uint32_t base = audio_seq[voice].track_base;
     for (size_t i = 0; i < sizeof(kTestTrack); i++) {
         mem[base + i] = kTestTrack[i];
     }
@@ -787,15 +794,15 @@ void mia_audio_seq_print_status(void) {
     printf("Sequencer:\n");
     for (uint8_t v = 0; v < MIA_AUDIO_VOICE_COUNT; v++) {
         audio_seq_t *seq = &audio_seq[v];
-        printf("  ch%u: %s%s%s  note:%u  cursor:$%05X  countdown:%u  loop:%s\n",
+        printf("  ch%u: %s%s%s  note:%u  base:$%05X  cursor:$%05X  countdown:%u\n",
                v,
                seq->running ? "running" : "stopped",
                seq->taken ? " taken" : "",
                seq->catching_up ? " catching-up" : "",
                (unsigned)seq->note_index,
+               (unsigned)seq->track_base,
                (unsigned)seq->cursor,
-               (unsigned)seq->countdown,
-               seq->has_loop ? "yes" : "no");
+               (unsigned)seq->countdown);
     }
 }
 
@@ -961,12 +968,14 @@ void mia_audio_reset_runtime_state(void) {
     audio_queue_tail = 0;
     audio_queue_overflow = false;
 
-    // Background sequencer: clear track buffers and per-voice runtime state.
-    memset(&mem[MIA_SEQ_STATE_OFFSET], 0, MIA_SEQ_STATE_SIZE);
+    // Background sequencer: clear the legacy default track region and reset
+    // per-voice runtime state. A track's base is fully caller-defined via
+    // AUDIO_SEQ_SET_BASE<voice> (see docs/audio-sequencer.md); this only
+    // seeds the pre-configuration default, so a direct AUDIO_SEQ_LOAD/START
+    // (e.g. mia_audio_seq_write_test_track) keeps working unconfigured.
+    memset(&mem[MIA_SEQ_DEFAULT_BASE_OFFSET], 0, MIA_SEQ_DEFAULT_REGION_SIZE);
     for (uint8_t voice = 0; voice < MIA_AUDIO_VOICE_COUNT; voice++) {
         audio_seq_reset_voice(voice);
-        mem[MIA_SEQ_TRACK_OFFSET(voice) + MIA_SEQ_TRACK_LOOP_L] = (uint8_t)(MIA_SEQ_NO_LOOP & 0xFFu);
-        mem[MIA_SEQ_TRACK_OFFSET(voice) + MIA_SEQ_TRACK_LOOP_H] = (uint8_t)(MIA_SEQ_NO_LOOP >> 8);
     }
 
     audio_configure_indexes();
