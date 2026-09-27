@@ -16,7 +16,7 @@
 #define MIA_FS_TRANSFER_OFFSET 0x13440u
 #define MIA_FS_TRANSFER_SIZE 0x07C0u
 
-#define MIA_SD_VERSION 6u
+#define MIA_SD_VERSION 7u
 
 // Number of concurrent file handles. Each FS_OPEN/FS_READ/FS_WRITE/FS_SEEK/
 // FS_SYNC/FS_CLOSE acts on whichever slot SD_HANDLE_SELECT names (0..N-1);
@@ -73,6 +73,12 @@
 #define MIA_SD_CONTROL_TRANSFER_LEN2 0x2Cu
 #define MIA_SD_CONTROL_TRANSFER_LEN3 0x2Du
 #define MIA_SD_CONTROL_HANDLE_SELECT 0x2Eu
+// FS_LOAD_PART (protocol 7). SD_TRANSFER_LEN holds the bytes per row; with
+// PART_ROWS 0 the command loads one contiguous run.
+#define MIA_SD_CONTROL_PART_OFFSET0 0x30u
+#define MIA_SD_CONTROL_PART_ROWS_L 0x34u
+#define MIA_SD_CONTROL_PART_FILE_STRIDE0 0x36u
+#define MIA_SD_CONTROL_PART_RAM_STRIDE_L 0x3Au
 
 #define MIA_SD_STATUS_PRESENT     (1u << 0)
 #define MIA_SD_STATUS_INITIALIZED (1u << 1)
@@ -140,6 +146,7 @@
 #define MIA_CMD_FS_SAVE_FROM_MIA_RAM 0x87u
 #define MIA_CMD_FS_CHDIR 0x88u
 #define MIA_CMD_FS_FILE_INFO 0x89u
+#define MIA_CMD_FS_LOAD_PART 0x8Au
 
 void mia_sd_init(void);
 void mia_sd_reset_runtime_state(void);

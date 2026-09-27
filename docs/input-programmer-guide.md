@@ -103,7 +103,8 @@ GAMEPAD_EVENT_DEVICE      = %00100000
 | `$FFF2` | `INPUT_STATUS` | Check text availability, held digital input, and active source. |
 | `$FFF3` | `INPUT_CHAR` | Read one text byte and remove it from the FIFO. |
 | `$FFF4` | `INPUT_CHAR_COUNT` | Read the number of queued text bytes. |
-| `$FFF5-$FFF9` | reserved | Reads return zero. Writes are ignored. |
+| `$FFF5` | `MIA_CTX` | Context stack for interrupt handlers; see the README. |
+| `$FFF6-$FFF9` | reserved | Reads return zero. Writes are ignored. |
 
 ## Status Flags
 

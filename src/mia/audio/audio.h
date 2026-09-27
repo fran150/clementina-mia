@@ -78,22 +78,12 @@
 // A voice's track is just bytes in MIA RAM, decoded live from wherever its
 // track_base points until an END or a run off the top of RAM stops it -
 // there is no per-track length and no header. track_base is fully
-// caller-defined via AUDIO_SEQ_SET_BASE<voice>; these constants only seed
-// the pre-configuration default (see mia_audio_reset_runtime_state), so a
-// direct AUDIO_SEQ_LOAD/START without ever calling SET_BASE still works.
-//
-// $14000-$17FFF: the old default ($13000-$13FFF, inherited from the
-// original fixed 1024-byte-per-voice layout) silently overlapped live SD/FS
-// state at $13000-$13BFF (control block, dir-entry buffer, transfer buffer -
-// see docs/sd.md) for 3 of the 4 voices. This range is unclaimed by any
-// other subsystem (video sync ends at $10D4F, input/clock at $1107F, the
-// audio register block at $1204F, SD/FS at $13BFF) and gives each voice 4x
-// the old space, comfortably inside the ~176 KiB ($14000-$3FFFF) that's
-// otherwise entirely free.
-#define MIA_SEQ_DEFAULT_TRACK_SPACING 0x1000u
-#define MIA_SEQ_DEFAULT_BASE_OFFSET 0x14000u
-#define MIA_SEQ_DEFAULT_BASE(voice) (MIA_SEQ_DEFAULT_BASE_OFFSET + (voice) * MIA_SEQ_DEFAULT_TRACK_SPACING)
-#define MIA_SEQ_DEFAULT_REGION_SIZE (MIA_AUDIO_VOICE_COUNT * MIA_SEQ_DEFAULT_TRACK_SPACING)
+// caller-defined via AUDIO_SEQ_SET_BASE<voice>. Until a program sets it, a
+// voice has no track: boot and AUDIO_RESET store MIA_SEQ_NO_BASE, which the
+// 24-bit SET_BASE parameter can never produce, and SEQ_START leaves such a
+// voice stopped. Nothing in MIA RAM is reserved for tracks, and audio reset
+// clears none of it.
+#define MIA_SEQ_NO_BASE 0xFFFFFFFFu
 
 // Event opcodes. NOTE/REST durations are 24-bit little-endian sample counts,
 // resolved once at encode time - MIA never interprets tempo or note names.
@@ -186,10 +176,10 @@ void mia_audio_voice_take(uint8_t voice_mask);
 void mia_audio_voice_release(uint8_t voice_mask);
 void mia_audio_seq_print_status(void);
 
-// Terminal-only helper: writes a small built-in looping arpeggio into a
-// voice's track buffer (does not load or start it - follow with
+// Terminal-only helper: writes a small built-in looping arpeggio at base and
+// makes it the voice's track (does not load or start it - follow with
 // mia_audio_seq_load_track()/mia_audio_seq_start()). For standalone hardware
 // bring-up before TRACK/BAND exist on the BASIC side.
-void mia_audio_seq_write_test_track(uint8_t voice);
+void mia_audio_seq_write_test_track(uint8_t voice, uint32_t base);
 
 #endif

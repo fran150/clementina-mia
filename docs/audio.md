@@ -226,7 +226,7 @@ Audio commands use the normal MIA command registers.
 | --- | ---: | --- | --- |
 | `AUDIO_ENABLE` | `$60` | none | Synchronize voice state from audio RAM and start the PWM audio IRQ. |
 | `AUDIO_STOP` | `$61` | none | Stop the audio IRQ and return PWM outputs to center. Audio RAM is preserved. |
-| `AUDIO_RESET` | `$62` | none | Stop audio, clear the audio RAM block, restore defaults, and reset audio indexes. |
+| `AUDIO_RESET` | `$62` | none | Stop audio, clear the audio RAM block, restore defaults, forget every voice's track base, and reset audio indexes. |
 | `AUDIO_SEQ_LOAD` | `$63` | voice bitmask | (Re)initialize the background sequencer for each masked voice from its track buffer. See [audio-sequencer.md](audio-sequencer.md). |
 | `AUDIO_SEQ_START` | `$64` | voice bitmask | Start/resume the background sequencer for each masked voice. |
 | `AUDIO_SEQ_STOP` | `$65` | voice bitmask | Stop the background sequencer for each masked voice, gating it off. |

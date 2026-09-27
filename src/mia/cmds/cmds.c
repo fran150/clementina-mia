@@ -88,7 +88,9 @@ void command_peek_from_index_to_b(uint8_t param[]) {
 
 // Triggers a dma transfer of the specified number of bytes from the source index to the 
 // destination index. If count is zero, copy up to the source index limit.
-// Indexes are not moved.
+// Indexes are not moved. A copy requested while another is running waits behind
+// it (see mem/dma.c); each raises IRQ_COMMAND when it finishes, and
+// MIA_STAT_DMA_RUNNING stays set until the last queued copy has.
 void command_copy_indexes(uint8_t param[]) {
     uint8_t from = param[0];    // index id that points to the source addess
     uint8_t to = param[1];      // index id that points to the destination address
@@ -110,6 +112,29 @@ void command_copy_indexes(uint8_t param[]) {
 
     // Trigger the pico DMA transfer.
     mia_dma_transfer_init(idx[from].current_addr, idx[to].current_addr, count);
+}
+
+// Copies a rectangle inside MIA RAM: p3 rows (0 means 256), each as long as
+// the source index's limit minus its current address. After each row the
+// source address advances by the source index's step and the destination by
+// the destination index's; a source step of 0 repeats the first row, for
+// fills. Indexes are not moved. Queues behind a running copy, and raises
+// IRQ_COMMAND once, when the last row lands.
+void command_copy_rect(uint8_t param[]) {
+    uint8_t from = param[0];
+    uint8_t to = param[1];
+    uint16_t rows = param[2] == 0 ? 256u : param[2];
+
+    uint32_t current = index_get_current_addr(from);
+    uint32_t limit = index_get_limit_addr(from);
+    uint32_t length = limit > current ? limit - current : 0u;
+    if (length > 0xFFFFu) {
+        error_push(ERROR_DMA_SRC_WILL_OVERFLOW);
+        return;
+    }
+
+    mia_dma_rect_init(idx[from].current_addr, idx[to].current_addr, (uint16_t)length,
+                      rows, idx[from].step, idx[to].step);
 }
 
 void command_video_force_full_refresh(uint8_t param[]) {
@@ -293,6 +318,12 @@ void command_fs_load(uint8_t param[]) {
     (void)mia_sd_request(MIA_CMD_FS_LOAD_TO_MIA_RAM);
 }
 
+void command_fs_load_part(uint8_t param[]) {
+    UNUSED(param);
+
+    (void)mia_sd_request(MIA_CMD_FS_LOAD_PART);
+}
+
 void command_fs_write(uint8_t param[]) {
     UNUSED(param);
 
@@ -410,6 +441,7 @@ void mia_command_init() {
     commands[0x07] = command_peek_from_index_to_b;
 
     commands[0x10] = command_copy_indexes;
+    commands[0x11] = command_copy_rect;
 
     commands[0x30] = command_exec_pause;
 
@@ -458,6 +490,7 @@ void mia_command_init() {
     commands[MIA_CMD_FS_RENAME] = command_fs_rename;
     commands[MIA_CMD_FS_GET_FREE] = command_fs_get_free;
     commands[MIA_CMD_FS_SAVE_FROM_MIA_RAM] = command_fs_save_from_mia_ram;
+    commands[MIA_CMD_FS_LOAD_PART] = command_fs_load_part;
 
     // Clear the FIFO IRQ
     multicore_fifo_clear_irq();

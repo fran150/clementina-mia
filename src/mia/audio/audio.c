@@ -655,9 +655,8 @@ static void audio_seq_step(uint8_t voice) {
 }
 
 static void audio_seq_reset_voice(uint8_t voice) {
-    uint32_t base = MIA_SEQ_DEFAULT_BASE(voice);
     memset(&audio_seq[voice], 0, sizeof(audio_seq[voice]));
-    audio_seq[voice].track_base = base;
+    audio_seq[voice].track_base = MIA_SEQ_NO_BASE;
     audio_seq_write_status(voice);
 }
 
@@ -688,6 +687,12 @@ void mia_audio_seq_load_track(uint8_t voice) {
 }
 
 static void audio_seq_start_one(uint8_t voice) {
+    // A voice no program has given a track stays stopped - no gate-off and
+    // no IRQ_AUDIO_SEQ_DONE, exactly as if it weren't in the mask.
+    if (audio_seq[voice].track_base == MIA_SEQ_NO_BASE) {
+        return;
+    }
+
     audio_seq[voice].running = true;
     audio_seq[voice].taken = false;
     audio_seq[voice].catching_up = false;
@@ -767,7 +772,7 @@ void mia_audio_voice_release(uint8_t voice_mask) {
     }
 }
 
-void mia_audio_seq_write_test_track(uint8_t voice) {
+void mia_audio_seq_write_test_track(uint8_t voice, uint32_t base) {
     if (voice >= MIA_AUDIO_VOICE_COUNT) {
         return;
     }
@@ -784,16 +789,23 @@ void mia_audio_seq_write_test_track(uint8_t voice) {
         MIA_SEQ_OP_JUMP, 0xE7, 0xFF, 0xFF,
     };
 
-    uint32_t base = audio_seq[voice].track_base;
+    if (base > MIA_RAM_SIZE - sizeof(kTestTrack)) {
+        return;
+    }
     for (size_t i = 0; i < sizeof(kTestTrack); i++) {
         mem[base + i] = kTestTrack[i];
     }
+    mia_audio_seq_set_base(voice, base);
 }
 
 void mia_audio_seq_print_status(void) {
     printf("Sequencer:\n");
     for (uint8_t v = 0; v < MIA_AUDIO_VOICE_COUNT; v++) {
         audio_seq_t *seq = &audio_seq[v];
+        if (seq->track_base == MIA_SEQ_NO_BASE) {
+            printf("  ch%u: no track\n", v);
+            continue;
+        }
         printf("  ch%u: %s%s%s  note:%u  base:$%05X  cursor:$%05X  countdown:%u\n",
                v,
                seq->running ? "running" : "stopped",
@@ -968,12 +980,9 @@ void mia_audio_reset_runtime_state(void) {
     audio_queue_tail = 0;
     audio_queue_overflow = false;
 
-    // Background sequencer: clear the legacy default track region and reset
-    // per-voice runtime state. A track's base is fully caller-defined via
-    // AUDIO_SEQ_SET_BASE<voice> (see docs/audio-sequencer.md); this only
-    // seeds the pre-configuration default, so a direct AUDIO_SEQ_LOAD/START
-    // (e.g. mia_audio_seq_write_test_track) keeps working unconfigured.
-    memset(&mem[MIA_SEQ_DEFAULT_BASE_OFFSET], 0, MIA_SEQ_DEFAULT_REGION_SIZE);
+    // Background sequencer: forget every voice's track. The track bytes stay
+    // wherever the program put them - nothing in MIA RAM belongs to the
+    // sequencer (see docs/audio-sequencer.md).
     for (uint8_t voice = 0; voice < MIA_AUDIO_VOICE_COUNT; voice++) {
         audio_seq_reset_voice(voice);
     }

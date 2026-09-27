@@ -91,12 +91,14 @@ typedef enum {
     sd_request_get_free = MIA_CMD_FS_GET_FREE,
     sd_request_save = MIA_CMD_FS_SAVE_FROM_MIA_RAM,
     sd_request_chdir = MIA_CMD_FS_CHDIR,
+    sd_request_load_part = MIA_CMD_FS_LOAD_PART,
 } sd_request_t;
 
 typedef enum {
     sd_job_none = 0,
     sd_job_load,
     sd_job_save,
+    sd_job_load_part,
 } sd_job_type_t;
 
 typedef struct {
@@ -105,6 +107,13 @@ typedef struct {
     uint32_t addr;
     uint32_t limit;
     uint32_t total;
+    // FS_LOAD_PART: addr is the current row's start in MIA RAM and limit the
+    // bytes per row; row_done counts into the current row.
+    uint32_t rows_left;
+    uint32_t row_done;
+    uint32_t file_pos;
+    uint32_t file_stride;
+    uint32_t ram_stride;
 } sd_job_state_t;
 
 static volatile uint8_t sd_pending_request;
@@ -551,6 +560,7 @@ bool mia_sd_request(uint8_t command) {
         case MIA_CMD_FS_GET_FREE:
         case MIA_CMD_FS_SAVE_FROM_MIA_RAM:
         case MIA_CMD_FS_CHDIR:
+        case MIA_CMD_FS_LOAD_PART:
             break;
         default:
             return false;
@@ -779,7 +789,7 @@ static void sd_job_update_progress(void) {
 static void sd_finish_job(bool ok, uint8_t error, FRESULT fr) {
     sd_job_type_t type = sd_job.type;
 
-    if (ok && type == sd_job_load) {
+    if (ok && (type == sd_job_load || type == sd_job_load_part)) {
         sd_eof = f_eof(&sd_job.file) != 0;
     }
     if (ok && type == sd_job_save) {
@@ -813,6 +823,60 @@ static bool sd_start_load_job(uint32_t dest, uint32_t max_len, uint8_t *out_erro
     sd_job.addr = dest;
     sd_job.limit = max_len;
     sd_job.total = 0;
+    sd_eof = false;
+
+    sd_write_u16(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_RESULT_LEN_L, 0);
+    sd_write_u32(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_FILE_SIZE0, (uint32_t)f_size(&sd_job.file));
+    sd_write_u32(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_FILE_POS0, 0);
+    *out_result = FR_OK;
+    *out_error = 0;
+    return true;
+}
+
+// FS_LOAD_PART: loads rows of row_len bytes. Row r starts at file offset
+// offset + r * file_stride and lands at MIA RAM dest + r * ram_stride; rows 0
+// means one contiguous run. Reaching EOF ends the load early, as
+// FS_LOAD_TO_MIA_RAM does; SD_FILE_POS then says how many bytes arrived.
+static bool sd_start_part_job(uint32_t dest, uint32_t row_len, uint32_t offset, uint32_t rows,
+                              uint32_t file_stride, uint32_t ram_stride,
+                              uint8_t *out_error, FRESULT *out_result) {
+    if (rows == 0) {
+        rows = 1;
+    }
+    uint64_t end = (uint64_t)dest + (uint64_t)(rows - 1u) * ram_stride + row_len;
+    if (row_len == 0 || end > MIA_RAM_SIZE) {
+        *out_result = FR_INVALID_PARAMETER;
+        *out_error = ERROR_FS_INVALID_REQUEST;
+        return false;
+    }
+
+    char path[MIA_FS_PATH_SIZE + 3u];
+    sd_prepare_fatfs_path(path);
+
+    memset(&sd_job, 0, sizeof(sd_job));
+    FRESULT fr = f_open(&sd_job.file, path, FA_READ);
+    if (fr == FR_OK) {
+        fr = f_lseek(&sd_job.file, offset);
+        if (fr != FR_OK) {
+            f_close(&sd_job.file);
+            memset(&sd_job, 0, sizeof(sd_job));
+            *out_result = fr;
+            *out_error = ERROR_FS_SEEK_FAILED;
+            return false;
+        }
+    } else {
+        *out_result = fr;
+        *out_error = ERROR_FS_OPEN_FAILED;
+        return false;
+    }
+
+    sd_job.type = sd_job_load_part;
+    sd_job.addr = dest;
+    sd_job.limit = row_len;
+    sd_job.rows_left = rows;
+    sd_job.file_pos = offset;
+    sd_job.file_stride = file_stride;
+    sd_job.ram_stride = ram_stride;
     sd_eof = false;
 
     sd_write_u16(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_RESULT_LEN_L, 0);
@@ -907,6 +971,47 @@ static void sd_job_step_load(void) {
     }
 }
 
+static void sd_job_step_load_part(void) {
+    uint32_t chunk = sd_job.limit - sd_job.row_done;
+    if (chunk > SD_JOB_CHUNK_SIZE) {
+        chunk = SD_JOB_CHUNK_SIZE;
+    }
+
+    UINT br = 0;
+    FRESULT fr = f_read(&sd_job.file, sd_job_buffer, chunk, &br);
+    if (fr != FR_OK) {
+        sd_finish_job(false, ERROR_FS_READ_FAILED, fr);
+        return;
+    }
+
+    uint32_t at = sd_job.addr + sd_job.row_done;
+    memcpy(&mem[at], sd_job_buffer, br);
+    mia_video_mark_dirty_range(at, br);
+    sd_job.row_done += br;
+    sd_job.total += br;
+    sd_job_update_progress();
+
+    if (br < chunk) {
+        sd_finish_job(true, 0, FR_OK);
+        return;
+    }
+    if (sd_job.row_done < sd_job.limit) {
+        return;
+    }
+
+    if (--sd_job.rows_left == 0) {
+        sd_finish_job(true, 0, FR_OK);
+        return;
+    }
+    sd_job.addr += sd_job.ram_stride;
+    sd_job.row_done = 0;
+    sd_job.file_pos += sd_job.file_stride;
+    fr = f_lseek(&sd_job.file, sd_job.file_pos);
+    if (fr != FR_OK) {
+        sd_finish_job(false, ERROR_FS_SEEK_FAILED, fr);
+    }
+}
+
 static void sd_job_step_save(void) {
     if (sd_job.total >= sd_job.limit) {
         sd_finish_job(true, 0, FR_OK);
@@ -941,6 +1046,8 @@ static void sd_service_job(void) {
     do {
         if (sd_job.type == sd_job_load) {
             sd_job_step_load();
+        } else if (sd_job.type == sd_job_load_part) {
+            sd_job_step_load_part();
         } else if (sd_job.type == sd_job_save) {
             sd_job_step_save();
         } else {
@@ -1348,6 +1455,24 @@ void mia_sd_service(void) {
             }
             uint32_t max_len = sd_control_request_len();
             ok = sd_start_load_job(sd_control_dest_addr(), max_len, &error, &fr);
+            deferred = ok;
+            break;
+        }
+
+        case sd_request_load_part: {
+            if (!sd_require_mounted(&fr)) {
+                ok = false;
+                error = ERROR_FS_MOUNT_FAILED;
+                break;
+            }
+            uint32_t control = MIA_SD_CONTROL_OFFSET;
+            ok = sd_start_part_job(sd_control_dest_addr(),
+                                   sd_control_transfer_len(),
+                                   sd_read_u32(control + MIA_SD_CONTROL_PART_OFFSET0),
+                                   sd_read_u16(control + MIA_SD_CONTROL_PART_ROWS_L),
+                                   sd_read_u32(control + MIA_SD_CONTROL_PART_FILE_STRIDE0),
+                                   sd_read_u24(control + MIA_SD_CONTROL_PART_RAM_STRIDE_L),
+                                   &error, &fr);
             deferred = ok;
             break;
         }

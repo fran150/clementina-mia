@@ -62,6 +62,7 @@ MIA occupies `$FFE0-$FFFF`.
 | `MIA_ERROR` | `$FFEC-$FFED` | error queue |
 | `IRQ_MASK` | `$FFEE-$FFEF` | interrupt mask |
 | `IRQ_STATUS` | `$FFF0-$FFF1` | interrupt status; read-to-clear |
+| `MIA_CTX` | `$FFF5` | context stack for interrupt handlers |
 
 `IRQ_STATUS` is read-to-clear. Reading `$FFF0` clears all `IRQ_STATUS` bits and
 deasserts the IRQ line. If high-byte flags are needed, read `$FFF1` first (passive,
@@ -85,6 +86,11 @@ my_irq_handler:
     PLA
     RTI
 ```
+
+A handler that also uses the index windows, `CFG_SELECT`/`CFG_PORT` or the
+command registers should write `$01` to `MIA_CTX` before that work and `$02`
+after it, so the interrupted code finds them as it left them. See "Context
+stack" in the README.
 
 The 6502 sets the I-flag automatically on interrupt entry, so no new interrupt can be taken until `RTI`. If a new source fires during the ISR, MIA re-asserts the pin after `RTI` and the handler runs again immediately.
 

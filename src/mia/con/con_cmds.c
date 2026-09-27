@@ -38,8 +38,11 @@ static const char *error_name(uint8_t code) {
         case ERROR_DMA_SIZE_ZERO: return "ERROR_DMA_SIZE_ZERO";
         case ERROR_DMA_SRC_WILL_OVERFLOW: return "ERROR_DMA_SRC_WILL_OVERFLOW";
         case ERROR_DMA_TGT_WILL_OVERFLOW: return "ERROR_DMA_TGT_WILL_OVERFLOW";
+        case ERROR_DMA_QUEUE_FULL: return "ERROR_DMA_QUEUE_FULL";
         case ERROR_CMD_QUEUE_FULL: return "ERROR_CMD_QUEUE_FULL";
         case ERROR_CMD_UNKNOWN: return "ERROR_CMD_UNKNOWN";
+        case ERROR_CTX_OVERFLOW: return "ERROR_CTX_OVERFLOW";
+        case ERROR_CTX_UNDERFLOW: return "ERROR_CTX_UNDERFLOW";
         case ERROR_WIFI_INIT_FAILED: return "ERROR_WIFI_INIT_FAILED";
         case ERROR_WIFI_CONNECT_FAILED: return "ERROR_WIFI_CONNECT_FAILED";
         case ERROR_VIDEO_UDP_ALLOC_FAILED: return "ERROR_VIDEO_UDP_ALLOC_FAILED";
@@ -537,13 +540,16 @@ static void cmd_audio_seq(const char *args) {
     uint8_t mask = (uint8_t)(1u << voice);
 
     if (verb_len == 4 && strncmp(args, "test", 4) == 0) {
-        mia_audio_seq_write_test_track(voice);
+        // The test arpeggio goes in the top 1 KiB of MIA RAM, 256 bytes per
+        // voice, overwriting whatever a program stored there.
+        uint32_t base = MIA_RAM_SIZE - 0x400u + (uint32_t)voice * 0x100u;
+        mia_audio_seq_write_test_track(voice, base);
         mia_audio_seq_load_track(voice);
         mia_audio_seq_start(mask);
         if (!mia_audio_is_active()) {
             mia_audio_enable();
         }
-        printf("Audio: voice %u playing built-in test arpeggio\n", voice);
+        printf("Audio: voice %u playing built-in test arpeggio at $%05X\n", voice, (unsigned)base);
         return;
     }
 

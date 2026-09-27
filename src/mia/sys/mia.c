@@ -104,6 +104,61 @@ static inline __force_inline void __not_in_flash_func(mia_core1_try_push_command
     }
 }
 
+// The MIA_CTX stack (see regs.h). Only core 1 touches it, from the action
+// loop, so it needs no locking; mia_reset_runtime_state empties it while the
+// 6502 is held in reset.
+typedef struct {
+    uint8_t idxa_selector;
+    uint8_t idxb_selector;
+    uint8_t cfg_selector;
+    uint8_t cmd_param[3];
+    index_t idxa;
+    index_t idxb;
+} mia_ctx_t;
+
+static mia_ctx_t mia_ctx_stack[MIA_CTX_DEPTH];
+static uint8_t mia_ctx_depth;
+
+static inline __force_inline void __not_in_flash_func(mia_core1_ctx_push)(void) {
+    if (mia_ctx_depth == MIA_CTX_DEPTH) {
+        error_defer(ERROR_DEFER_CTX_OVERFLOW);
+        return;
+    }
+
+    mia_ctx_t *ctx = &mia_ctx_stack[mia_ctx_depth++];
+    ctx->idxa_selector = mia_regs->idxa_selector;
+    ctx->idxb_selector = mia_regs->idxb_selector;
+    ctx->cfg_selector = mia_regs->cfg_selector;
+    ctx->cmd_param[0] = mia_regs->cmd_param1;
+    ctx->cmd_param[1] = mia_regs->cmd_param2;
+    ctx->cmd_param[2] = mia_regs->cmd_param3;
+    ctx->idxa = idx[ctx->idxa_selector];
+    ctx->idxb = idx[ctx->idxb_selector];
+}
+
+static inline __force_inline void __not_in_flash_func(mia_core1_ctx_pop)(void) {
+    if (mia_ctx_depth == 0) {
+        error_defer(ERROR_DEFER_CTX_UNDERFLOW);
+        return;
+    }
+
+    const mia_ctx_t *ctx = &mia_ctx_stack[--mia_ctx_depth];
+    idx[ctx->idxa_selector] = ctx->idxa;
+    idx[ctx->idxb_selector] = ctx->idxb;
+    mia_regs->idxa_selector = ctx->idxa_selector;
+    mia_regs->idxb_selector = ctx->idxb_selector;
+    mia_regs->cfg_selector = ctx->cfg_selector;
+    mia_regs->cmd_param1 = ctx->cmd_param[0];
+    mia_regs->cmd_param2 = ctx->cmd_param[1];
+    mia_regs->cmd_param3 = ctx->cmd_param[2];
+
+    // Reload the ports as select writes do. CFG fields $00-$0F act on the
+    // descriptor in window A, so window A is restored first.
+    mia_regs->idxa_port = index_read(ctx->idxa_selector);
+    mia_regs->idxb_port = index_read(ctx->idxb_selector);
+    mia_regs->cfg_port = get_cfg(ctx->cfg_selector);
+}
+
 static inline __force_inline void __not_in_flash_func(mia_core1_assert_cpu_reset)(void) {
     sio_hw->gpio_clr = 1u << CPU_RESB_PIN;
 }
@@ -121,6 +176,7 @@ void mia_reset_runtime_state(void) {
     kernel_index = 0;
     can_update_kernel_pointer = false;
     normal_mode_transition_requested = false;
+    mia_ctx_depth = 0;
     mia_state = mia_state_loader;
 
     // Rebuild the loader program and watch the byte that the 6502 reads as kernel data.
@@ -297,6 +353,15 @@ __attribute__((optimize("O1"))) static void __no_inline_not_in_flash_func(act_lo
                         case CASE_WRITE(0xFFEE):
                         case CASE_WRITE(0xFFEF):
                             mia_irq_write_mask(address, data);
+                            break;
+
+                        case CASE_WRITE(0xFFF5):
+                            // MIA_CTX: save or restore the interrupted code's MIA state.
+                            if (data == MIA_CTX_PUSH) {
+                                mia_core1_ctx_push();
+                            } else if (data == MIA_CTX_POP) {
+                                mia_core1_ctx_pop();
+                            }
                             break;
 
                         case CASE_READ(0xFFF0):

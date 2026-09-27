@@ -13,8 +13,11 @@
 #define ERROR_DMA_SIZE_ZERO             0x10        // Error when triggering DMA transfer with count in zero
 #define ERROR_DMA_SRC_WILL_OVERFLOW     0x11        // Error when DMA + count of the source will overflow the memory max size
 #define ERROR_DMA_TGT_WILL_OVERFLOW     0x12        // Error when DMA + count of the target will overflow the memory max size
+#define ERROR_DMA_QUEUE_FULL            0x13        // Copy could not be queued behind the running one
 #define ERROR_CMD_QUEUE_FULL            0x20        // Command trigger could not be queued for core 0
 #define ERROR_CMD_UNKNOWN               0x21        // Unknown command id
+#define ERROR_CTX_OVERFLOW              0x22        // MIA_CTX push with the context stack full
+#define ERROR_CTX_UNDERFLOW             0x23        // MIA_CTX pop with the context stack empty
 #define ERROR_WIFI_INIT_FAILED          0x30        // CYW43/Wi-Fi chip initialization failed
 #define ERROR_WIFI_CONNECT_FAILED       0x31        // STA connection failed
 #define ERROR_VIDEO_UDP_ALLOC_FAILED    0x40        // Video UDP PCB allocation failed
@@ -49,6 +52,8 @@
 
 #define ERROR_DEFER_CMD_QUEUE_FULL      (1u << 0)
 #define ERROR_DEFER_AUDIO_QUEUE_OVERFLOW (1u << 1)
+#define ERROR_DEFER_CTX_OVERFLOW        (1u << 2)
+#define ERROR_DEFER_CTX_UNDERFLOW       (1u << 3)
 
 extern volatile uint8_t _err_first;
 extern volatile uint8_t _err_last;

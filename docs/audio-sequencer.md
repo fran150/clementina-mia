@@ -43,22 +43,15 @@ state (`$13000-$13BFF` — control block, sector/path/dir/transfer buffers, see
 otherwise entirely unclaimed and the natural place to put a large or
 many-voice song.
 
-Before any `AUDIO_SEQ_SET_BASE<voice>` is issued, `track_base` defaults to a
-per-voice address in that free range, so a direct `AUDIO_SEQ_LOAD`/`SEQ_START`
-(e.g. the terminal's built-in test track) keeps working unconfigured:
+Until a program issues `AUDIO_SEQ_SET_BASE<voice>`, a voice has no track.
+Boot and `AUDIO_RESET` forget every voice's base, and `AUDIO_SEQ_START`
+leaves a voice without one stopped: no gate-off and no `IRQ_AUDIO_SEQ_DONE`.
+Nothing in MIA RAM is reserved for tracks, and audio reset clears none of it.
 
-| Range | Description |
-| ---: | --- |
-| `$14000` | Voice 0 default track base |
-| `$15000` | Voice 1 default track base |
-| `$16000` | Voice 2 default track base |
-| `$17000` | Voice 3 default track base |
-
-(Earlier revisions of this design defaulted to `$13000-$13FFF`, inherited
-from the original fixed 1024-byte-per-voice layout. That silently overlapped
-live SD/FS state for 3 of the 4 voices — voice 0 aliased the SD/FS control
-block, voice 1 the FS dir-entry buffer, voice 2 the FS transfer buffer; only
-voice 3 was ever actually clean. The defaults moved here to fix that.)
+(Earlier revisions seeded every voice with a default base. First it was in
+`$13000-$13FFF`, where it overlapped live SD/FS state for three of the four
+voices. Then it moved to `$14000-$17FFF`, which every audio reset zeroed, so
+nothing else could live there. Both defaults are gone.)
 
 ## Event stream
 
@@ -132,7 +125,7 @@ Per voice, alongside the existing oscillator/envelope state:
 | --- | --- |
 | `running` | Set by `SEQ_START`, cleared by `SEQ_STOP`. Gates whether the voice's event stream advances at all. |
 | `taken` | Set by `VOICE_TAKE`, cleared by `VOICE_RELEASE`. While set, the stream doesn't advance, but nothing is silenced — the caller is driving registers directly. |
-| `track_base` | Set by `AUDIO_SEQ_SET_BASE<voice>`; defaults to this voice's legacy address (see Memory layout) until then. Where `AUDIO_SEQ_LOAD` resets `cursor` to. |
+| `track_base` | Set by `AUDIO_SEQ_SET_BASE<voice>`. None until then, and again after boot or `AUDIO_RESET` (see Memory layout). Where `AUDIO_SEQ_LOAD` resets `cursor` to. |
 | `cursor` | Absolute MIA RAM offset of the event currently active. |
 | `countdown` | Samples remaining until the current event ends. |
 | `event_duration` | Full original duration of the current event (needed to reconcile a `VOICE_RELEASE`, see below). |
@@ -154,7 +147,7 @@ exactly which voices it means (`$0F` for every voice, `1<<v` for one).
 | Command | Id | Effect |
 | --- | ---: | --- |
 | `AUDIO_SEQ_LOAD` | `$63` | For each masked voice: (re)initializes `cursor` to `track_base` and `note_index` to `0`. Does **not** start playback. Issued once by `TRACK v, s$` right after the bytes land in MIA RAM. |
-| `AUDIO_SEQ_START` | `$64` | For each masked voice: if it has a loaded track and isn't already running, starts it from wherever `cursor`/`note_index` currently sit — `track_base` right after a `SEQ_LOAD`, or exactly where it was frozen by a prior `SEQ_STOP`. No time is reconciled; this is a plain resume. |
+| `AUDIO_SEQ_START` | `$64` | For each masked voice: if it has a track base and isn't already running, starts it from wherever `cursor`/`note_index` currently sit — `track_base` right after a `SEQ_LOAD`, or exactly where it was frozen by a prior `SEQ_STOP`. No time is reconciled; this is a plain resume. |
 | `AUDIO_SEQ_STOP` | `$65` | For each masked voice: stops advancing its stream and gates it off (silences it). `cursor`/`note_index` are left exactly where they are, so a later `SEQ_START` picks up from there. |
 | `AUDIO_VOICE_TAKE` | `$66` | For each masked voice: stops advancing its stream **without** touching its registers — whatever it was doing keeps sounding until the caller's own writes land. Records the current sample clock for `VOICE_RELEASE` to reconcile against. |
 | `AUDIO_VOICE_RELEASE` | `$67` | For each masked voice: resumes, reconciling for however much time passed while taken (see Catch-up below). |
@@ -181,9 +174,9 @@ follow with `AUDIO_SEQ_LOAD` to (re)start decoding from the new base.
 There's no separate "upload" command: a track is just bytes in MIA RAM,
 written the same way any other MIA memory is written from the 6502 — through
 an index descriptor. `TRACK v, s$[, addr%]` on the BASIC side encodes the
-string to this format and writes it starting at `addr%` if given, or the
-default per-voice address otherwise (see Memory layout), issuing
-`AUDIO_SEQ_SET_BASE<voice>` first when an explicit address is given. Loading
+string to this format and writes it starting at `addr%` if given, or at
+BASIC's own default, `$14000 + voice × $1000`, otherwise. Either way it issues
+`AUDIO_SEQ_SET_BASE<voice>` with that address. Loading
 a track resets that voice's `cursor` to `track_base` and `note_index` to `0`
 — it does not itself start playback; that's what `SEQ_START` is for. This is
 what lets `TRACK` + wait-for-a-`CUE`-value + `SEQ_START` compose into "swap

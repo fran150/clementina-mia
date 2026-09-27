@@ -113,7 +113,8 @@ MIA exposes the input control registers in the reserved register range
 | `12` | `$FFF2` | `INPUT_STATUS` | read-only | Text availability, held digital input, and active-source flags. |
 | `13` | `$FFF3` | `INPUT_CHAR` | read-to-pop | Text FIFO read port. Reading pops one byte, or returns `$00` when empty. |
 | `14` | `$FFF4` | `INPUT_CHAR_COUNT` | read-only | Number of bytes currently queued in the text FIFO. |
-| `15-19` | `$FFF5-$FFF9` | reserved | - | Reads return zero. Writes are ignored. |
+| `15` | `$FFF5` | `MIA_CTX` | write | Context stack for interrupt handlers; see the README. |
+| `16-19` | `$FFF6-$FFF9` | reserved | - | Reads return zero. Writes are ignored. |
 
 ### `INPUT_STATUS`
 

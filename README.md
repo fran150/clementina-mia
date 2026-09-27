@@ -117,13 +117,48 @@ MIA exposes 32 internal registers. The 6502 sees them at `$FFE0-$FFFF`; internal
 | `12` | `$FFF2` | `INPUT_STATUS` | Text availability, held digital input, and active-source flags. |
 | `13` | `$FFF3` | `INPUT_CHAR` | Text FIFO read port. Reading pops one byte, or returns `$00` when empty. |
 | `14` | `$FFF4` | `INPUT_CHAR_COUNT` | Number of bytes currently queued in the text FIFO. |
-| `15-19` | `$FFF5-$FFF9` | `RESERVED` | Reserved register bytes. |
+| `15` | `$FFF5` | `MIA_CTX` | Context stack for interrupt handlers. Writing `$01` saves the state below, writing `$02` restores it; other values do nothing. Reads return the last value written. See [Context stack](#context-stack). |
+| `16-19` | `$FFF6-$FFF9` | `RESERVED` | Reserved register bytes. |
 | `1A` | `$FFFA` | `NMI_VECTOR_L` | Low byte of the 6502 NMI vector exposed by MIA. |
 | `1B` | `$FFFB` | `NMI_VECTOR_H` | High byte of the 6502 NMI vector exposed by MIA. |
 | `1C` | `$FFFC` | `RESET_VECTOR_L` | Low byte of the 6502 reset vector. Loader mode initializes this to `$FFE0`. |
 | `1D` | `$FFFD` | `RESET_VECTOR_H` | High byte of the 6502 reset vector. Loader mode initializes this to `$FFE0`. |
 | `1E` | `$FFFE` | `IRQ_BRK_VECTOR_L` | Low byte of the 6502 IRQ/BRK vector exposed by MIA. |
 | `1F` | `$FFFF` | `IRQ_BRK_VECTOR_H` | High byte of the 6502 IRQ/BRK vector exposed by MIA. |
+
+## Context stack
+
+An interrupt handler that uses MIA's index windows, configuration registers or
+command parameters changes state the interrupted code may be in the middle of
+using: which descriptor each window points at, which configuration field is
+selected, parameters staged before `CMD_TRIGGER`, and the position of the
+descriptors it streams through. `MIA_CTX` saves and restores all of that:
+
+```asm
+irq:    pha
+        lda #$01        ; MIA_CTX_PUSH
+        sta $FFF5
+        ; ... use the windows, CFG and commands freely ...
+        lda #$02        ; MIA_CTX_POP
+        sta $FFF5
+        pla
+        rti
+```
+
+A push saves `IDXA_SELECT`, `IDXB_SELECT`, `CFG_SELECT`, `CMD_PARAM1-3` and the
+full records of the two descriptors bound to the windows. A pop restores them
+and reloads `IDXA_PORT`, `IDXB_PORT` and `CFG_PORT`, as select writes do. The
+stack is four deep, enough for an IRQ interrupted by an NMI.
+
+- A push past four reports `ERROR_CTX_OVERFLOW`, and a pop with nothing saved
+  reports `ERROR_CTX_UNDERFLOW`.
+- Descriptors other than the two bound at the push are not saved.
+- A command the handler triggers still runs. It reads its descriptors when
+  core 0 runs it, not when it is triggered. So if the command uses a descriptor
+  the pop restores, wait for `MIA_STAT_CMD_RUNNING` to clear before popping.
+- Core 1 handles the write like a select write, so the ports are ready for the
+  next access.
+- Reset empties the stack.
 
 ## Indexed RAM
 
@@ -211,7 +246,8 @@ Commands are requested by writing parameters to `CMD_PARAM1-3`, then writing the
 | `05` | none | Reset all 256 indexes to their default addresses. |
 | `06` | `p1 = index id` | Peek the specified index's current RAM byte into `IDXA_PORT` without stepping. |
 | `07` | `p1 = index id` | Peek the specified index's current RAM byte into `IDXB_PORT` without stepping. |
-| `10` | `p1 = source index`, `p2 = destination index`, `p3 = byte count` | Start a DMA copy inside MIA RAM. Source and destination indexes are not moved. If byte count is zero, DMA will copy bytes until it reached the index limit configures in the source index |
+| `10` | `p1 = source index`, `p2 = destination index`, `p3 = byte count` | Start a DMA copy inside MIA RAM. Source and destination indexes are not moved. If byte count is zero, DMA will copy bytes until it reached the index limit configures in the source index. A copy requested while another runs waits behind it, up to eight; each raises `IRQ_COMMAND` when it finishes, and `MIA_STAT_DMA_RUNNING` stays set until the last one has. |
+| `11` | `p1 = source index`, `p2 = destination index`, `p3 = rows (0 = 256)` | Copy a rectangle inside MIA RAM. Each row is as long as the source index's limit minus its current address. After each row the source address advances by the source index's step and the destination by the destination index's step; a source step of 0 repeats the first row, for fills. Indexes are not moved. Queues behind a running copy like command `10`, marks every row dirty, and raises `IRQ_COMMAND` once, when the last row lands. |
 | `30` | none | Pause 6502 execution by stopping `PHI2`. Once stopped, resume normally comes from the terminal with `exec resume`. |
 | `42` | none | Force a full video refresh by marking every syncable video page dirty. |
 | `43` | `p1 = video mode` | Update the `VIDEO_MODE` byte. |
@@ -328,8 +364,11 @@ Errors are stored in a 16-entry ring buffer. Reading `$FFEC` pulls one error int
 | `10` | `ERROR_DMA_SIZE_ZERO` | DMA copy requested with a byte count of zero. |
 | `11` | `ERROR_DMA_SRC_WILL_OVERFLOW` | DMA source range would exceed the 256 KiB MIA RAM region. |
 | `12` | `ERROR_DMA_TGT_WILL_OVERFLOW` | DMA destination range would exceed the 256 KiB MIA RAM region. |
+| `13` | `ERROR_DMA_QUEUE_FULL` | A copy could not wait behind the running one: eight were already waiting. |
 | `20` | `ERROR_CMD_QUEUE_FULL` | Command trigger could not be queued for core 0. |
 | `21` | `ERROR_CMD_UNKNOWN` | Unknown command id. |
+| `22` | `ERROR_CTX_OVERFLOW` | `MIA_CTX` push with the context stack already four deep. Nothing was saved. |
+| `23` | `ERROR_CTX_UNDERFLOW` | `MIA_CTX` pop with nothing saved. Nothing changed. |
 | `30` | `ERROR_WIFI_INIT_FAILED` | CYW43/Wi-Fi chip initialization failed. |
 | `31` | `ERROR_WIFI_CONNECT_FAILED` | STA connection failed. |
 | `40` | `ERROR_VIDEO_UDP_ALLOC_FAILED` | Video UDP PCB allocation failed. |

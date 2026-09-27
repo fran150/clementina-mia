@@ -63,6 +63,7 @@ CMD_FS_RENAME       = $85
 CMD_FS_GET_FREE     = $86
 CMD_FS_SAVE_MIA     = $87
 CMD_FS_CHDIR        = $88
+CMD_FS_LOAD_PART    = $8A
 
 IIDX_SD_CONTROL     = $E0
 IIDX_SD_SECTOR      = $E1
@@ -133,6 +134,10 @@ SD_TOTAL_CLUSTERS0 = $24
 SD_CLUSTER_SECTORS_L = $28
 SD_TRANSFER_LEN0  = $2A
 SD_HANDLE_SELECT  = $2E
+SD_PART_OFFSET0   = $30
+SD_PART_ROWS_L    = $34
+SD_PART_FILE_STRIDE0 = $36
+SD_PART_RAM_STRIDE_L = $3A
 ```
 
 Directory entry offsets, relative to `IIDX_FS_DIR_ENTRY`:
@@ -367,6 +372,97 @@ After completion:
 - `SD_RESULT_LEN` contains the low 16 bits of the loaded byte count.
 - `SD_FILE_POS` contains the full 32-bit loaded byte count.
 - `SD_EOF` is nonzero if the load reached end of file.
+
+## Loading Part Of A File To MIA RAM
+
+`FS_LOAD_PART` loads a range of a file, or a rectangle of rows out of it, in
+one command. It is a chunked job like `FS_LOAD_TO_MIA_RAM`.
+
+This example loads columns 256-295 of every row of a 1,024-byte-wide,
+25-row map into a 40-byte-wide buffer at `$18000`: 25 rows of 40 bytes, file
+stride 1,024 and RAM stride 40. Selecting an index does not rewind it, so
+`sd_field` points window A straight at each group of fields through the
+configuration registers.
+
+```asm
+CFG_SELECT      = $FFE2
+CFG_PORT        = $FFE3
+CFG_IDXA_ADDR_L = $00
+CFG_IDXA_ADDR_M = $01
+CFG_IDXA_ADDR_H = $02
+
+; Point window A at control-block field A ($013000 + A).
+sd_field:
+    pha
+    lda #IIDX_SD_CONTROL
+    sta IDXA_SELECT
+    lda #CFG_IDXA_ADDR_H
+    sta CFG_SELECT
+    lda #$01
+    sta CFG_PORT
+    lda #CFG_IDXA_ADDR_M
+    sta CFG_SELECT
+    lda #$30
+    sta CFG_PORT
+    lda #CFG_IDXA_ADDR_L
+    sta CFG_SELECT
+    pla
+    sta CFG_PORT
+    rts
+
+fs_load_columns:
+    jsr fs_mount
+    bne @done
+
+    jsr fs_write_path
+
+    lda #SD_DEST_ADDR_L
+    jsr sd_field
+    stz IDXA_PORT               ; SD_DEST_ADDR = $018000
+    lda #$80
+    sta IDXA_PORT
+    lda #$01
+    sta IDXA_PORT
+
+    lda #SD_TRANSFER_LEN0
+    jsr sd_field
+    lda #40
+    sta IDXA_PORT               ; SD_TRANSFER_LEN = 40 bytes per row
+    stz IDXA_PORT
+    stz IDXA_PORT
+    stz IDXA_PORT
+
+    lda #SD_PART_OFFSET0
+    jsr sd_field
+    stz IDXA_PORT               ; SD_PART_OFFSET = 256
+    lda #$01
+    sta IDXA_PORT
+    stz IDXA_PORT
+    stz IDXA_PORT
+    lda #25
+    sta IDXA_PORT               ; SD_PART_ROWS = 25
+    stz IDXA_PORT
+    stz IDXA_PORT               ; SD_PART_FILE_STRIDE = 1024
+    lda #$04
+    sta IDXA_PORT
+    stz IDXA_PORT
+    stz IDXA_PORT
+    lda #40
+    sta IDXA_PORT               ; SD_PART_RAM_STRIDE = 40
+    stz IDXA_PORT
+    stz IDXA_PORT
+
+    lda #CMD_FS_LOAD_PART
+    jsr mia_cmd
+    jsr sd_wait
+    jsr sd_last_error
+@done:
+    rts
+```
+
+With `SD_PART_ROWS` zero the command loads one run: `SD_TRANSFER_LEN` bytes
+from `SD_PART_OFFSET`. After completion `SD_FILE_POS` holds the number of bytes
+loaded, which is short, with `SD_EOF` set, if the file ended first.
 
 ## Opening And Streaming A File
 

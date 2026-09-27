@@ -16,4 +16,12 @@ void error_service(void) {
     if ((flags & ERROR_DEFER_AUDIO_QUEUE_OVERFLOW) != 0) {
         error_push(ERROR_AUDIO_QUEUE_OVERFLOW);
     }
+
+    if ((flags & ERROR_DEFER_CTX_OVERFLOW) != 0) {
+        error_push(ERROR_CTX_OVERFLOW);
+    }
+
+    if ((flags & ERROR_DEFER_CTX_UNDERFLOW) != 0) {
+        error_push(ERROR_CTX_UNDERFLOW);
+    }
 }

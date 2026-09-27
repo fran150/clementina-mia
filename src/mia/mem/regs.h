@@ -26,7 +26,8 @@ typedef union {
         uint8_t input_status;   // 12 (FFF2)
         uint8_t input_char;     // 13 (FFF3) read-to-pop
         uint8_t input_char_count; // 14 (FFF4)
-        uint8_t reserved[5];    // 15 - 19 (FFF5 - FFF9)
+        uint8_t context;        // 15 (FFF5) MIA_CTX: write MIA_CTX_PUSH/POP; reads return the last write
+        uint8_t reserved[4];    // 16 - 19 (FFF6 - FFF9)
         uint16_t nmi_vector;    // 1A, 1B (FFFA, FFFB)
         uint16_t reset_vector;  // 1C, 1D (FFFC, FFFD)
         uint16_t brk_vector;    // 1E, 1F (FFFE, FFFF)
@@ -36,6 +37,15 @@ typedef union {
 
 // MIA registers
 extern volatile mia_regs_t * const mia_regs;
+
+// MIA_CTX values. PUSH saves the state an interrupt handler would clobber -
+// both window selections, the CFG selection, the three command parameters and
+// the two descriptors bound to the windows - on a stack MIA_CTX_DEPTH deep;
+// POP restores it and reloads the ports, as select writes do. Other values do
+// nothing.
+#define MIA_CTX_PUSH  0x01u
+#define MIA_CTX_POP   0x02u
+#define MIA_CTX_DEPTH 4u
 
 // Convenience macro to access a given register with a 5 bit address
 #define REGS(addr) mia_regs->bytes[(addr) & 0x1F]

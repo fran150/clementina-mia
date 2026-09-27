@@ -71,9 +71,8 @@ initialization successfully; they are not live socket-switch state.
 
 SD and filesystem state lives in MIA RAM at `$13000-$13BFF`. It is outside the
 syncable video region, so normal SD/FS control writes do not dirty video pages.
-(This range used to also be the background audio sequencer's default
-per-voice track region for 3 of its 4 voices — a pre-existing overlap fixed
-by relocating those defaults to `$14000-$17FFF`; see
+(The background audio sequencer once defaulted three of its four voices'
+tracks into this range. It no longer has default track addresses; see
 [audio-sequencer.md](audio-sequencer.md#memory-layout). A program that
 explicitly places a track here via `AUDIO_SEQ_SET_BASE<voice>` would still
 collide with live SD/FS state.)
@@ -100,7 +99,7 @@ Offsets in this table are relative to `$13000`.
 
 | Offset | Name | Access | Description |
 | ---: | --- | --- | --- |
-| `$00` | `SD_VERSION` | read | SD/FS memory layout version. Current value is `6`. |
+| `$00` | `SD_VERSION` | read | SD/FS memory layout version. Current value is `7`. |
 | `$01` | `SD_STATUS` | read | SD/FS status flags. |
 | `$02` | `SD_LAST_ERROR` | read | Last MIA SD/FS error code, or zero. |
 | `$03` | `SD_CARD_TYPE` | read | Card type code. |
@@ -119,9 +118,14 @@ Offsets in this table are relative to `$13000`.
 | `$20-$23` | `SD_FREE_CLUSTERS` | read | Free FAT clusters after `FS_GET_FREE`. |
 | `$24-$27` | `SD_TOTAL_CLUSTERS` | read | Total usable FAT clusters after `FS_GET_FREE`. |
 | `$28-$29` | `SD_CLUSTER_SECTORS` | read | Sectors per FAT cluster after `FS_GET_FREE`. |
-| `$2A-$2D` | `SD_TRANSFER_LEN` | read/write | 32-bit byte count for `FS_SAVE_FROM_MIA_RAM`. |
+| `$2A-$2D` | `SD_TRANSFER_LEN` | read/write | 32-bit byte count for `FS_SAVE_FROM_MIA_RAM`, and bytes per row for `FS_LOAD_PART`. |
 | `$2E` | `SD_HANDLE_SELECT` | read/write | File-handle slot (`0`-`15`) that `FS_OPEN`/`FS_READ`/`FS_WRITE`/`FS_SEEK`/`FS_SYNC`/`FS_CLOSE` act on. Defaults to `0` on reset. See [File Handles](#file-handles). |
-| `$2F-$3F` | reserved | reserved | Write zero. |
+| `$2F` | reserved | reserved | Write zero. |
+| `$30-$33` | `SD_PART_OFFSET` | read/write | `FS_LOAD_PART`: file offset of the first byte. |
+| `$34-$35` | `SD_PART_ROWS` | read/write | `FS_LOAD_PART`: number of rows; `0` loads one contiguous run. |
+| `$36-$39` | `SD_PART_FILE_STRIDE` | read/write | `FS_LOAD_PART`: bytes from the start of one row to the next in the file. |
+| `$3A-$3C` | `SD_PART_RAM_STRIDE` | read/write | `FS_LOAD_PART`: bytes from the start of one row to the next in MIA RAM. |
+| `$3D-$3F` | reserved | reserved | Write zero. |
 
 `SD_OPEN_MODE` values:
 
@@ -281,6 +285,7 @@ by the command dispatcher; it is not the SD/FS completion event.
 | `FS_GET_FREE` | `$86` | none | Update free-space fields in the control block. |
 | `FS_SAVE_FROM_MIA_RAM` | `$87` | path buffer, `SD_DEST_ADDR`, `SD_TRANSFER_LEN`, `SD_OPEN_MODE` | Open a file, save bytes from MIA RAM, then close it. |
 | `FS_CHDIR` | `$88` | path buffer | Change the current directory (`f_chdir`). Persists, per mounted volume, until the next `FS_MOUNT` - see the path buffer note below. |
+| `FS_LOAD_PART` | `$8A` | path buffer, `SD_DEST_ADDR`, `SD_TRANSFER_LEN`, `SD_PART_*` | Open a file, load part of it into MIA RAM, then close it: one run of bytes, or a rectangle of rows. See "Protocol version 7" below. |
 
 For `FS_READ` and `FS_WRITE`, a `SD_REQUEST_LEN` of zero means the full transfer
 buffer size (`1984` bytes). `SD_RESULT_LEN` contains the actual byte count read
@@ -407,6 +412,30 @@ The USB terminal exposes:
   filenames ASCII/CP437-safe for predictable 6502 programs.
 - `FS_SYNC`, `FS_CLOSE`, metadata updates, and raw sector writes may still block
   core 0 while the card commits data internally.
+
+## Protocol version 7: partial loads
+
+`FS_LOAD_PART` (`$8A`) loads part of a file into MIA RAM with one command,
+where `FS_LOAD_TO_MIA_RAM` always starts at the first byte.
+
+- **A run of bytes.** With `SD_PART_ROWS` zero, it loads `SD_TRANSFER_LEN`
+  bytes starting at file offset `SD_PART_OFFSET`, to `SD_DEST_ADDR`.
+- **A rectangle.** With `SD_PART_ROWS` set, it loads that many rows of
+  `SD_TRANSFER_LEN` bytes each. Row *r* comes from file offset
+  `SD_PART_OFFSET + r × SD_PART_FILE_STRIDE` and lands at
+  `SD_DEST_ADDR + r × SD_PART_RAM_STRIDE`. A band of columns from a row-major
+  map, for example, is one command.
+- **Checks.** A zero row length, or a rectangle that would run past the top of
+  MIA RAM, fails with `ERROR_FS_INVALID_REQUEST` before anything is written.
+- **End of file.** Reaching it ends the load early but still succeeds, as with
+  `FS_LOAD_TO_MIA_RAM`: `SD_EOF` is set and `SD_FILE_POS` holds the byte count
+  that arrived.
+- **How it runs.** The load is the same 512-byte chunked job, and uses its own
+  file, independent of any `SD_HANDLE_SELECT` slot. It marks every row it
+  writes dirty for video.
+
+Version 7 keeps every earlier command ID and field. Its fields sit in what was
+reserved space, and `FS_LOAD_TO_MIA_RAM` ignores them.
 
 ## Protocol version 6: selected-file information
 
