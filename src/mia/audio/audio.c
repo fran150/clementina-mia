@@ -21,10 +21,31 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+// The Cortex-M33 cycle counter times the audio interrupt (see mia_audio_print_meter).
+#if PICO_RP2350 && !defined(__riscv)
+#include "hardware/structs/m33.h"
+#define AUDIO_METER 1
+#else
+#define AUDIO_METER 0
+#endif
+
 #define AUDIO_PWM_BITS 10u
 #define AUDIO_PWM_CENTER (1u << (AUDIO_PWM_BITS - 1u))
 #define AUDIO_QUEUE_SIZE 64u
 #define AUDIO_ENV_MAX (256u << 16)
+
+// Below this many clk_sys cycles per output sample the engine would take most
+// of core 0, and the PWM carrier (clk_sys / 1024) would fall into the audible
+// band. At 48 kHz that is clk_sys under 96 MHz, which MIA only uses for PHI2
+// below ~72 Hz (single-step speeds), so audio pauses there.
+#define AUDIO_MIN_CYCLES_PER_SAMPLE 2000u
+// While paused the outputs idle at mid-scale on a 64-step PWM: the same average
+// level as the 1024-step center, so pausing and resuming does not click, with a
+// carrier (clk_sys / 64) that stays ultrasonic even on the 12 MHz crystal.
+#define AUDIO_PARK_WRAP 63u
+
+_Static_assert(MIA_AUDIO_SAMPLE_RATE % MIA_AUDIO_TICK_RATE == 0,
+               "the output rate must be a whole multiple of the tick rate");
 
 #define AUDIO_L_SLICE (pwm_gpio_to_slice_num(MIA_AUDIO_L_PIN))
 #define AUDIO_L_CHAN (pwm_gpio_to_channel(MIA_AUDIO_L_PIN))
@@ -32,7 +53,8 @@
 #define AUDIO_R_CHAN (pwm_gpio_to_channel(MIA_AUDIO_R_PIN))
 #define AUDIO_IRQ_SLICE (pwm_gpio_to_slice_num(MIA_AUDIO_IRQ_PIN))
 
-#define AUDIO_RATE(ms) ((uint32_t)(((uint64_t)AUDIO_ENV_MAX * 1000u) / ((uint64_t)MIA_AUDIO_SAMPLE_RATE * (ms))))
+// Envelope steps happen once per tick, so the rates are per tick.
+#define AUDIO_RATE(ms) ((uint32_t)(((uint64_t)AUDIO_ENV_MAX * 1000u) / ((uint64_t)MIA_AUDIO_TICK_RATE * (ms))))
 
 typedef enum {
     audio_release = 0,
@@ -80,9 +102,9 @@ typedef struct {
     bool catching_up;          // VOICE_RELEASE is silently skipping past elapsed events
     uint32_t track_base;       // this voice's track base, set by AUDIO_SEQ_SET_BASE<voice>
     uint32_t cursor;           // absolute MIA RAM offset of the current event
-    uint32_t countdown;        // samples remaining until the current event ends
+    uint32_t countdown;        // ticks remaining until the current event ends
     uint32_t event_duration;   // full duration of the current event (0 for none yet)
-    uint32_t catchup_remaining;// samples still to silently skip during catch-up
+    uint32_t catchup_remaining;// ticks still to silently skip during catch-up
     uint32_t taken_at;         // audio_seq_clock snapshot when VOICE_TAKE was issued
     uint16_t note_index;       // 1-based index of the current note/rest; 0 = not started
 } audio_seq_t;
@@ -90,10 +112,27 @@ typedef struct {
 static int8_t audio_sine_table[256];
 static audio_voice_t audio_voices[MIA_AUDIO_VOICE_COUNT];
 static audio_seq_t audio_seq[MIA_AUDIO_VOICE_COUNT];
-static uint32_t audio_seq_clock;   // free-running sample counter, internal only - never exposed to BASIC
+static uint32_t audio_seq_clock;   // free-running tick counter, internal only - never exposed to BASIC
 static uint8_t audio_master_volume = MIA_AUDIO_MASTER_VOLUME_DEFAULT;
+static uint8_t audio_subsample;    // output samples into the current tick; 0 = the tick's own sample
+
+// Output registers, resolved once in mia_audio_init so the interrupt writes
+// them directly: the SDK's PWM helpers are plain inline functions that a Debug
+// build leaves out of line, in flash.
+static io_rw_32 *audio_out_cc_l;
+static io_rw_32 *audio_out_cc_r;
+static uint32_t audio_out_shift_l;
+static uint32_t audio_out_shift_r;
+static uint32_t audio_irq_mask;
 
 static volatile bool audio_active;
+static bool audio_parked;          // clk_sys too slow to run the engine; see AUDIO_MIN_CYCLES_PER_SAMPLE
+
+#if AUDIO_METER
+static volatile uint32_t audio_meter_samples;
+static volatile uint64_t audio_meter_cycles;
+static volatile uint32_t audio_meter_max;
+#endif
 static volatile bool audio_queue_overflow;
 static volatile uint8_t audio_queue_head;
 static volatile uint8_t audio_queue_tail;
@@ -162,7 +201,7 @@ static void audio_sync_from_memory(void);
 static void audio_apply_register(uint8_t loc, uint8_t value);
 static void audio_set_irq_rate(void);
 
-static uint16_t audio_read_u16(uint32_t offset) {
+static uint16_t __not_in_flash_func(audio_read_u16)(uint32_t offset) {
     return (uint16_t)mem[offset] | ((uint16_t)mem[offset + 1u] << 8);
 }
 
@@ -171,26 +210,35 @@ static void audio_write_u16(uint32_t offset, uint16_t value) {
     mem[offset + 1u] = value >> 8;
 }
 
-static uint32_t audio_phase_inc(uint16_t freq_q4) {
-    if (freq_q4 == 0) {
-        return 0;
-    }
+#define AUDIO_PHASE_DIVISOR (MIA_AUDIO_SAMPLE_RATE * 16u)
+_Static_assert(AUDIO_PHASE_DIVISOR < (1u << 24), "audio_phase_inc's 8-bit long division needs a divisor below 2^24");
 
-    return (uint32_t)(((uint64_t)freq_q4 << 32) /
-                      ((uint64_t)MIA_AUDIO_SAMPLE_RATE * 16u));
+// (freq_q4 << 32) / (MIA_AUDIO_SAMPLE_RATE * 16), exactly, as a long division
+// eight bits at a time: the remainder stays below 2^24, so every step fits a
+// 32-bit hardware divide instead of calling the 64-bit divide in flash.
+static uint32_t __not_in_flash_func(audio_phase_inc)(uint16_t freq_q4) {
+    uint32_t quotient = 0;
+    uint32_t remainder = freq_q4;
+
+    for (int i = 0; i < 4; i++) {
+        remainder <<= 8;
+        quotient = (quotient << 8) | (remainder / AUDIO_PHASE_DIVISOR);
+        remainder %= AUDIO_PHASE_DIVISOR;
+    }
+    return quotient;
 }
 
 // Master volume maps 0..15 to a 0..255 gain (unity at 15), mirroring the SID
 // $D418 master level. Applied to the summed stereo mix before the output clamp.
-static inline uint16_t audio_master_gain(void) {
+static __force_inline uint16_t audio_master_gain(void) {
     return (uint16_t)(audio_master_volume & MIA_AUDIO_MASTER_VOLUME_MAX) * 17u;
 }
 
-static uint32_t audio_voice_base(uint8_t voice) {
+static __force_inline uint32_t audio_voice_base(uint8_t voice) {
     return MIA_AUDIO_VOICE_OFFSET(voice);
 }
 
-static void audio_update_pan(audio_voice_t *voice, int8_t pan) {
+static void __not_in_flash_func(audio_update_pan)(audio_voice_t *voice, int8_t pan) {
     if (pan < -64) {
         pan = -64;
     }
@@ -215,7 +263,7 @@ static void audio_reset_voice_state(uint8_t voice) {
     audio_update_pan(state, 0);
 }
 
-static void audio_sync_voice_registers(uint8_t voice) {
+static void __not_in_flash_func(audio_sync_voice_registers)(uint8_t voice) {
     audio_voice_t *state = &audio_voices[voice];
     uint32_t base = audio_voice_base(voice);
     uint16_t freq_q4 = audio_read_u16(base + MIA_AUDIO_VOICE_FREQ_L);
@@ -250,20 +298,20 @@ static void audio_sync_voice_registers(uint8_t voice) {
     state->control = control;
 }
 
-static void audio_sync_from_memory(void) {
+static void __not_in_flash_func(audio_sync_from_memory)(void) {
     audio_master_volume = mem[MIA_AUDIO_HEADER_OFFSET + MIA_AUDIO_HEADER_VOLUME];
     for (uint8_t voice = 0; voice < MIA_AUDIO_VOICE_COUNT; voice++) {
         audio_sync_voice_registers(voice);
     }
 }
 
-static void audio_update_frequency(uint8_t voice) {
+static void __not_in_flash_func(audio_update_frequency)(uint8_t voice) {
     uint32_t base = audio_voice_base(voice);
     audio_voices[voice].freq_q4 = audio_read_u16(base + MIA_AUDIO_VOICE_FREQ_L);
     audio_voices[voice].phase_inc = audio_phase_inc(audio_voices[voice].freq_q4);
 }
 
-static void audio_apply_register(uint8_t loc, uint8_t value) {
+static void __not_in_flash_func(audio_apply_register)(uint8_t loc, uint8_t value) {
     if (loc == MIA_AUDIO_HEADER_VOLUME) {
         audio_master_volume = value;
         return;
@@ -330,7 +378,7 @@ static void audio_apply_register(uint8_t loc, uint8_t value) {
     }
 }
 
-static void audio_drain_queue(uint8_t max_work) {
+static __force_inline void audio_drain_queue(uint8_t max_work) {
     if (audio_queue_overflow) {
         audio_sync_from_memory();
         audio_queue_tail = audio_queue_head;
@@ -347,7 +395,7 @@ static void audio_drain_queue(uint8_t max_work) {
     }
 }
 
-static inline void audio_update_envelope(audio_voice_t *voice) {
+static __force_inline void audio_update_envelope(audio_voice_t *voice) {
     uint32_t sustain_target = audio_level_table[voice->sustain];
 
     switch (voice->adsr) {
@@ -388,7 +436,7 @@ static inline void audio_update_envelope(audio_voice_t *voice) {
     }
 }
 
-static inline int8_t audio_next_sample(audio_voice_t *voice) {
+static __force_inline int8_t audio_next_sample(audio_voice_t *voice) {
     uint32_t old_phase = voice->phase;
     voice->phase += voice->phase_inc;
     uint8_t phase = voice->phase >> 24;
@@ -421,32 +469,31 @@ static inline int8_t audio_next_sample(audio_voice_t *voice) {
  * Background sequencer (TRACK/BAND/VTAKE/VGIVE at the BASIC layer)
  *
  * See docs/audio-sequencer.md for the full contract. Decoding runs inside
- * this same audio ISR, once per voice per sample, right before the
- * oscillator/envelope pass - the same point live register writes are already
- * drained. Every register change an event makes goes through
+ * this same audio ISR, once per voice per tick, right before the envelope and
+ * oscillator pass - the same point live register writes are already drained. Every register change an event makes goes through
  * audio_seq_write_reg(), which mirrors mem[] and calls audio_apply_register()
  * so gate-edge detection, frequency recompute, and pan recompute are never
  * reimplemented here.
  **************************************************************************************************/
 
-static void audio_seq_write_reg(uint8_t voice, uint8_t field, uint8_t value) {
+static void __not_in_flash_func(audio_seq_write_reg)(uint8_t voice, uint8_t field, uint8_t value) {
     uint32_t base = audio_voice_base(voice);
     mem[base + field] = value;
     audio_apply_register((uint8_t)(base + field - MIA_AUDIO_STATE_OFFSET), value);
 }
 
-static void audio_seq_gate(uint8_t voice, bool on) {
+static void __not_in_flash_func(audio_seq_gate)(uint8_t voice, bool on) {
     audio_seq_write_reg(voice, MIA_AUDIO_VOICE_CONTROL,
                          on ? (MIA_AUDIO_CONTROL_GATE | MIA_AUDIO_CONTROL_RESET_PHASE) : 0);
 }
 
-static void audio_seq_apply_note(uint8_t voice, uint32_t cursor) {
+static void __not_in_flash_func(audio_seq_apply_note)(uint8_t voice, uint32_t cursor) {
     audio_seq_write_reg(voice, MIA_AUDIO_VOICE_FREQ_L, mem[cursor + 1]);
     audio_seq_write_reg(voice, MIA_AUDIO_VOICE_FREQ_H, mem[cursor + 2]);
     audio_seq_gate(voice, true);
 }
 
-static void audio_seq_apply_config_op(uint8_t voice, uint32_t cursor, uint8_t op) {
+static void __not_in_flash_func(audio_seq_apply_config_op)(uint8_t voice, uint32_t cursor, uint8_t op) {
     switch (op) {
         case MIA_SEQ_OP_SET_WAVE:
             audio_seq_write_reg(voice, MIA_AUDIO_VOICE_WAVEFORM, mem[cursor + 1]);
@@ -472,7 +519,7 @@ static void audio_seq_apply_config_op(uint8_t voice, uint32_t cursor, uint8_t op
 // Returns the number of bytes the opcode at [cursor] occupies, opcode byte
 // included, or 0 for END/unrecognized so callers can detect the stop
 // condition without a second switch.
-static uint8_t audio_seq_record_size(uint8_t op) {
+static uint8_t __not_in_flash_func(audio_seq_record_size)(uint8_t op) {
     switch (op) {
         case MIA_SEQ_OP_NOTE:      return 6u;  // op + freq_l + freq_h + dur(3)
         case MIA_SEQ_OP_REST:      return 4u;  // op + dur(3)
@@ -486,7 +533,7 @@ static uint8_t audio_seq_record_size(uint8_t op) {
     }
 }
 
-static uint32_t audio_seq_read_duration24(uint32_t offset) {
+static uint32_t __not_in_flash_func(audio_seq_read_duration24)(uint32_t offset) {
     return (uint32_t)mem[offset] | ((uint32_t)mem[offset + 1] << 8) | ((uint32_t)mem[offset + 2] << 16);
 }
 
@@ -495,13 +542,13 @@ static uint32_t audio_seq_read_duration24(uint32_t offset) {
 // this 4-byte record. A malformed offset that lands outside MIA RAM is
 // caught by the ordinary cursor >= MIA_RAM_SIZE check on the next iteration,
 // same as any other corrupt cursor.
-static uint32_t audio_seq_jump_target(uint32_t cursor) {
+static uint32_t __not_in_flash_func(audio_seq_jump_target)(uint32_t cursor) {
     uint32_t raw = audio_seq_read_duration24(cursor + 1);
     int32_t offset = (int32_t)(raw << 8) >> 8; // sign-extend bit 23 into 32 bits
     return (uint32_t)((int32_t)(cursor + 4u) + offset);
 }
 
-static void audio_seq_write_status(uint8_t voice) {
+static __force_inline void audio_seq_write_status(uint8_t voice) {
     audio_seq_t *seq = &audio_seq[voice];
     uint32_t base = audio_voice_base(voice);
 
@@ -512,7 +559,7 @@ static void audio_seq_write_status(uint8_t voice) {
                   (seq->taken ? MIA_AUDIO_SEQ_STATUS_TAKEN : 0u));
 }
 
-static void audio_seq_finish_track(uint8_t voice) {
+static void __not_in_flash_func(audio_seq_finish_track)(uint8_t voice) {
     audio_seq_t *seq = &audio_seq[voice];
     seq->running = false;
     seq->catching_up = false;
@@ -530,7 +577,7 @@ static void audio_seq_finish_track(uint8_t voice) {
 // returning, so a track whose jumps cycle with no NOTE/REST/END in between
 // would otherwise spin this call forever - fail-safe, silent, exactly like
 // running into an unrecognized opcode byte.
-static void audio_seq_advance(uint8_t voice) {
+static void __not_in_flash_func(audio_seq_advance)(uint8_t voice) {
     audio_seq_t *seq = &audio_seq[voice];
     uint8_t budget = MIA_SEQ_DECODE_BUDGET;
 
@@ -583,7 +630,7 @@ static void audio_seq_advance(uint8_t voice) {
 // fully covered by the remaining catch-up budget - see docs/audio-sequencer.md.
 // This same per-iteration budget also bounds a cyclical run of JUMPs/config
 // ops, the same way MIA_SEQ_DECODE_BUDGET does in audio_seq_advance.
-static void audio_seq_catchup_step(uint8_t voice) {
+static void __not_in_flash_func(audio_seq_catchup_step)(uint8_t voice) {
     audio_seq_t *seq = &audio_seq[voice];
     uint8_t budget = MIA_SEQ_CATCHUP_BUDGET;
 
@@ -638,7 +685,7 @@ static void audio_seq_catchup_step(uint8_t voice) {
     }
 }
 
-static void audio_seq_step(uint8_t voice) {
+static __force_inline void audio_seq_step(uint8_t voice) {
     audio_seq_t *seq = &audio_seq[voice];
 
     if (seq->running && !seq->taken) {
@@ -778,7 +825,7 @@ void mia_audio_seq_write_test_track(uint8_t voice, uint32_t base) {
     }
 
     // attack=0/decay=3/sustain=F/release=5, then C4/E4/G4 at ~440 Hz's
-    // neighbors (6000 samples/~0.25s each), then JUMP -25 back to offset 0
+    // neighbors (6000 ticks/~0.25s each), then JUMP -25 back to offset 0
     // (the SET_ADSR) to loop the whole body forever. -25 as a signed 24-bit
     // little-endian offset is 0xFFFFE7 (0xE7, 0xFF, 0xFF).
     static const uint8_t kTestTrack[] = {
@@ -818,15 +865,76 @@ void mia_audio_seq_print_status(void) {
     }
 }
 
-static void __isr __attribute__((optimize("O3")))
-__time_critical_func(audio_irq_handler)(void) {
-    pwm_clear_irq(AUDIO_IRQ_SLICE);
+static __force_inline uint32_t audio_meter_now(void) {
+#if AUDIO_METER
+    return m33_hw->dwt_cyccnt;
+#else
+    return 0;
+#endif
+}
 
+static __force_inline void audio_meter_add(uint32_t start) {
+#if AUDIO_METER
+    uint32_t spent = m33_hw->dwt_cyccnt - start;
+    audio_meter_samples++;
+    audio_meter_cycles += spent;
+    if (spent > audio_meter_max) {
+        audio_meter_max = spent;
+    }
+#else
+    (void)start;
+#endif
+}
+
+static void audio_meter_reset(void) {
+#if AUDIO_METER
+    uint32_t save = save_and_disable_interrupts();
+    audio_meter_samples = 0;
+    audio_meter_cycles = 0;
+    audio_meter_max = 0;
+    restore_interrupts(save);
+#endif
+}
+
+// Writes both output levels. GP4/GP5 share a PWM slice (channels A and B), so
+// one store updates both; pins on different slices take a masked write each.
+static __force_inline void audio_write_levels(uint16_t level_l, uint16_t level_r) {
+    if (audio_out_cc_l == audio_out_cc_r) {
+        *audio_out_cc_l = ((uint32_t)level_l << audio_out_shift_l) | ((uint32_t)level_r << audio_out_shift_r);
+    } else {
+        hw_write_masked(audio_out_cc_l, (uint32_t)level_l << audio_out_shift_l, 0xFFFFu << audio_out_shift_l);
+        hw_write_masked(audio_out_cc_r, (uint32_t)level_r << audio_out_shift_r, 0xFFFFu << audio_out_shift_r);
+    }
+}
+
+// Control tick: register writes, the sequencer and the envelopes, once every
+// MIA_AUDIO_SAMPLES_PER_TICK samples. Nothing here reads an oscillator, and the
+// oscillators read only the envelope level, so stepping every envelope before
+// the mix is the same as stepping each one inside it.
+static __force_inline void audio_control_tick(void) {
     audio_seq_clock++;
     audio_drain_queue(16);
 
     for (uint8_t i = 0; i < MIA_AUDIO_VOICE_COUNT; i++) {
         audio_seq_step(i);
+    }
+    for (uint8_t i = 0; i < MIA_AUDIO_VOICE_COUNT; i++) {
+        audio_update_envelope(&audio_voices[i]);
+    }
+}
+
+// Runs at MIA_AUDIO_SAMPLE_RATE on core 0. Everything it calls is inlined into
+// it or placed in RAM, so no sample waits on the flash cache.
+static void __isr __attribute__((optimize("O3")))
+__time_critical_func(audio_irq_handler)(void) {
+    uint32_t start = audio_meter_now();
+    pwm_hw->intr = audio_irq_mask;
+
+    if (audio_subsample == 0) {
+        audio_control_tick();
+    }
+    if (++audio_subsample == MIA_AUDIO_SAMPLES_PER_TICK) {
+        audio_subsample = 0;
     }
 
     int16_t sample_l = 0;
@@ -836,7 +944,6 @@ __time_critical_func(audio_irq_handler)(void) {
         audio_voice_t *voice = &audio_voices[i];
 
         int16_t sample = audio_next_sample(voice);
-        audio_update_envelope(voice);
         sample = ((int32_t)sample * (int32_t)(voice->vol >> 16)) >> 8;
         sample = ((int32_t)sample * (int32_t)voice->volume) >> 8;
 
@@ -856,8 +963,8 @@ __time_critical_func(audio_irq_handler)(void) {
     if (sample_r < min_val) sample_r = min_val;
     if (sample_r > max_val) sample_r = max_val;
 
-    pwm_set_chan_level(AUDIO_L_SLICE, AUDIO_L_CHAN, (uint16_t)(sample_l + AUDIO_PWM_CENTER));
-    pwm_set_chan_level(AUDIO_R_SLICE, AUDIO_R_CHAN, (uint16_t)(sample_r + AUDIO_PWM_CENTER));
+    audio_write_levels((uint16_t)(sample_l + AUDIO_PWM_CENTER), (uint16_t)(sample_r + AUDIO_PWM_CENTER));
+    audio_meter_add(start);
 }
 
 static void audio_set_irq_rate(void) {
@@ -872,11 +979,38 @@ static void audio_set_irq_rate(void) {
 }
 
 static void audio_set_pwm_center(void) {
-    pwm_set_chan_level(AUDIO_L_SLICE, AUDIO_L_CHAN, AUDIO_PWM_CENTER);
-    pwm_set_chan_level(AUDIO_R_SLICE, AUDIO_R_CHAN, AUDIO_PWM_CENTER);
+    uint16_t center = audio_parked ? (uint16_t)((AUDIO_PARK_WRAP + 1u) / 2u) : (uint16_t)AUDIO_PWM_CENTER;
+    pwm_set_chan_level(AUDIO_L_SLICE, AUDIO_L_CHAN, center);
+    pwm_set_chan_level(AUDIO_R_SLICE, AUDIO_R_CHAN, center);
+}
+
+// Follows clk_sys: the sample timer's period, and whether the engine can run
+// at all (AUDIO_MIN_CYCLES_PER_SAMPLE). Call with the audio IRQ disabled.
+static void audio_apply_clock(void) {
+    audio_parked = clock_get_hz(clk_sys) / MIA_AUDIO_SAMPLE_RATE < AUDIO_MIN_CYCLES_PER_SAMPLE;
+
+    uint32_t wrap = audio_parked ? AUDIO_PARK_WRAP : (1u << AUDIO_PWM_BITS) - 1u;
+    pwm_set_wrap(AUDIO_L_SLICE, wrap);
+    if (AUDIO_R_SLICE != AUDIO_L_SLICE) {
+        pwm_set_wrap(AUDIO_R_SLICE, wrap);
+    }
+    audio_set_pwm_center();
+    audio_set_irq_rate();
+    audio_meter_reset();
 }
 
 void mia_audio_init(void) {
+    audio_out_cc_l = &pwm_hw->slice[AUDIO_L_SLICE].cc;
+    audio_out_cc_r = &pwm_hw->slice[AUDIO_R_SLICE].cc;
+    audio_out_shift_l = AUDIO_L_CHAN ? 16u : 0u;
+    audio_out_shift_r = AUDIO_R_CHAN ? 16u : 0u;
+    audio_irq_mask = 1u << AUDIO_IRQ_SLICE;
+
+#if AUDIO_METER
+    m33_hw->demcr |= M33_DEMCR_TRCENA_BITS;
+    m33_hw->dwt_ctrl |= M33_DWT_CTRL_CYCCNTENA_BITS;
+#endif
+
     pwm_config config = pwm_get_default_config();
     pwm_config_set_wrap(&config, ((1u << AUDIO_PWM_BITS) - 1u));
 
@@ -904,18 +1038,19 @@ void mia_audio_init(void) {
     }
 
     irq_set_priority(PWM_IRQ_WRAP_0, PICO_DEFAULT_IRQ_PRIORITY + 0x10);
+    audio_apply_clock();
     mia_audio_reset_runtime_state();
 }
 
+// Runs after every PHI2 speed change, whether or not audio is on, so a clock
+// too slow for the engine also parks an idle output (see AUDIO_PARK_WRAP).
 void mia_audio_reclock(void) {
-    if (!audio_active) {
-        return;
-    }
-
     irq_set_enabled(PWM_IRQ_WRAP_0, false);
-    audio_set_irq_rate();
+    audio_apply_clock();
     pwm_clear_irq(AUDIO_IRQ_SLICE);
-    irq_set_enabled(PWM_IRQ_WRAP_0, true);
+    if (audio_active && !audio_parked) {
+        irq_set_enabled(PWM_IRQ_WRAP_0, true);
+    }
 }
 
 void mia_audio_enable(void) {
@@ -925,9 +1060,10 @@ void mia_audio_enable(void) {
     audio_queue_head = 0;
     audio_queue_tail = 0;
     audio_queue_overflow = false;
+    audio_subsample = 0;
     audio_sync_from_memory();
 
-    audio_set_irq_rate();
+    audio_apply_clock();
     pwm_clear_irq(AUDIO_IRQ_SLICE);
     irq_set_exclusive_handler(PWM_IRQ_WRAP_0, audio_irq_handler);
     pwm_set_irq_enabled(AUDIO_IRQ_SLICE, true);
@@ -936,7 +1072,9 @@ void mia_audio_enable(void) {
         (mem[MIA_AUDIO_HEADER_OFFSET + MIA_AUDIO_HEADER_STATUS] & (uint8_t)~MIA_AUDIO_STATUS_QUEUE_OVERFLOW) |
         MIA_AUDIO_STATUS_ACTIVE;
     mia_status_set_flag(MIA_STAT_AUDIO_ACTIVE);
-    irq_set_enabled(PWM_IRQ_WRAP_0, true);
+    if (!audio_parked) {
+        irq_set_enabled(PWM_IRQ_WRAP_0, true);
+    }
 }
 
 void mia_audio_stop(void) {
@@ -962,7 +1100,8 @@ void mia_audio_reset_runtime_state(void) {
     mem[MIA_AUDIO_HEADER_OFFSET + MIA_AUDIO_HEADER_VERSION] = MIA_AUDIO_VERSION;
     mem[MIA_AUDIO_HEADER_OFFSET + MIA_AUDIO_HEADER_VOLUME] = MIA_AUDIO_MASTER_VOLUME_DEFAULT;
     mem[MIA_AUDIO_HEADER_OFFSET + MIA_AUDIO_HEADER_CHANNELS] = MIA_AUDIO_VOICE_COUNT;
-    audio_write_u16(MIA_AUDIO_HEADER_OFFSET + MIA_AUDIO_HEADER_RATE_L, MIA_AUDIO_SAMPLE_RATE);
+    // RATE is the tick rate: the unit of NOTE/REST durations.
+    audio_write_u16(MIA_AUDIO_HEADER_OFFSET + MIA_AUDIO_HEADER_RATE_L, MIA_AUDIO_TICK_RATE);
     mem[MIA_AUDIO_HEADER_OFFSET + MIA_AUDIO_HEADER_FLAGS] = MIA_AUDIO_FLAG_STEREO;
     audio_master_volume = MIA_AUDIO_MASTER_VOLUME_DEFAULT;
 
@@ -1024,10 +1163,40 @@ void mia_audio_print_summary(void) {
            MIA_AUDIO_R_PIN);
 }
 
+void mia_audio_print_meter(bool reset) {
+#if AUDIO_METER
+    uint32_t save = save_and_disable_interrupts();
+    uint32_t samples = audio_meter_samples;
+    uint64_t cycles = audio_meter_cycles;
+    uint32_t max = audio_meter_max;
+    restore_interrupts(save);
+
+    if (samples == 0) {
+        printf("  isr:       no samples measured yet\n");
+    } else {
+        uint32_t avg = (uint32_t)(cycles / samples);
+        uint32_t per_sample = clock_get_hz(clk_sys) / MIA_AUDIO_SAMPLE_RATE;
+        // Share of core 0 from the average, in tenths of a percent.
+        uint32_t load = (uint32_t)((uint64_t)avg * 1000u / per_sample);
+        printf("  isr:       avg %lu cycles, max %lu, of %lu per sample (%lu.%lu%% of core 0) over %lu samples\n",
+               (unsigned long)avg, (unsigned long)max, (unsigned long)per_sample,
+               (unsigned long)(load / 10u), (unsigned long)(load % 10u), (unsigned long)samples);
+    }
+    if (reset) {
+        audio_meter_reset();
+    }
+#else
+    (void)reset;
+    printf("  isr:       no cycle counter on this build\n");
+#endif
+}
+
 void mia_audio_print_status(void) {
     printf("Audio:\n");
-    printf("  state:     %s\n", audio_active ? "active" : "stopped");
-    printf("  rate:      %u Hz\n", MIA_AUDIO_SAMPLE_RATE);
+    printf("  state:     %s%s\n", audio_active ? "active" : "stopped",
+           audio_parked ? " (paused: clk_sys too slow for the engine)" : "");
+    printf("  rate:      %u Hz output, %u Hz sequencer/envelope tick\n", MIA_AUDIO_SAMPLE_RATE, MIA_AUDIO_TICK_RATE);
+    mia_audio_print_meter(false);
     printf("  voices:    %u\n", MIA_AUDIO_VOICE_COUNT);
     printf("  volume:    %u/15 (master)\n", audio_master_volume & MIA_AUDIO_MASTER_VOLUME_MAX);
     printf("  pins:      L GPIO%u  R GPIO%u  IRQ-slice GPIO%u\n",

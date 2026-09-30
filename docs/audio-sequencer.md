@@ -19,11 +19,12 @@ else the program is doing. This engine moves that job entirely into MIA:
   start command. From then on it costs the 6502 nothing until it wants to
   change something.
 - MIA never interprets music theory. Tempo, note names, octaves, and note
-  lengths are all resolved at encode time into "hold this many samples" —
+  lengths are all resolved at encode time into "hold this many ticks" —
   the engine only ever does fixed-format opcode decode and register writes,
   the same kind of work `audio_apply_register` already does for live writes.
-- The engine lives inside the existing 24 kHz audio ISR on Core 0, the same
-  place voice envelopes are already stepped every sample. It does not touch
+- The engine lives inside the existing audio ISR on Core 0, on its 24 kHz
+  tick (every second 48 kHz output sample) — the same place voice envelopes
+  are stepped. It does not touch
   Core 1's bus-service loop or the video-over-wifi path in any way, and it
   does not add wifi bandwidth: nothing here leaves MIA.
 
@@ -56,15 +57,16 @@ nothing else could live there. Both defaults are gone.)
 ## Event stream
 
 Opcodes are fixed-format, one tag byte plus a fixed payload. Durations are
-**24-bit little-endian sample counts** (up to ~16.7M samples, ~11.6 minutes —
+**24-bit little-endian tick counts**, at the 24 kHz tick rate the header's
+`AUDIO_TICK_RATE` reports (up to ~16.7M ticks, ~11.6 minutes —
 effectively unbounded for a single note) — resolved once at encode time from
 the source tempo/length, never recomputed by MIA.
 
 | Opcode | Value | Payload | Effect |
 | --- | ---: | --- | --- |
 | `END` | `$00` | — | Stop. |
-| `NOTE` | `$01` | `freq_l, freq_h, dur_l, dur_m, dur_h` | Write `FREQ_L`/`FREQ_H`, gate on with phase reset, hold for `dur` samples. Advances the note index. |
-| `REST` | `$02` | `dur_l, dur_m, dur_h` | Gate off, hold for `dur` samples. Advances the note index. |
+| `NOTE` | `$01` | `freq_l, freq_h, dur_l, dur_m, dur_h` | Write `FREQ_L`/`FREQ_H`, gate on with phase reset, hold for `dur` ticks. Advances the note index. |
+| `REST` | `$02` | `dur_l, dur_m, dur_h` | Gate off, hold for `dur` ticks. Advances the note index. |
 | `SET_WAVE` | `$03` | `waveform` | Write `WAVEFORM`. Zero-duration; decoding continues immediately to the next opcode. |
 | `SET_ADSR` | `$04` | `attack_decay, sustain_release` | Write both envelope bytes. Zero-duration. |
 | `SET_PAN` | `$05` | `pan` | Write `PAN`. Zero-duration. |
@@ -109,7 +111,7 @@ is unaffected either way. A track that loops indefinitely for long enough
 Because `JUMP`/`SET_*` are zero-duration and decoding loops straight back for
 the next opcode without returning, a track whose jumps form a cycle with no
 `NOTE`/`REST`/`END` in between would otherwise spin the shared audio ISR
-forever on a single sample. `audio_seq_advance` bounds this to
+forever on a single tick. `audio_seq_advance` bounds this to
 `MIA_SEQ_DECODE_BUDGET` (32) opcodes per call; exceeding it without reaching
 a time-consuming or stopping opcode is treated as a malformed track and stops
 it — fail-safe and silent, the same philosophy as an unrecognized opcode
@@ -127,12 +129,12 @@ Per voice, alongside the existing oscillator/envelope state:
 | `taken` | Set by `VOICE_TAKE`, cleared by `VOICE_RELEASE`. While set, the stream doesn't advance, but nothing is silenced — the caller is driving registers directly. |
 | `track_base` | Set by `AUDIO_SEQ_SET_BASE<voice>`. None until then, and again after boot or `AUDIO_RESET` (see Memory layout). Where `AUDIO_SEQ_LOAD` resets `cursor` to. |
 | `cursor` | Absolute MIA RAM offset of the event currently active. |
-| `countdown` | Samples remaining until the current event ends. |
+| `countdown` | Ticks remaining until the current event ends. |
 | `event_duration` | Full original duration of the current event (needed to reconcile a `VOICE_RELEASE`, see below). |
 | `note_index` | Count of notes/rests decoded so far since this voice was last loaded. `0` means never started; not reset by `JUMP` (see Looping above). |
 
 All of this is decoded and applied inside the audio ISR, at the top of each
-sample, before the oscillator/envelope pass — the same point live-write queue
+tick, before the envelope and oscillator pass — the same point live-write queue
 draining already happens. Advancing a per-voice sequencer costs a counter
 decrement in the common case, and a handful of extra instructions once per
 note; it does not add a new interrupt, a new core, or meaningfully change the
@@ -149,7 +151,7 @@ exactly which voices it means (`$0F` for every voice, `1<<v` for one).
 | `AUDIO_SEQ_LOAD` | `$63` | For each masked voice: (re)initializes `cursor` to `track_base` and `note_index` to `0`. Does **not** start playback. Issued once by `TRACK v, s$` right after the bytes land in MIA RAM. |
 | `AUDIO_SEQ_START` | `$64` | For each masked voice: if it has a track base and isn't already running, starts it from wherever `cursor`/`note_index` currently sit — `track_base` right after a `SEQ_LOAD`, or exactly where it was frozen by a prior `SEQ_STOP`. No time is reconciled; this is a plain resume. |
 | `AUDIO_SEQ_STOP` | `$65` | For each masked voice: stops advancing its stream and gates it off (silences it). `cursor`/`note_index` are left exactly where they are, so a later `SEQ_START` picks up from there. |
-| `AUDIO_VOICE_TAKE` | `$66` | For each masked voice: stops advancing its stream **without** touching its registers — whatever it was doing keeps sounding until the caller's own writes land. Records the current sample clock for `VOICE_RELEASE` to reconcile against. |
+| `AUDIO_VOICE_TAKE` | `$66` | For each masked voice: stops advancing its stream **without** touching its registers — whatever it was doing keeps sounding until the caller's own writes land. Records the current tick clock for `VOICE_RELEASE` to reconcile against. |
 | `AUDIO_VOICE_RELEASE` | `$67` | For each masked voice: resumes, reconciling for however much time passed while taken (see Catch-up below). |
 
 `SEQ_START`/`SEQ_STOP` back `BAND n` (mask `$0F`) and `BAND v,n` (mask
@@ -195,7 +197,7 @@ current event was it already, when taken" — otherwise the catch-up
 undercounts real elapsed time by however much of that event had already
 played, and can land one event later than it should.
 
-On `VOICE_TAKE`, MIA snapshots the moment (a free-running sample counter,
+On `VOICE_TAKE`, MIA snapshots the moment (a free-running tick counter,
 internal to the sequencer, never exposed to BASIC — `CUE` reports a
 per-voice *note index*, not this). On `VOICE_RELEASE`:
 
@@ -224,7 +226,7 @@ reads as a glitch; starting the next one essentially on time does not.
 That loop is bounded to `MIA_SEQ_CATCHUP_BUDGET` (8) events per audio tick.
 A voice taken for a very long SFX with a dense part underneath it resolves
 over a handful of extra ticks (each ~42 µs) instead of doing unbounded work
-inside one sample — the audio ISR's worst-case cost per tick stays bounded
+inside one tick — the audio ISR's worst-case cost per tick stays bounded
 regardless of how long a voice was taken for.
 
 ## Reading status: `PLAYING(v)` and `CUE(v)`
@@ -233,7 +235,7 @@ Both are plain memory reads through the **existing** per-voice audio index —
 no command round-trip, so they're cheap enough to poll in a tight loop.
 Offsets `$09-$0B` of each voice's 16-byte record (documented as reserved,
 write-zero, in `audio.md`) now carry live sequencer status, continuously
-rewritten by the audio ISR every sample:
+rewritten by the audio ISR every tick:
 
 | Voice offset | Name | Description |
 | ---: | --- | --- |
@@ -242,7 +244,7 @@ rewritten by the audio ISR every sample:
 
 A program that writes all 16 bytes of a voice record (per the programmer's
 guide's "write all 16 bytes" pattern) will write zero into these — harmless,
-since the audio ISR rewrites them on the very next sample regardless of what
+since the audio ISR rewrites them on the very next tick regardless of what
 last landed there; the visible glitch is under 42 µs.
 
 Four new index ids expose these three bytes directly, parked at `$09` by

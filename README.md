@@ -70,9 +70,9 @@ handles oscillator stepping, ADSR envelopes, panning, mixing, and PWM output.
 See [docs/audio.md](docs/audio.md) and
 [docs/audio-programmer-guide.md](docs/audio-programmer-guide.md).
 
-The default outputs are GPIO 4 for left and GPIO 5 for right. GPIO 28 is used as
-an internal PWM slice timer for the 24 kHz sample interrupt and is not driven as
-an audio output. These can be overridden at build time with
+The default outputs are GPIO 4 for left and GPIO 5 for right, at 48 kHz. GPIO 28
+is used as an internal PWM slice timer for the 48 kHz sample interrupt and is not
+driven as an audio output. These can be overridden at build time with
 `MIA_AUDIO_L_PIN`, `MIA_AUDIO_R_PIN`, and `MIA_AUDIO_IRQ_PIN`.
 
 ## SD and FAT filesystem subsystem

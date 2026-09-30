@@ -4,7 +4,14 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define MIA_AUDIO_SAMPLE_RATE 24000u
+/* The PWM interrupt runs the oscillators and the mix at MIA_AUDIO_SAMPLE_RATE.
+ * MIA_AUDIO_TICK_RATE is the control clock: the register-write queue, the
+ * sequencer and the envelopes step once per tick, on every
+ * MIA_AUDIO_SAMPLES_PER_TICK-th sample. NOTE/REST durations and the header's
+ * RATE field count ticks, so tracks encoded for 24 kHz play unchanged. */
+#define MIA_AUDIO_SAMPLE_RATE 48000u
+#define MIA_AUDIO_TICK_RATE 24000u
+#define MIA_AUDIO_SAMPLES_PER_TICK (MIA_AUDIO_SAMPLE_RATE / MIA_AUDIO_TICK_RATE)
 #define MIA_AUDIO_VOICE_COUNT 4u
 #define MIA_AUDIO_VOICE_SIZE 16u
 
@@ -85,8 +92,9 @@
 // clears none of it.
 #define MIA_SEQ_NO_BASE 0xFFFFFFFFu
 
-// Event opcodes. NOTE/REST durations are 24-bit little-endian sample counts,
-// resolved once at encode time - MIA never interprets tempo or note names.
+// Event opcodes. NOTE/REST durations are 24-bit little-endian tick counts
+// (MIA_AUDIO_TICK_RATE per second), resolved once at encode time - MIA never
+// interprets tempo or note names.
 #define MIA_SEQ_OP_END       0x00u   // stop
 #define MIA_SEQ_OP_NOTE      0x01u   // freq_l, freq_h, dur_l, dur_m, dur_h
 #define MIA_SEQ_OP_REST      0x02u   // dur_l, dur_m, dur_h
@@ -106,7 +114,7 @@
 
 // Live sequencer status, read through the existing per-voice audio index.
 // These reuse voice-record offsets $09-$0B, documented elsewhere as
-// reserved/write-zero; the audio ISR rewrites them every sample regardless
+// reserved/write-zero; the audio ISR rewrites them every tick regardless
 // of what last landed there, so a stray zero-write is invisible in practice.
 #define MIA_AUDIO_VOICE_SEQ_NOTE_INDEX_L 0x09u
 #define MIA_AUDIO_VOICE_SEQ_NOTE_INDEX_H 0x0Au
@@ -167,6 +175,9 @@ void mia_audio_core1_on_write(uint32_t offset, uint8_t value);
 bool mia_audio_is_active(void);
 void mia_audio_print_summary(void);
 void mia_audio_print_status(void);
+// Prints how long the audio interrupt takes (cycle counter, core 0), and
+// optionally starts a new measurement window.
+void mia_audio_print_meter(bool reset);
 
 void mia_audio_seq_set_base(uint8_t voice, uint32_t base);
 void mia_audio_seq_load_track(uint8_t voice);

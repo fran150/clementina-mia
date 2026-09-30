@@ -13,8 +13,9 @@ The first implementation provides:
 | Feature | Value |
 | --- | ---: |
 | Voices | 4 |
-| Output | stereo PWM |
-| Sample rate | 24,000 Hz |
+| Output | stereo PWM, 10-bit |
+| Output sample rate | 48,000 Hz |
+| Tick rate (sequencer, envelopes, register writes) | 24,000 Hz |
 | Frequency register | unsigned 12.4 fixed-point Hz |
 | Waveforms | sine, pulse, saw, triangle, noise |
 | Envelope | attack, decay, sustain, release |
@@ -22,9 +23,24 @@ The first implementation provides:
 | Master volume | 4-bit, `0..15` (SID `$D418`-style) |
 | Per-voice volume | linear 8-bit, `0..255` |
 
-The audio IRQ runs on core 0. Core 1 only observes indexed RAM writes to the
-audio block and queues byte updates for the audio IRQ to consume. This keeps the
-6502 bus/action loop cheap and bounded.
+The audio IRQ runs on core 0, once per output sample. Every second interrupt is
+also a tick: it applies queued register writes, steps the sequencer and steps
+the envelopes; the other interrupts only run the oscillators and the mix. Ticks
+are the unit of time a program sees (sequencer durations, the header `RATE`
+field), so the output rate can change without changing any data format. The
+interrupt and everything it calls run from RAM, never waiting on the flash
+cache.
+
+Core 1 only observes indexed RAM writes to the audio block and queues byte
+updates for the audio IRQ to consume. This keeps the 6502 bus/action loop cheap
+and bounded.
+
+Below about 96 MHz `clk_sys` (2,000 cycles per output sample), audio pauses:
+the engine would take most of core 0, and the PWM carrier would become
+audible. MIA only runs that slowly for PHI2 below about 72 Hz (single-step
+speeds). While paused, `AUDIO_STATUS_ACTIVE` stays set, the sequencer holds its
+place, and the outputs idle at mid-scale on a short PWM period, so there is no
+click on the way in or out.
 
 ## Hardware Pins
 
@@ -38,7 +54,37 @@ The default pin mapping is:
 
 These defaults can be overridden at build time with `MIA_AUDIO_L_PIN`,
 `MIA_AUDIO_R_PIN`, and `MIA_AUDIO_IRQ_PIN`. The IRQ timer pin must map to a PWM
-slice that is not used by either audio output pin.
+slice that is not used by either audio output pin. GPIO 4 and 5 share one PWM
+slice, so the interrupt updates both channels with a single register write.
+
+The outputs are 10-bit PWM with no clock divider: the carrier is `clk_sys /
+1024`, about 146 kHz at the normal 150 MHz clock and 250 kHz in fast mode. The
+pins run at 2 mA drive with a slow slew rate to soften the edges.
+
+## Output Stage
+
+The Clementina board filters each pin the same way the Picocomputer RP6502
+does, then feeds a stereo 3.5 mm jack (tip left, ring right):
+
+```text
+GPIO ── 220 Ω ──┬────────┬── 47 µF ──┬── jack
+                │        │           │
+             100 nF    100 Ω       1.8 kΩ
+                │        │           │
+               GND      GND         GND
+```
+
+- The 220 Ω / 100 Ω divider brings the 3.3 V swing down to about 1 V peak to
+  peak (line level) from a source of about 69 Ω, so it drives headphones
+  directly.
+- The 100 nF capacitor with that 69 Ω is a single pole at about 23 kHz, which
+  removes the PWM carrier.
+- The 47 µF capacitor blocks DC; the 1.8 kΩ resistor holds the jack side at
+  0 V, so plugging in does not pop.
+
+The 48 kHz output rate keeps the sample-rate images of every audible tone
+above about 30 kHz, beyond hearing, which is why one pole is enough. There is
+no amplifier and no speaker.
 
 ## Memory Map
 
@@ -63,7 +109,7 @@ Offsets in this table are relative to `$12000`.
 | `$01` | `AUDIO_VOLUME` | read/write | Master volume, `0..15`. `0` is silent, `15` is full. Only the low nibble is used. Defaults to `15`. |
 | `$02` | `AUDIO_STATUS` | read | Audio status flags. |
 | `$03` | `AUDIO_CHANNELS` | read | Number of voices. Current value is `4`. |
-| `$04-$05` | `AUDIO_SAMPLE_RATE` | read | Little-endian sample rate. Current value is `24000`. |
+| `$04-$05` | `AUDIO_TICK_RATE` | read | Little-endian tick rate: the unit of sequencer `NOTE`/`REST` durations. Current value is `24000`. (Named `AUDIO_SAMPLE_RATE` before the output rate moved to 48 kHz; the value is unchanged.) |
 | `$06` | `AUDIO_FLAGS` | read | Bit 0 set means stereo output is available. |
 | `$07-$0F` | reserved | reserved | Write zero. |
 
@@ -262,5 +308,6 @@ The USB terminal exposes:
 | `audio enable` | Start audio from the terminal. |
 | `audio stop` | Stop audio from the terminal. |
 | `audio reset` | Clear and reset the audio subsystem. |
+| `audio meter` | How long the audio interrupt takes, from the Cortex-M33 cycle counter: average and worst case in cycles, and the average as a share of core 0. Then starts a new measurement window, so repeated calls show what is playing now. Enabling audio and changing PHI2 speed also start a new window. Interrupt entry and exit add about two dozen cycles the counter does not see. |
 | `audio seq [status\|test\|stop\|take\|give] <voice 0-3>` | Background sequencer diagnostics — see [audio-sequencer.md](audio-sequencer.md). |
 

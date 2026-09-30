@@ -579,13 +579,22 @@ static void cmd_audio(const char *args) {
 
     if (!*args || strcmp(args, "status") == 0) {
         mia_audio_print_status();
-        printf("Usage: audio [status|enable|stop|reset|seq]\n");
+        printf("Usage: audio [status|enable|stop|reset|meter|seq]\n");
         return;
     }
 
     if (strcmp(args, "enable") == 0) {
         mia_audio_enable();
         printf("Audio: enabled\n");
+        return;
+    }
+
+    // Prints the interrupt's cycle cost since the last meter/enable/speed
+    // change, then starts a new window, so repeated calls sample what is
+    // playing now.
+    if (strcmp(args, "meter") == 0) {
+        printf("Audio:\n");
+        mia_audio_print_meter(true);
         return;
     }
 
@@ -606,7 +615,7 @@ static void cmd_audio(const char *args) {
         return;
     }
 
-    printf("Usage: audio [status|enable|stop|reset|seq]\n");
+    printf("Usage: audio [status|enable|stop|reset|meter|seq]\n");
 }
 
 static void cmd_sd(const char *args) {

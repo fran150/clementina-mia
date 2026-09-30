@@ -247,8 +247,8 @@ level.
 ## Updating Live Audio
 
 When audio is active, writes through `IDXA_PORT` or `IDXB_PORT` to the audio
-block are applied by the audio IRQ. Typical latency is one audio sample, about
-42 microseconds.
+block are applied by the audio IRQ on its next tick. Typical latency is one tick
+(24 kHz), about 42 microseconds.
 
 Frequency changes are optimized internally. MIA recalculates the oscillator
 phase increment when either frequency byte changes, then the IRQ only adds the
