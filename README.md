@@ -445,3 +445,7 @@ In a `MIA_USB_MODE=host` build, USB stdio is disabled for the USB host input
 source. During the initial debug loop in a USB-device build, sending `c` over
 USB continues into MIA initialization, and sending `q` reboots the Pico into
 BOOTSEL.
+
+## License
+
+GPLv3. See [LICENSE](LICENSE).
