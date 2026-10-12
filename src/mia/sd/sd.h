@@ -2,6 +2,7 @@
 #define _MIA_SD_SD_H_
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #define MIA_SD_STATE_OFFSET 0x13000u
@@ -163,5 +164,19 @@ uint32_t mia_sd_sector_count(void);
 
 void mia_sd_print_summary(void);
 void mia_sd_print_status(void);
+
+typedef enum {
+    MIA_SD_BOOT_FILE_OK,
+    MIA_SD_BOOT_FILE_NO_CARD,
+    MIA_SD_BOOT_FILE_MISSING,
+    MIA_SD_BOOT_FILE_TOO_LARGE,
+    MIA_SD_BOOT_FILE_READ_ERROR,
+} mia_sd_boot_file_result_t;
+
+// Reads a whole small file into buffer during boot, before mia_init(). Mounts
+// the card for the read and unmounts it again, so the 6502 still starts with
+// the filesystem unmounted. *out_length gets the number of bytes read.
+mia_sd_boot_file_result_t mia_sd_read_boot_file(const char *path, uint8_t *buffer,
+                                                size_t size, size_t *out_length);
 
 #endif

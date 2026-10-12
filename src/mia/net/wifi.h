@@ -10,7 +10,8 @@ typedef enum {
     MIA_WIFI_MODE_AP,
 } mia_wifi_mode_t;
 
-// Apply compile-time defaults and connect/start accordingly.
+// Apply the boot settings and connect/start accordingly: WIFI.CFG from the
+// SD card when it is present and valid, else the compile-time defaults.
 // Called once on boot before mia_init().
 bool mia_net_wifi_init(void);
 

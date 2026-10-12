@@ -31,6 +31,13 @@ assets, data files, saved games, and configuration files from a normal
 FAT-formatted SD card. Raw sector access is available for diagnostics, custom
 disk images, and future native filesystems.
 
+MIA itself reads one file from the card: `WIFI.CFG` in the root folder, once at
+boot, before the 6502 starts (the format is in the README's
+[Wi-Fi setup](../README.md#wi-fi-setup) section). MIA unmounts the card after
+that read, so programs still start with the filesystem unmounted. Because the
+boot read initializes the card, `SD_STATUS_PRESENT` and `MIA_STAT_SD_PRESENT`
+are already set when the 6502 starts if a working card is inserted.
+
 ## Hardware Pins
 
 The default SD pin mapping uses `SPI0`:

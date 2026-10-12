@@ -781,6 +781,46 @@ static bool sd_require_mounted(FRESULT *out_result) {
     return sd_mount_filesystem(out_result);
 }
 
+mia_sd_boot_file_result_t mia_sd_read_boot_file(const char *path, uint8_t *buffer,
+                                                size_t size, size_t *out_length) {
+    // Static so the 512-byte sector buffer inside FIL stays off the boot stack.
+    static FIL file;
+    mia_sd_boot_file_result_t result = MIA_SD_BOOT_FILE_OK;
+    FRESULT fr;
+
+    *out_length = 0;
+    if (!sd_mount_filesystem(&fr)) {
+        result = MIA_SD_BOOT_FILE_NO_CARD;
+    } else {
+        fr = f_open(&file, path, FA_READ);
+        if (fr == FR_NO_FILE || fr == FR_NO_PATH) {
+            result = MIA_SD_BOOT_FILE_MISSING;
+        } else if (fr != FR_OK) {
+            result = MIA_SD_BOOT_FILE_READ_ERROR;
+        } else {
+            if (f_size(&file) > size) {
+                result = MIA_SD_BOOT_FILE_TOO_LARGE;
+            } else {
+                UINT read = 0;
+                fr = f_read(&file, buffer, (UINT)f_size(&file), &read);
+                if (fr != FR_OK || read != f_size(&file)) {
+                    result = MIA_SD_BOOT_FILE_READ_ERROR;
+                } else {
+                    *out_length = read;
+                }
+            }
+            f_close(&file);
+        }
+    }
+
+    f_mount(NULL, "0:", 0);
+    memset(&sd_fatfs, 0, sizeof(sd_fatfs));
+    memset(&file, 0, sizeof(file));
+    sd_mounted = false;
+    sd_publish_state();
+    return result;
+}
+
 static void sd_job_update_progress(void) {
     sd_write_u16(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_RESULT_LEN_L, (uint16_t)sd_job.total);
     sd_write_u32(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_FILE_POS0, sd_job.total);
