@@ -16,7 +16,9 @@
 #define MIA_DEFAULT_PHI2_HZ 1200000u
 
 // Public bounds for requested PHI2 speeds through the SPEED_L/M/H config registers.
-// Values outside this range are clamped before applying the clock.
+// Values outside this range are clamped before applying the clock. No speed in
+// this range is guaranteed yet; the README's "PHI2 Speed Control" says what
+// each range depends on.
 #define MIA_MIN_PHI2_HZ 1u
 #define MIA_MAX_PHI2_HZ 8000000u
 
