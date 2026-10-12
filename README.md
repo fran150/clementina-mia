@@ -441,6 +441,16 @@ Supported requests are currently clamped to `1 Hz` through `8 MHz`.
 
 On Pico 2 W, the default Pico system clock is `150 MHz`. With that normal `clk_sys`, the unchanged PIO timing program can generate about `72 Hz` through `4.6875 MHz` by changing only the PIO divider. Requests below `72 Hz` slow `clk_sys`, which also slows the CPU, DMA scheduling, timers, USB/debug behavior, and any non-bus MIA work; this may affect operations outside the bus timing path. Requests above `4.6875 MHz` overclock `clk_sys` to `256 MHz` so the same 32-cycle PIO period can reach up to `8 MHz`; this may increase heat, power use, or timing instability on the Pico.
 
+No `PHI2` speed is guaranteed yet: the board has not been built and tested. What each range depends on:
+
+| `PHI2` | Pico `clk_sys` | Board glue logic |
+| ------ | -------------- | ---------------- |
+| up to `4.6875 MHz` | `150 MHz`, the RP2350's rated clock | within datasheet timing with worst-case parts |
+| `4.6875-6.5 MHz` | overclocked to `256 MHz` | within datasheet timing with worst-case parts |
+| `6.5-8 MHz` | overclocked to `256 MHz` | needs typical parts; worst-case parts run out of margin around `6.5 MHz` |
+
+The glue-logic figures come from the "Glue logic timing" section of the `clementina-hardware` README.
+
 ## GPIO Mapping
 
 | GPIO | Signal | Direction | Description |
