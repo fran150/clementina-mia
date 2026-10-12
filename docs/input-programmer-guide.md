@@ -352,7 +352,7 @@ can stream the full 32-byte keyboard bitmap through `IIDX_KEYBOARD_BITMAP` and
 the full 32-byte consumer bitmap through `IIDX_CONSUMER_BITMAP`.
 
 ```asm
-bitmap_buffer = $0200
+bitmap_buffer = $0280        ; $0200-$0252 is BASIC's line input buffer
 
 read_keyboard_bitmap:
     lda #IIDX_KEYBOARD_BITMAP
