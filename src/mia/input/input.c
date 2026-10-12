@@ -29,7 +29,7 @@ void input_recompute_status(void) {
             status |= INPUT_SOURCE_WIFI;
             break;
         case MIA_INPUT_MODE_USB_HOST:
-            status |= INPUT_SOURCE_USB_HOST;
+            // Reserved; input_mode_available() never accepts it.
             break;
     }
 
@@ -92,20 +92,11 @@ static void input_configure_indexes(void) {
 static bool input_mode_available(mia_input_mode_t mode) {
     switch (mode) {
         case MIA_INPUT_MODE_CONSOLE:
-#if MIA_USB_MODE == MIA_USB_MODE_HOST
-            return false;
-#else
             return true;
-#endif
         case MIA_INPUT_MODE_WIFI:
             return input_wifi_available();
-        case MIA_INPUT_MODE_USB_HOST:
-#if MIA_USB_MODE == MIA_USB_MODE_HOST
-            return true;
-#else
-            return false;
-#endif
         default:
+            // Includes MIA_INPUT_MODE_USB_HOST, reserved for a later board.
             return false;
     }
 }
@@ -117,14 +108,10 @@ void mia_input_reset_runtime_state(void) {
     input_wifi_reset_runtime_state();
     input_configure_indexes();
 
-#if MIA_USB_MODE == MIA_USB_MODE_HOST
-    active_mode = MIA_INPUT_MODE_USB_HOST;
-#else
     active_mode = (mia_input_mode_t)MIA_INPUT_DEFAULT_MODE;
     if (!input_mode_available(active_mode)) {
         active_mode = MIA_INPUT_MODE_CONSOLE;
     }
-#endif
 
     input_recompute_status();
 }

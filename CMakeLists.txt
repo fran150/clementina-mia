@@ -170,20 +170,8 @@ target_link_libraries(mia
     m
 )
 
-# Enable USB output in USB-device builds, disable UART output.
-if(DEFINED ENV{MIA_USB_MODE})
-    string(TOLOWER "$ENV{MIA_USB_MODE}" _mia_usb_mode)
-else()
-    set(_mia_usb_mode "device")
-endif()
-
-if(_mia_usb_mode STREQUAL "host")
-    target_compile_definitions(mia PRIVATE MIA_USB_MODE=1)
-    pico_enable_stdio_usb(mia 0)
-else()
-    target_compile_definitions(mia PRIVATE MIA_USB_MODE=0)
-    pico_enable_stdio_usb(mia 1)
-endif()
+# The terminal console runs over USB stdio; UART output is off.
+pico_enable_stdio_usb(mia 1)
 pico_enable_stdio_uart(mia 0)
 
 # Create map/bin/hex/uf2 files
@@ -277,7 +265,7 @@ if(DEFINED ENV{MIA_SD_SERVICE_BUDGET_US})
     target_compile_definitions(mia PRIVATE MIA_SD_SERVICE_BUDGET_US=$ENV{MIA_SD_SERVICE_BUDGET_US})
 endif()
 
-# MIA_INPUT_DEFAULT_MODE is used in USB-device builds: wifi (default) or console.
+# MIA_INPUT_DEFAULT_MODE: wifi (default) or console.
 if(DEFINED ENV{MIA_INPUT_DEFAULT_MODE})
     string(TOLOWER "$ENV{MIA_INPUT_DEFAULT_MODE}" _input_default_mode)
     if(_input_default_mode STREQUAL "console")

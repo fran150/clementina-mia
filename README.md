@@ -87,13 +87,11 @@ See [docs/input.md](docs/input.md),
 The console command `input console` feeds terminal key presses into the input
 FIFO until `Ctrl+Q`. The console command `input wifi` enables the Wi-Fi input
 listener on UDP port `6503` and accepts one client at a time. The build-time
-default input mode for USB-device builds is selected with
-`MIA_INPUT_DEFAULT_MODE` and defaults to `wifi`. Building with
-`MIA_USB_MODE=host` disables USB stdio and boots MIA in the USB host input
-source; USB HID device decoding is reserved for the TinyUSB host integration.
-The 6502 can change input modes at any point in either USB role with the
-`CMD_INPUT_SET_MODE` command, which is especially useful in USB-host builds
-where terminal console commands are not available.
+default input mode is selected with `MIA_INPUT_DEFAULT_MODE` and defaults to
+`wifi`. The 6502 can change input modes at any point with the
+`CMD_INPUT_SET_MODE` command. Input mode `2` is reserved for a USB keyboard on
+a later board: rev 1 is powered through the Pico's USB port, so MIA reports
+that mode as unavailable.
 Console input is text-only.
 
 ## PWM audio subsystem
@@ -316,7 +314,7 @@ Commands are requested by writing parameters to `CMD_PARAM1-3`, then writing the
 | `30` | none | Pause 6502 execution by stopping `PHI2`. Once stopped, resume normally comes from the terminal with `exec resume`. |
 | `42` | none | Force a full video refresh by marking every syncable video page dirty. |
 | `43` | `p1 = video mode` | Update the `VIDEO_MODE` byte. |
-| `50` | `p1 = input mode`, `p2 = 0`, `p3 = 0` | Request an input mode change: `0` = console, `1` = Wi-Fi, `2` = USB host. |
+| `50` | `p1 = input mode`, `p2 = 0`, `p3 = 0` | Request an input mode change: `0` = console, `1` = Wi-Fi. `2` is reserved for a later board's USB keyboard and is always unavailable. |
 | `51` | `p1 = input probe`, `p2 = byte offset`, `p3 = 0` | Position an input probe: `0-7` = keyboard probes, `8-15` = consumer probes. |
 | `60` | none | Enable PWM audio, synchronizing live voice state from the audio RAM block. |
 | `61` | none | Stop PWM audio and return the outputs to center. Audio RAM is preserved. |
@@ -438,7 +436,7 @@ Errors are stored in a 16-entry ring buffer. Reading `$FFEC` pulls one error int
 | `31` | `ERROR_WIFI_CONNECT_FAILED` | STA connection failed. |
 | `40` | `ERROR_VIDEO_UDP_ALLOC_FAILED` | Video UDP PCB allocation failed. |
 | `41` | `ERROR_VIDEO_UDP_BIND_FAILED` | Video UDP bind failed. |
-| `50` | `ERROR_INPUT_MODE_UNAVAILABLE` | Requested input mode is not available in this build/runtime. |
+| `50` | `ERROR_INPUT_MODE_UNAVAILABLE` | Requested input mode is unknown, reserved (`2`), or not available right now (Wi-Fi without its listener). |
 | `51` | `ERROR_INPUT_PROBE_INVALID` | Requested input probe id is invalid. |
 | `52` | `ERROR_INPUT_UDP_ALLOC_FAILED` | Input UDP PCB allocation failed. |
 | `53` | `ERROR_INPUT_UDP_BIND_FAILED` | Input UDP bind failed. |
@@ -515,11 +513,9 @@ make build
 make flash
 ```
 
-USB stdio is enabled and UART stdio is disabled in the default USB-device build.
-In a `MIA_USB_MODE=host` build, USB stdio is disabled for the USB host input
-source. During the initial debug loop in a USB-device build, sending `c` over
-USB continues into MIA initialization, and sending `q` reboots the Pico into
-BOOTSEL.
+USB stdio is enabled and UART stdio is disabled. During the initial debug
+loop, sending `c` over USB continues into MIA initialization, and sending `q`
+reboots the Pico into BOOTSEL.
 
 ## License
 

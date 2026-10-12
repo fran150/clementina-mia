@@ -31,7 +31,7 @@ INPUT_MOUSE_DOWN       = %00001000
 INPUT_GAMEPAD_DOWN     = %00010000
 INPUT_SOURCE_CONSOLE   = %00100000
 INPUT_SOURCE_WIFI      = %01000000
-INPUT_SOURCE_USB_HOST  = %10000000
+INPUT_SOURCE_USB_HOST  = %10000000 ; reserved for a later board
 
 IRQ_INPUT_KEYBOARD = $0100
 IRQ_INPUT_MOUSE    = $0200
@@ -39,7 +39,7 @@ IRQ_INPUT_GAMEPAD  = $0400
 
 INPUT_MODE_CONSOLE  = $00
 INPUT_MODE_WIFI     = $01
-INPUT_MODE_USB_HOST = $02
+INPUT_MODE_USB_HOST = $02 ; reserved for a later board
 
 CMD_INPUT_SET_MODE = $50
 CMD_INPUT_SET_PROBE = $51
@@ -119,7 +119,7 @@ GAMEPAD_EVENT_DEVICE      = %00100000
 | 4 | `INPUT_GAMEPAD_DOWN` | At least one gamepad digital control is held. |
 | 5 | `INPUT_SOURCE_CONSOLE` | Console input owns the input subsystem. |
 | 6 | `INPUT_SOURCE_WIFI` | Wi-Fi input owns the input subsystem. |
-| 7 | `INPUT_SOURCE_USB_HOST` | USB host input owns the input subsystem. |
+| 7 | `INPUT_SOURCE_USB_HOST` | Reserved for a later board's USB keyboard; reads as zero. |
 
 `INPUT_TEXT_READY` is equivalent to `INPUT_CHAR_COUNT != 0`.
 `INPUT_MOUSE_DOWN` is equivalent to `MOUSE_STATE.buttons & $1F != 0`.
@@ -148,21 +148,15 @@ Mode values:
 | ---: | --- | --- |
 | `$00` | `INPUT_MODE_CONSOLE` | Console text input mode. |
 | `$01` | `INPUT_MODE_WIFI` | Wi-Fi input mode. |
-| `$02` | `INPUT_MODE_USB_HOST` | USB host input mode. |
+| `$02` | `INPUT_MODE_USB_HOST` | Reserved for a USB keyboard on a later board; always unavailable. |
 
-If the requested mode is not available in the current build, MIA leaves the
-active mode unchanged. Read `INPUT_STATUS` after command completion to confirm
-which mode is active.
+If the requested mode is not available, MIA leaves the active mode unchanged.
+Read `INPUT_STATUS` after command completion to confirm which mode is active.
+Rev 1 is powered through the Pico's USB port, so `INPUT_MODE_USB_HOST` is
+always unavailable; it is reserved for a USB keyboard on a later board.
 
-`CMD_INPUT_SET_MODE` is available in both `MIA_USB_MODE=device` and
-`MIA_USB_MODE=host` builds. In USB-device builds, the terminal console commands
-`input console` and `input wifi` are also available.
-
-In a `MIA_USB_MODE=host` build, MIA boots in `INPUT_MODE_USB_HOST` and the Pico
-USB port is not available as a terminal console. A 6502 program can change the
-active input mode at any point by issuing `CMD_INPUT_SET_MODE`. USB HID device
-decoding is reserved for the TinyUSB host integration; current USB-host builds
-report the USB host source without device state.
+The terminal console commands `input console` and `input wifi` are another way
+to change the mode.
 
 ```asm
 enable_wifi_input:
