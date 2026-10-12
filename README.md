@@ -92,7 +92,13 @@ GPIO 3. These can be overridden at build time with `MIA_SD_SPI_INSTANCE`,
 
 ## Register Map
 
-MIA exposes 32 internal registers. The 6502 sees them at `$FFE0-$FFFF`; internally only the low 5 address bits are used.
+MIA exposes 32 internal registers. The 6502 uses them at `$FFE0-$FFFF`.
+
+The board selects MIA for the whole `$E000-$FFFF` block, but MIA is wired to
+A0-A4 only, so the 32 registers repeat every 32 bytes across `$E000-$FFDF`.
+Those mirrors are the same registers, side effects included: a read at
+`$E010` clears pending IRQs just like `$FFF0`. Programs use only
+`$FFE0-$FFFF` and leave `$E000-$FFDF` alone.
 
 | Register | Clementina | Name | Description |
 | -------- | ---------- | ---- | ----------- |
