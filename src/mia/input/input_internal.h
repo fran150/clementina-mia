@@ -10,18 +10,6 @@
 
 #include "mem/mem.h"
 
-#ifndef MIA_USB_MODE_DEVICE
-#define MIA_USB_MODE_DEVICE 0
-#endif
-
-#ifndef MIA_USB_MODE_HOST
-#define MIA_USB_MODE_HOST 1
-#endif
-
-#ifndef MIA_USB_MODE
-#define MIA_USB_MODE MIA_USB_MODE_DEVICE
-#endif
-
 #ifndef MIA_INPUT_DEFAULT_MODE
 #define MIA_INPUT_DEFAULT_MODE MIA_INPUT_MODE_WIFI
 #endif

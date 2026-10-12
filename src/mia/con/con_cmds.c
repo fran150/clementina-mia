@@ -498,7 +498,7 @@ static void cmd_input(const char *args) {
 
     if (strcmp(args, "console") == 0) {
         if (!mia_input_set_mode(MIA_INPUT_MODE_CONSOLE)) {
-            printf("Input: console mode is not available in this build.\n");
+            printf("Input: console mode is not available.\n");
             return;
         }
         con_enter_input();

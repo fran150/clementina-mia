@@ -10,11 +10,11 @@ MIA exposes input in three forms:
 - Fixed 32-byte HID bitmaps for digital keyboard and consumer controls.
 - Fixed mouse and gamepad state structures for pointer and controller input.
 
-The 6502 interface is the same regardless of whether the active input mode uses
-the terminal console, Wi-Fi input client, or USB HID host. The console mode only
-produces text input. Wi-Fi mode can update text, keyboard, consumer, mouse, and
-gamepad state. USB host mode is selectable in USB-host builds; USB HID device
-decoding is reserved for the TinyUSB host integration.
+The 6502 interface is the same whether the active input mode uses the terminal
+console or the Wi-Fi input client. The console mode only produces text input.
+Wi-Fi mode can update text, keyboard, consumer, mouse, and gamepad state. Input
+mode `2` and source bit 7 are reserved for a USB keyboard on a later board; rev 1
+is powered through the Pico's USB port, so it cannot host one.
 
 ## Input Sources
 
@@ -22,9 +22,8 @@ Only one input mode owns the live input state at a time.
 
 | Mode | Activation | State Supported | Release |
 | --- | --- | --- | --- |
-| Console | `input console` in the Pico terminal console, or USB-device build option `MIA_INPUT_DEFAULT_MODE=console` | text FIFO | `Ctrl+Q` |
-| Wi-Fi | `input wifi` in the Pico terminal console, or USB-device build default (`MIA_INPUT_DEFAULT_MODE=wifi`) | text FIFO, keyboard, consumer, mouse, gamepads | disconnect packet, replacement `HELLO`, terminal `input` command, or `CMD_INPUT_SET_MODE` |
-| USB host | USB-host build `MIA_USB_MODE=host` | reserved for USB HID host input | source shutdown |
+| Console | `input console` in the Pico terminal console, or build option `MIA_INPUT_DEFAULT_MODE=console` | text FIFO | `Ctrl+Q` |
+| Wi-Fi | `input wifi` in the Pico terminal console, or the build default (`MIA_INPUT_DEFAULT_MODE=wifi`) | text FIFO, keyboard, consumer, mouse, gamepads | disconnect packet, replacement `HELLO`, terminal `input` command, or `CMD_INPUT_SET_MODE` |
 
 When a mode is released, MIA clears live held-state and device-state fields for
 that mode. Bytes already queued in the text FIFO remain available to the 6502
@@ -32,15 +31,9 @@ program.
 
 ### Input Mode Selection
 
-`MIA_USB_MODE` selects the USB role at build time. The default role is `device`,
-which keeps the Pico USB port available for the terminal console. The `host`
-role disables USB stdio and selects the USB host input source at boot. USB HID
-device decoding is reserved for the TinyUSB host integration.
-
-`MIA_INPUT_DEFAULT_MODE` selects the input mode entered at boot in a
-`MIA_USB_MODE=device` build. Valid values are `console` and `wifi`. The default
-is `wifi`; if the Wi-Fi input listener is unavailable at boot, MIA falls back to
-`console`.
+`MIA_INPUT_DEFAULT_MODE` selects the input mode entered at boot. Valid values
+are `console` and `wifi`. The default is `wifi`; if the Wi-Fi input listener is
+unavailable at boot, MIA falls back to `console`.
 
 The terminal console command `input console` enters console text input mode.
 While this mode is active, terminal key presses are forwarded to the text FIFO
@@ -53,14 +46,9 @@ disconnects, another client sends an accepted `HELLO`, or the active input mode
 changes. The terminal console remains available for commands while Wi-Fi input
 mode is active.
 
-In both `MIA_USB_MODE=device` and `MIA_USB_MODE=host` builds, the 6502 can
-change the active input mode at any point with the `CMD_INPUT_SET_MODE`
-command. In USB-device builds, the terminal console commands provide an
-additional way for the user to select console or Wi-Fi input.
-
-In a `MIA_USB_MODE=host` build, `INPUT_MODE_USB_HOST` is the boot input mode.
-The Pico USB port is used as a host port instead of a USB stdio terminal, so
-terminal console commands are not available in this mode.
+The 6502 can change the active input mode at any point with the
+`CMD_INPUT_SET_MODE` command. The terminal console commands are another way for
+the user to select console or Wi-Fi input.
 
 ## Input Commands
 
@@ -84,11 +72,11 @@ CMD_TRIGGER $FFE9
 | ---: | --- | --- |
 | `$00` | `INPUT_MODE_CONSOLE` | Console text input mode. |
 | `$01` | `INPUT_MODE_WIFI` | Wi-Fi input mode. |
-| `$02` | `INPUT_MODE_USB_HOST` | USB host input mode. |
+| `$02` | `INPUT_MODE_USB_HOST` | Reserved for a USB keyboard on a later board; always unavailable. |
 | `$03-$FF` | reserved | Ignored. |
 
-If the requested mode is not available in the current build, MIA leaves the
-active mode unchanged. `INPUT_STATUS` reports the mode that is actually active.
+If the requested mode is not available, MIA leaves the active mode unchanged.
+`INPUT_STATUS` reports the mode that is actually active.
 
 `CMD_INPUT_SET_PROBE` probe values:
 
@@ -127,7 +115,7 @@ MIA exposes the input control registers in the reserved register range
 | 4 | `INPUT_GAMEPAD_DOWN` | At least one gamepad digital control is held. |
 | 5 | `INPUT_SOURCE_CONSOLE` | The console input source owns input. |
 | 6 | `INPUT_SOURCE_WIFI` | The Wi-Fi input source owns input. |
-| 7 | `INPUT_SOURCE_USB_HOST` | The USB host input source owns input. |
+| 7 | `INPUT_SOURCE_USB_HOST` | Reserved for a later board's USB keyboard; reads as zero. |
 
 Mouse and gamepad down bits are level summaries. `INPUT_MOUSE_DOWN` is set when
 `MOUSE_STATE.buttons & $1F` is nonzero. `INPUT_GAMEPAD_DOWN` is set when any
@@ -277,9 +265,8 @@ the active source:
 
 In Wi-Fi mode, keyboard, consumer, and mouse availability come from the active
 client's capabilities. Gamepad bits come from each reported gamepad slot's
-connected flag. USB host mode currently reports no device availability until
-USB HID host decoding is added. In console mode, these bits are clear because
-console input supplies only text bytes.
+connected flag. In console mode, these bits are clear because console input
+supplies only text bytes.
 
 Detailed event flags are latched in the input control block. Each event group
 has a flags byte, a mask byte, and an acknowledge byte. MIA sets event flag bits

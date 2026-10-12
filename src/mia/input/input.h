@@ -26,7 +26,7 @@
 #define INPUT_GAMEPAD_DOWN    (1u << 4)
 #define INPUT_SOURCE_CONSOLE  (1u << 5)
 #define INPUT_SOURCE_WIFI     (1u << 6)
-#define INPUT_SOURCE_USB_HOST (1u << 7)
+#define INPUT_SOURCE_USB_HOST (1u << 7) // reserved for a later board; never set
 
 #define INPUT_DEVICE_KEYBOARD  (1u << 0)
 #define INPUT_DEVICE_CONSUMER  (1u << 1)
@@ -59,6 +59,8 @@
 typedef enum {
     MIA_INPUT_MODE_CONSOLE = 0,
     MIA_INPUT_MODE_WIFI = 1,
+    // Reserved for a USB keyboard on a later board. Rev 1 powers the board
+    // through the Pico's USB port, so this mode is always unavailable.
     MIA_INPUT_MODE_USB_HOST = 2,
 } mia_input_mode_t;
 
