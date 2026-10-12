@@ -175,6 +175,30 @@ MIA reserves 256 KiB of RAM. It is accessed through 256 index descriptors, each 
 
 Only two index descriptors are active on the CPU bus at a time: window A selected by `IDXA_SELECT`, and window B selected by `IDXB_SELECT`.
 
+### MIA RAM map
+
+MIA RAM is split at `$14000`. The firmware owns everything below it and
+programs own everything above it.
+
+| Range | Size | Owner | Use |
+| ----- | ---- | ----- | --- |
+| `$00000-$10D4F` | 68,944 B | Video | Local header and render control, palettes (`$00100`), CHR banks (`$00200`), background nametables and attributes (`$0C200`), overlay (`$10080`), OAM (`$10850`). See [video-programmer-guide.md](docs/video-programmer-guide.md). |
+| `$11000-$1107F` | 128 B | Input | Input state; clock snapshot at `$11078-$1107F`. See [input.md](docs/input.md). |
+| `$12000-$1204F` | 80 B | Audio | Audio registers. See [audio.md](docs/audio.md). |
+| `$13000-$13BFF` | 3 KiB | SD/FS | Control block and buffers. See [sd.md](docs/sd.md). |
+| `$14000-$3FFFF` | 176 KiB | Programs | Free. |
+
+- The gaps below `$14000` (`$10D50-$10FFF`, `$11080-$11FFF`,
+  `$12050-$12FFF`, `$13C00-$13FFF`) belong to the firmware too, so new
+  firmware state can go there without moving anything programs use.
+- The firmware touches `$14000-$3FFFF` only where a program points it (an
+  index, a DMA copy, an SD transfer or a sequencer track), and no reset clears
+  it. Programs choose its layout; BASIC's `TRACK` places voice `v` at
+  `$14000 + v * $1000` when no address is given.
+- The one exception is the serial console's `audio seq test` debug command,
+  which writes its test arpeggio to the top 1 KiB (`$3FC00-$3FFFF`, 256 bytes
+  per voice).
+
 ## Configuration Registers
 
 The config interface uses `CFG_SELECT` and `CFG_PORT`. Write a config id to `$FFE2` (`CFG_SELECT`) to load its current value into `$FFE3` (`CFG_PORT`); read or write `$FFE3` to access the selected config id.

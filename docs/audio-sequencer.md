@@ -40,9 +40,9 @@ the old fixed layout did. The caller is responsible for picking a base that
 doesn't collide with the syncable video region (`$00020-$10D4F`), input/clock
 state (`$11000-$1107F`), the audio register block (`$12000-$1204F`), SD/FS
 state (`$13000-$13BFF` — control block, sector/path/dir/transfer buffers, see
-`sd.md`), or another voice's own track. `$14000-$3FFFF` (~176 KiB) is
-otherwise entirely unclaimed and the natural place to put a large or
-many-voice song.
+`sd.md`), or another voice's own track. `$14000-$3FFFF` (176 KiB) is the
+programs' block of MIA RAM (see the MIA RAM map in the README) and the natural
+place to put a large or many-voice song.
 
 Until a program issues `AUDIO_SEQ_SET_BASE<voice>`, a voice has no track.
 Boot and `AUDIO_RESET` forget every voice's base, and `AUDIO_SEQ_START`
