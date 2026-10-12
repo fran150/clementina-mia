@@ -111,6 +111,7 @@ add_executable(mia
     src/mia/input/input_text.c
     src/mia/input/input_wifi.c
     src/mia/net/wifi.c
+    src/mia/net/wifi_config.c
     src/mia/sd/sd.c
     src/mia/sd/sd_diskio.c
     src/mia/sys/exec.c

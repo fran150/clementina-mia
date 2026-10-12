@@ -29,16 +29,51 @@ includes `LAST_RESPONSE_DIRTY_PAGES`, which lets 6502 programs detect when the
 latest stable video update result was large, such as after a full refresh or a
 slow Wi-Fi period.
 
-The firmware includes the real UDP video service. Build with Wi-Fi credentials
-in the environment to let the Pico 2 W join your network:
+The firmware includes the real UDP video service. It listens on UDP port `6502`
+by default; override it with `MIA_VIDEO_UDP_PORT` at build time if needed. Until
+MIA is on a network (see [Wi-Fi setup](#wi-fi-setup)), UDP video waits.
+
+## Wi-Fi setup
+
+MIA joins a Wi-Fi network, or starts its own access point, once when the Pico
+boots, before the 6502 starts. It reads its settings from a `WIFI.CFG` file in
+the root folder of the SD card:
+
+```ini
+# Clementina Wi-Fi settings
+ssid = your-network
+password = your-password
+```
+
+- Each line is `key = value`. The keys are `ssid`, `password`, and `mode`, in
+  any letter case. Blank lines and lines starting with `#` are ignored.
+- Spaces around keys and values are trimmed, so an SSID or password cannot
+  start or end with a space. Windows line endings are fine.
+- `mode` is `sta` (join the network named by `ssid`, the default), `ap` (start
+  an access point named `ssid` at `192.168.4.1`; clients need a static address
+  in `192.168.4.x`), or `off` (no Wi-Fi; no `ssid` needed).
+- `ssid` is 1 to 32 characters. Leave `password` empty or out for an open
+  network; otherwise it is 8 to 63 characters.
+- The file is at most 512 bytes. An unknown key or a line without `=` makes MIA
+  ignore the whole file.
+
+When there is no SD card, no `WIFI.CFG`, or the file breaks a rule, MIA prints
+the reason on the USB console (never the password) and uses the settings built
+into the firmware instead:
 
 ```sh
 MIA_WIFI_SSID="your-ssid" MIA_WIFI_PASSWORD="your-password" make build
 ```
 
-The video service listens on UDP port `6502` by default. Override it with
-`MIA_VIDEO_UDP_PORT` at build time if needed. If no SSID is provided, the
-firmware still builds and runs, but UDP video waits for network configuration.
+`MIA_WIFI_MODE` (`sta`, `ap`, or `off`) picks the build-time mode. It defaults
+to `sta` when `MIA_WIFI_SSID` is set and to `off` otherwise. With neither a
+usable file nor build settings, MIA boots with Wi-Fi off.
+
+MIA reads `WIFI.CFG` only at boot, so restart the Pico after editing it. The
+USB console commands `wifi connect <ssid> [password]`, `wifi ap <ssid>
+[password]`, and `wifi off` change the connection until the next boot without
+touching the file. `status wifi` shows where the boot settings came from
+(`config: WIFI.CFG` or `config: build`).
 
 ## Input subsystem
 
@@ -327,7 +362,7 @@ The USB terminal command `status` prints a compact dashboard. Use
 | `status input` | Active input source, Wi-Fi input client, device flags, event flags/masks/acks, mouse, and gamepads. |
 | `status audio` | PWM audio state, pins, register block, queue state, and voice register dump. |
 | `status sd` | SD/FAT state, pins, memory ranges, indexes, and last result. |
-| `status wifi` | Wi-Fi mode, SSID, IP/netif details, and last Wi-Fi error. |
+| `status wifi` | Wi-Fi mode, SSID, where the boot settings came from, IP/netif details, and last Wi-Fi error. |
 | `status irq` | IRQ status, mask, enabled pending sources, set requests, and line state. |
 | `status speed` | Applied/requested/staged `PHI2` speed and pending speed-change state. |
 | `status exec` | Whether `PHI2` is running or paused. |

@@ -9,6 +9,8 @@
 #include "lwip/ip4_addr.h"
 
 #include "etc/err.h"
+#include "net/wifi_config.h"
+#include "sd/sd.h"
 
 // Compile-time default mode (set by CMakeLists.txt from MIA_WIFI_MODE env var).
 // 0 = off, 1 = sta, 2 = ap
@@ -29,6 +31,8 @@
 static mia_wifi_mode_t current_mode = MIA_WIFI_MODE_OFF;
 static char current_ssid[64];
 static uint8_t wifi_error_code;
+// Where the boot settings came from: WIFI.CFG on the SD card, or the build.
+static const char *config_source = "build";
 
 static bool wifi_arch_available(void) {
     if (wifi_error_code == ERROR_WIFI_INIT_FAILED) {
@@ -154,6 +158,7 @@ void mia_net_wifi_print_status(void) {
 void mia_net_wifi_print_detail(void) {
     printf("Wi-Fi:\n");
     printf("  mode:       %s\n", wifi_mode_name(current_mode));
+    printf("  config:     %s\n", config_source);
     printf("  ssid:       %s\n", current_ssid[0] ? current_ssid : "(none)");
     printf("  last-error: 0x%02X\n", (unsigned)wifi_error_code);
 
@@ -185,7 +190,68 @@ void mia_net_wifi_report_errors(void) {
     }
 }
 
-bool mia_net_wifi_init(void) {
+// Reads and checks WIFI.CFG. Returns false, after saying why on the console,
+// when the build settings should be used instead. Never prints the password.
+static bool wifi_load_sd_config(mia_wifi_config_t *config) {
+    static char text[MIA_WIFI_CONFIG_MAX_SIZE];
+    size_t length = 0;
+    bool ok = false;
+
+    switch (mia_sd_read_boot_file(MIA_WIFI_CONFIG_PATH, (uint8_t *)text, sizeof(text), &length)) {
+        case MIA_SD_BOOT_FILE_OK: {
+            unsigned bad_line = 0;
+            const char *reason = "";
+            ok = mia_wifi_config_parse(text, length, config, &bad_line, &reason);
+            if (!ok && bad_line != 0) {
+                printf("Wi-Fi: WIFI.CFG line %u: %s; using build settings.\n", bad_line, reason);
+            } else if (!ok) {
+                printf("Wi-Fi: WIFI.CFG: %s; using build settings.\n", reason);
+            }
+            break;
+        }
+        case MIA_SD_BOOT_FILE_NO_CARD:
+            printf("Wi-Fi: no readable SD card; using build settings.\n");
+            break;
+        case MIA_SD_BOOT_FILE_MISSING:
+            printf("Wi-Fi: no WIFI.CFG on the SD card; using build settings.\n");
+            break;
+        case MIA_SD_BOOT_FILE_TOO_LARGE:
+            printf("Wi-Fi: WIFI.CFG is over %u bytes; using build settings.\n",
+                   (unsigned)MIA_WIFI_CONFIG_MAX_SIZE);
+            break;
+        case MIA_SD_BOOT_FILE_READ_ERROR:
+            printf("Wi-Fi: could not read WIFI.CFG; using build settings.\n");
+            break;
+    }
+
+    memset(text, 0, sizeof(text));
+    return ok;
+}
+
+static bool wifi_init_from_sd(void) {
+    mia_wifi_config_t config;
+    if (!wifi_load_sd_config(&config)) {
+        return false;
+    }
+
+    config_source = "WIFI.CFG";
+    printf("Wi-Fi: using WIFI.CFG from the SD card.\n");
+    switch (config.mode) {
+        case MIA_WIFI_MODE_STA:
+            mia_net_wifi_connect(config.ssid, config.password);
+            break;
+        case MIA_WIFI_MODE_AP:
+            mia_net_wifi_start_ap(config.ssid, config.password);
+            break;
+        default:
+            mia_net_wifi_off();
+            break;
+    }
+    memset(&config, 0, sizeof(config));
+    return true;
+}
+
+static bool wifi_init_from_build(void) {
 #if MIA_WIFI_DEFAULT_MODE == MIA_WIFI_MODE_AP
 #ifdef MIA_WIFI_SSID
     if (MIA_WIFI_SSID[0] != '\0') {
@@ -209,7 +275,14 @@ bool mia_net_wifi_init(void) {
     return false;
 
 #else
-    printf("Wi-Fi: no default configured (build with MIA_WIFI_MODE and MIA_WIFI_SSID to auto-connect).\n");
+    printf("Wi-Fi: no default configured (add WIFI.CFG to the SD card, or build with MIA_WIFI_MODE and MIA_WIFI_SSID).\n");
     return false;
 #endif
+}
+
+bool mia_net_wifi_init(void) {
+    if (wifi_init_from_sd()) {
+        return current_mode != MIA_WIFI_MODE_OFF;
+    }
+    return wifi_init_from_build();
 }
