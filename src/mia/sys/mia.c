@@ -38,7 +38,7 @@
 //
 // Bottom-anchor rework (clementina-rom, reversing the earlier 2026-09-13
 // top-anchored/descending design): the loader writes ASCENDING, so the image
-// starts exactly at $04B7 (right after working RAM) regardless of how large
+// starts exactly at $0400 (right after working RAM) regardless of how large
 // it grows - kernel+WozMon first, then BASIC growing upward, reclaimable
 // through $BFFF. kernel_index counts 0..kernel_data_size-1, kernel_data[] is
 // read forward (matching the byte order it was linked in) so the array's
@@ -46,14 +46,14 @@
 // REGSW(0xFFE3) increments. One fixed constant now (both ends of the
 // loader's write and the RESET/NMI/IRQ vector target coincide, since the
 // jump table sits at the image's own fixed start):
-//   - kernel_load_bottom_address ($04B7): where the loader starts writing,
+//   - kernel_load_bottom_address ($0400): where the loader starts writing,
 //     and also the RESET/NMI/IRQ vector target (the start of
 //     clementina-rom's kernel jump table, KERN_BASE). Never needs to change
 //     as clementina-rom's image grows or shrinks - that's the whole point of
 //     anchoring to the fixed bottom of the map.
 uint32_t kernel_index = 0;                         // Index pointing to the next byte to be read from the kernel
-uint16_t kernel_load_bottom_address = 0x04B7;      // Where the ascending loader starts writing (fixed forever)
-uint16_t kernel_target_address = 0x04B7;           // RESET/NMI/IRQ vector target = jump table start (fixed forever)
+uint16_t kernel_load_bottom_address = 0x0400;      // Where the ascending loader starts writing (fixed forever)
+uint16_t kernel_target_address = 0x0400;           // RESET/NMI/IRQ vector target = jump table start (fixed forever)
 
 static bool can_update_kernel_pointer = false;  // Flag to allow updating the kernel pointer only after the data is read at least once.
 
