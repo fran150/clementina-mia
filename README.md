@@ -316,9 +316,23 @@ Commands are requested by writing parameters to `CMD_PARAM1-3`, then writing the
 | `43` | `p1 = video mode` | Update the `VIDEO_MODE` byte. |
 | `50` | `p1 = input mode`, `p2 = 0`, `p3 = 0` | Request an input mode change: `0` = console, `1` = Wi-Fi. `2` is reserved for a later board's USB keyboard and is always unavailable. |
 | `51` | `p1 = input probe`, `p2 = byte offset`, `p3 = 0` | Position an input probe: `0-7` = keyboard probes, `8-15` = consumer probes. |
+| `52` | `p1 = delay low`, `p2 = delay high`, `p3 = 0` | Set the key-repeat initial delay in milliseconds (1-65535); `0` disables repeat. Cancels any active repeat. |
+| `53` | `p1 = interval low`, `p2 = interval high`, `p3 = 0` | Set the key-repeat interval in milliseconds (1-65535); `0` is ignored. Cancels any active repeat. |
+| `54` | `p1 = keyboard usage`, `p2 = enabled (0/1)`, `p3 = 0` | Mark one keyboard usage as repeat-eligible or not; other `p2` values are ignored. Runtime reset restores 400 ms delay, 60 ms interval, and Backspace, Delete, and the arrows as eligible. See `docs/input.md`. |
+| `55` | none | Latch the 8-byte clock snapshot at `$11078`: milliseconds since runtime reset (4 bytes), the TI 60 Hz count modulo 5,184,000 (3 bytes), and version `1`. |
+| `56` | `p1-p3 = TI value` (24-bit little-endian) | Set TI's 60 Hz count. Values at or above 5,184,000 are ignored; milliseconds are untouched. |
 | `60` | none | Enable PWM audio, synchronizing live voice state from the audio RAM block. |
 | `61` | none | Stop PWM audio and return the outputs to center. Audio RAM is preserved. |
 | `62` | none | Stop audio, clear the audio RAM block, restore defaults, and reset audio indexes. |
+| `63` | `p1 = voice mask` | `AUDIO_SEQ_LOAD`: reset each masked voice's sequencer cursor to its track base. Does not start playback. |
+| `64` | `p1 = voice mask` | `AUDIO_SEQ_START`: start or resume each masked voice that has a track base and isn't running. |
+| `65` | `p1 = voice mask` | `AUDIO_SEQ_STOP`: stop and gate off each masked voice, keeping its position for a later `64`. |
+| `66` | `p1 = voice mask` | `AUDIO_VOICE_TAKE`: stop each masked voice's stream without touching its registers, so the program can drive it directly. |
+| `67` | `p1 = voice mask` | `AUDIO_VOICE_RELEASE`: hand each masked voice back to its stream, catching up for the time it was taken. |
+| `68` | `p1-p3 = track address` (24-bit little-endian) | `AUDIO_SEQ_SET_BASE0`: set voice 0's track base. Follow with `63` to start decoding from it. |
+| `69` | `p1-p3 = track address` (24-bit little-endian) | `AUDIO_SEQ_SET_BASE1`: same, voice 1. |
+| `6A` | `p1-p3 = track address` (24-bit little-endian) | `AUDIO_SEQ_SET_BASE2`: same, voice 2. |
+| `6B` | `p1-p3 = track address` (24-bit little-endian) | `AUDIO_SEQ_SET_BASE3`: same, voice 3. |
 | `70` | none | Initialize the physical SD card. |
 | `71` | `SD_LBA` in SD control block | Read one 512-byte raw sector into the SD sector buffer. |
 | `72` | `SD_LBA` and sector buffer | Write one 512-byte raw sector from the SD sector buffer. |
@@ -340,8 +354,10 @@ Commands are requested by writing parameters to `CMD_PARAM1-3`, then writing the
 | `86` | none | Query FAT free space into the SD control block. |
 | `87` | path buffer, `SD_DEST_ADDR`, `SD_TRANSFER_LEN`, `SD_OPEN_MODE` | Save bytes from MIA RAM to a file in chunks. |
 | `88` | path buffer | Change the current directory (`f_chdir`). Persists, per mounted volume, until the next `78`/`FS_MOUNT`. |
+| `89` | `SD_HANDLE_SELECT` | Refresh `SD_FILE_SIZE` and `SD_FILE_POS` for the selected slot's open file. Does not flush or move the position. |
+| `8A` | path buffer, `SD_DEST_ADDR`, `SD_TRANSFER_LEN`, `SD_PART_*` | Load part of a file into MIA RAM: one run of bytes, or a rectangle of rows. Uses its own file, independent of any handle slot. See `docs/sd.md`. |
 
-Every file handle command above (`7B`, `7C`, `7D`, `7F`, `80`, `81`) acts on
+Every file handle command above (`7B`, `7C`, `7D`, `7F`, `80`, `81`, `89`) acts on
 whichever of MIA's 16 independent handle slots `SD_HANDLE_SELECT` currently
 names - there is no single "the open file" any more, and up to 16 files can
 be open at once. See `docs/sd.md`/`docs/sd-programmer-guide.md` for the full
@@ -397,6 +413,7 @@ during storage bring-up.
 | 11 | `IRQ_SD_DONE` | An SD/FS command completed successfully. |
 | 12 | `IRQ_SD_ERROR` | An SD/FS command failed. |
 | 13 | `IRQ_FS_EVENT` | A filesystem command completed. |
+| 14 | `IRQ_AUDIO_SEQ_DONE` | A sequenced voice's track finished: it reached `END`, an unrecognized opcode, or its decode/catch-up budget. See `docs/audio-sequencer.md`. |
 | 15 | `IRQ_TRIGGERED` | Aggregate state maintained by MIA when any masked IRQ flag is pending. |
 
 ## Status

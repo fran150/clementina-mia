@@ -292,6 +292,7 @@ by the command dispatcher; it is not the SD/FS completion event.
 | `FS_GET_FREE` | `$86` | none | Update free-space fields in the control block. |
 | `FS_SAVE_FROM_MIA_RAM` | `$87` | path buffer, `SD_DEST_ADDR`, `SD_TRANSFER_LEN`, `SD_OPEN_MODE` | Open a file, save bytes from MIA RAM, then close it. |
 | `FS_CHDIR` | `$88` | path buffer | Change the current directory (`f_chdir`). Persists, per mounted volume, until the next `FS_MOUNT` - see the path buffer note below. |
+| `FS_FILE_INFO` | `$89` | `SD_HANDLE_SELECT` | Refresh `SD_FILE_SIZE` and `SD_FILE_POS` for the selected slot's open file. Does not flush, move the position, or change EOF state. See "Protocol version 6" below. |
 | `FS_LOAD_PART` | `$8A` | path buffer, `SD_DEST_ADDR`, `SD_TRANSFER_LEN`, `SD_PART_*` | Open a file, load part of it into MIA RAM, then close it: one run of bytes, or a rectangle of rows. See "Protocol version 7" below. |
 
 For `FS_READ` and `FS_WRITE`, a `SD_REQUEST_LEN` of zero means the full transfer
