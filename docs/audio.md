@@ -109,7 +109,7 @@ Offsets in this table are relative to `$12000`.
 | `$01` | `AUDIO_VOLUME` | read/write | Master volume, `0..15`. `0` is silent, `15` is full. Only the low nibble is used. Defaults to `15`. |
 | `$02` | `AUDIO_STATUS` | read | Audio status flags. |
 | `$03` | `AUDIO_CHANNELS` | read | Number of voices. Current value is `4`. |
-| `$04-$05` | `AUDIO_TICK_RATE` | read | Little-endian tick rate: the unit of sequencer `NOTE`/`REST` durations. Current value is `24000`. (Named `AUDIO_SAMPLE_RATE` before the output rate moved to 48 kHz; the value is unchanged.) |
+| `$04-$05` | `AUDIO_TICK_RATE` | read | Little-endian tick rate: the unit of sequencer `NOTE`/`TIE`/`REST` durations. Current value is `24000`. (Named `AUDIO_SAMPLE_RATE` before the output rate moved to 48 kHz; the value is unchanged.) |
 | `$06` | `AUDIO_FLAGS` | read | Bit 0 set means stereo output is available. |
 | `$07-$0F` | reserved | reserved | Write zero. |
 

@@ -106,7 +106,7 @@ typedef struct {
     uint32_t event_duration;   // full length of the current event in ticks (0 for none yet)
     uint32_t catchup_remaining;// ticks still to silently skip during catch-up
     uint32_t taken_at;         // audio_seq_clock snapshot when VOICE_TAKE was issued
-    uint16_t note_index;       // 1-based index of the current note/rest; 0 = not started
+    uint16_t note_index;       // 1-based index of the current NOTE/TIE/REST; 0 = not started
 } audio_seq_t;
 
 static int8_t audio_sine_table[256];
@@ -487,10 +487,35 @@ static void __not_in_flash_func(audio_seq_gate)(uint8_t voice, bool on) {
                          on ? (MIA_AUDIO_CONTROL_GATE | MIA_AUDIO_CONTROL_RESET_PHASE) : 0);
 }
 
-static void __not_in_flash_func(audio_seq_apply_note)(uint8_t voice, uint32_t cursor) {
+static void __not_in_flash_func(audio_seq_apply_freq)(uint8_t voice, uint32_t cursor) {
     audio_seq_write_reg(voice, MIA_AUDIO_VOICE_FREQ_L, mem[cursor + 1]);
     audio_seq_write_reg(voice, MIA_AUDIO_VOICE_FREQ_H, mem[cursor + 2]);
+}
+
+// A NOTE always starts a new note. The envelope only restarts on the gate's
+// rising edge, so the gate drops first: a NOTE straight after a NOTE still
+// gets its own attack. Continuing the sounding note is TIE's job.
+static void __not_in_flash_func(audio_seq_apply_note)(uint8_t voice, uint32_t cursor) {
+    audio_seq_apply_freq(voice, cursor);
+    audio_seq_gate(voice, false);
     audio_seq_gate(voice, true);
+}
+
+// Applies the timed event (NOTE, TIE or REST) at cursor as the current event.
+// A TIE continues the sounding note only while the gate is up; with the voice
+// released there is nothing to continue, so it starts a new note. Resuming
+// from catch-up passes resume = true: the note a TIE continues was skipped,
+// so it starts a new note then too.
+static void __not_in_flash_func(audio_seq_apply_timed)(uint8_t voice, uint32_t cursor, uint8_t op, bool resume) {
+    bool gated = (audio_voices[voice].control & MIA_AUDIO_CONTROL_GATE) != 0;
+
+    if (op == MIA_SEQ_OP_TIE && gated && !resume) {
+        audio_seq_apply_freq(voice, cursor);
+    } else if (op == MIA_SEQ_OP_NOTE || op == MIA_SEQ_OP_TIE) {
+        audio_seq_apply_note(voice, cursor);
+    } else {
+        audio_seq_gate(voice, false);
+    }
 }
 
 static void __not_in_flash_func(audio_seq_apply_config_op)(uint8_t voice, uint32_t cursor, uint8_t op) {
@@ -529,6 +554,7 @@ static uint8_t __not_in_flash_func(audio_seq_record_size)(uint8_t op) {
         case MIA_SEQ_OP_SET_VOL:   return 2u;
         case MIA_SEQ_OP_SET_PULSE: return 2u;
         case MIA_SEQ_OP_JUMP:      return 4u; // op + offset(3)
+        case MIA_SEQ_OP_TIE:       return 6u;  // op + freq_l + freq_h + dur(3)
         default:                   return 0u;
     }
 }
@@ -537,9 +563,18 @@ static uint32_t __not_in_flash_func(audio_seq_read_duration24)(uint32_t offset) 
     return (uint32_t)mem[offset] | ((uint32_t)mem[offset + 1] << 8) | ((uint32_t)mem[offset + 2] << 16);
 }
 
-// A NOTE/REST lasts exactly dur ticks, counting the tick that decodes it, so
+// NOTE, TIE and REST are the timed events: they consume time and advance the
+// note index. Everything else is zero-duration.
+static __force_inline bool audio_seq_is_timed(uint8_t op) {
+    return op == MIA_SEQ_OP_NOTE || op == MIA_SEQ_OP_TIE || op == MIA_SEQ_OP_REST;
+}
+
+// A timed event lasts exactly dur ticks, counting the tick that decodes it, so
 // the next event decodes dur ticks later. dur = 0 still takes that one tick.
-static __force_inline uint32_t audio_seq_event_ticks(uint32_t dur) {
+// NOTE and TIE carry dur after their two frequency bytes, REST right after
+// the opcode.
+static __force_inline uint32_t audio_seq_event_ticks(uint32_t cursor, uint8_t op) {
+    uint32_t dur = audio_seq_read_duration24(cursor + (op == MIA_SEQ_OP_REST ? 1u : 3u));
     return dur ? dur : 1u;
 }
 
@@ -574,13 +609,13 @@ static void __not_in_flash_func(audio_seq_finish_track)(uint8_t voice) {
 }
 
 // Decodes and applies config/JUMP opcodes at the current cursor, live, until
-// a NOTE/REST becomes the new current (audible) event, or END/an unrecognized
-// byte/running off the top of RAM stops the track. Used for normal playback,
-// once the previous event's countdown hits zero.
+// a timed event (NOTE, TIE or REST) becomes the new current (audible) event,
+// or END/an unrecognized byte/running off the top of RAM stops the track. Used
+// for normal playback, once the previous event's countdown hits zero.
 //
 // Bounded by MIA_SEQ_DECODE_BUDGET: JUMP and the SET_* opcodes are all
 // zero-duration and loop straight back to the top of this decode without
-// returning, so a track whose jumps cycle with no NOTE/REST/END in between
+// returning, so a track whose jumps cycle with no NOTE/TIE/REST/END in between
 // would otherwise spin this call forever - fail-safe, silent, exactly like
 // running into an unrecognized opcode byte.
 static void __not_in_flash_func(audio_seq_advance)(uint8_t voice) {
@@ -601,14 +636,9 @@ static void __not_in_flash_func(audio_seq_advance)(uint8_t voice) {
             return;
         }
 
-        if (op == MIA_SEQ_OP_NOTE || op == MIA_SEQ_OP_REST) {
-            uint32_t ticks = audio_seq_event_ticks(
-                audio_seq_read_duration24(seq->cursor + (op == MIA_SEQ_OP_NOTE ? 3u : 1u)));
-            if (op == MIA_SEQ_OP_NOTE) {
-                audio_seq_apply_note(voice, seq->cursor);
-            } else {
-                audio_seq_gate(voice, false);
-            }
+        if (audio_seq_is_timed(op)) {
+            uint32_t ticks = audio_seq_event_ticks(seq->cursor, op);
+            audio_seq_apply_timed(voice, seq->cursor, op, false);
             seq->note_index++;
             seq->event_duration = ticks;
             seq->countdown = ticks - 1u;
@@ -660,9 +690,8 @@ static void __not_in_flash_func(audio_seq_catchup_step)(uint8_t voice) {
             continue;
         }
 
-        if (op == MIA_SEQ_OP_NOTE || op == MIA_SEQ_OP_REST) {
-            uint32_t ticks = audio_seq_event_ticks(
-                audio_seq_read_duration24(seq->cursor + (op == MIA_SEQ_OP_NOTE ? 3u : 1u)));
+        if (audio_seq_is_timed(op)) {
+            uint32_t ticks = audio_seq_event_ticks(seq->cursor, op);
 
             if (ticks <= seq->catchup_remaining) {
                 // Fully in the past: skip it silently, no register writes.
@@ -674,11 +703,7 @@ static void __not_in_flash_func(audio_seq_catchup_step)(uint8_t voice) {
 
             // Not fully elapsed: this is the event to resume on, live, in full.
             seq->catching_up = false;
-            if (op == MIA_SEQ_OP_NOTE) {
-                audio_seq_apply_note(voice, seq->cursor);
-            } else {
-                audio_seq_gate(voice, false);
-            }
+            audio_seq_apply_timed(voice, seq->cursor, op, true);
             seq->note_index++;
             seq->event_duration = ticks;
             seq->countdown = ticks - 1u;
@@ -1108,7 +1133,7 @@ void mia_audio_reset_runtime_state(void) {
     mem[MIA_AUDIO_HEADER_OFFSET + MIA_AUDIO_HEADER_VERSION] = MIA_AUDIO_VERSION;
     mem[MIA_AUDIO_HEADER_OFFSET + MIA_AUDIO_HEADER_VOLUME] = MIA_AUDIO_MASTER_VOLUME_DEFAULT;
     mem[MIA_AUDIO_HEADER_OFFSET + MIA_AUDIO_HEADER_CHANNELS] = MIA_AUDIO_VOICE_COUNT;
-    // RATE is the tick rate: the unit of NOTE/REST durations.
+    // RATE is the tick rate: the unit of NOTE/TIE/REST durations.
     audio_write_u16(MIA_AUDIO_HEADER_OFFSET + MIA_AUDIO_HEADER_RATE_L, MIA_AUDIO_TICK_RATE);
     mem[MIA_AUDIO_HEADER_OFFSET + MIA_AUDIO_HEADER_FLAGS] = MIA_AUDIO_FLAG_STEREO;
     audio_master_volume = MIA_AUDIO_MASTER_VOLUME_DEFAULT;

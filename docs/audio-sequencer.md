@@ -65,7 +65,7 @@ the source tempo/length, never recomputed by MIA.
 | Opcode | Value | Payload | Effect |
 | --- | ---: | --- | --- |
 | `END` | `$00` | — | Stop. |
-| `NOTE` | `$01` | `freq_l, freq_h, dur_l, dur_m, dur_h` | Write `FREQ_L`/`FREQ_H`, gate on with phase reset, hold for `dur` ticks. Advances the note index. |
+| `NOTE` | `$01` | `freq_l, freq_h, dur_l, dur_m, dur_h` | Write `FREQ_L`/`FREQ_H`, then gate off and on again with phase reset, so the envelope restarts from attack. Hold for `dur` ticks. Advances the note index. |
 | `REST` | `$02` | `dur_l, dur_m, dur_h` | Gate off, hold for `dur` ticks. Advances the note index. |
 | `SET_WAVE` | `$03` | `waveform` | Write `WAVEFORM`. Zero-duration; decoding continues immediately to the next opcode. |
 | `SET_ADSR` | `$04` | `attack_decay, sustain_release` | Write both envelope bytes. Zero-duration. |
@@ -73,6 +73,7 @@ the source tempo/length, never recomputed by MIA.
 | `SET_VOL` | `$06` | `volume` | Write per-voice `VOLUME`. Zero-duration. |
 | `SET_PULSE` | `$07` | `pulse_width` | Write `PULSE_WIDTH`. Zero-duration. |
 | `JUMP` | `$08` | `offset_l, offset_m, offset_h` | Set cursor to (address right after this record) + `offset`, a **signed 24-bit little-endian** value. Zero-duration; does not advance the note index. |
+| `TIE` | `$09` | `freq_l, freq_h, dur_l, dur_m, dur_h` | While the gate is up, write `FREQ_L`/`FREQ_H` only; gate, phase and envelope carry on. With the voice released, act exactly like `NOTE`. Hold for `dur` ticks. Advances the note index. |
 
 Every register write an event makes goes through the exact same
 `audio_apply_register` path a live 6502 write already uses (mirrored into
@@ -80,14 +81,31 @@ Every register write an event makes goes through the exact same
 are not reimplemented — the sequencer is just another producer feeding the
 same internal voice state live writes already feed.
 
-`NOTE`/`REST` are the only opcodes that advance the **note index** (see
+`NOTE`, `TIE` and `REST` are the only opcodes that advance the **note index** (see
 below) and consume time; `SET_*` and `JUMP` are all zero-duration and are
 decoded and applied within the same tick, with no delay before the next
 opcode, precisely so inserting one never shifts note numbering.
 
-A `NOTE` or `REST` lasts exactly `dur` ticks, counting the tick that decodes
-it, so the next event decodes `dur` ticks later. A `dur` of `0` behaves like
-`1`, since decoding the event takes that tick.
+A `NOTE`, `TIE` or `REST` lasts exactly `dur` ticks, counting the tick that
+decodes it, so the next event decodes `dur` ticks later. A `dur` of `0`
+behaves like `1`, since decoding the event takes that tick.
+
+### Notes, ties and the envelope
+
+A voice's envelope only restarts when its gate goes from off to on. So `NOTE`
+drops the gate before raising it again: every `NOTE` is a new note with its
+own attack, even straight after another `NOTE`, and repeated notes stay
+separate. `NOTE` also restarts the waveform from the start of its cycle.
+
+`TIE` continues the note that is sounding: it changes the frequency and
+nothing else, so the envelope keeps going (holding at sustain, or still in
+its attack or decay) and the waveform keeps its phase. That covers a tied
+note (the same frequency again), a legato pitch change, and the steps of a
+pitch slide. A `TIE` continues a note only while the gate is up: after a
+`REST`, at the start of a track, or anywhere else the voice is released, there
+is nothing to continue, and the `TIE` starts a new note exactly like `NOTE`.
+So a `TIE` at a loop point continues the note that ends the loop body when
+one is sounding, and starts its own when the body ends in a rest.
 
 ### Looping, and why there is no `LOOP` opcode
 
@@ -101,20 +119,20 @@ different `track_base` via `AUDIO_SEQ_SET_BASE<voice>` never requires
 rewriting anything inside it.
 
 One consequence: the note index (`SEQ_NOTE_INDEX`, backing `CUE(v)`) is not
-reset when a `JUMP` is taken — it simply keeps counting notes/rests across
+reset when a `JUMP` is taken — it simply keeps counting notes, ties and rests across
 however many passes the track has looped, unlike the old header-based `LOOP`
 field, which restored a cached index on every wrap. A composer wanting
 "position within the repeating body" computes it themselves (e.g. `CUE(v) MOD`
 the body's note count) if the track loops; a composer using `CUE` to catch a
 one-time transition (the common case — see `basic-sound.md`'s `CUE` example)
 is unaffected either way. A track that loops indefinitely for long enough
-(65536 notes/rests) will wrap `SEQ_NOTE_INDEX` back through `0`.
+(65536 timed events) will wrap `SEQ_NOTE_INDEX` back through `0`.
 
 ### Runaway-jump safety: `MIA_SEQ_DECODE_BUDGET`
 
 Because `JUMP`/`SET_*` are zero-duration and decoding loops straight back for
 the next opcode without returning, a track whose jumps form a cycle with no
-`NOTE`/`REST`/`END` in between would otherwise spin the shared audio ISR
+`NOTE`/`TIE`/`REST`/`END` in between would otherwise spin the shared audio ISR
 forever on a single tick. `audio_seq_advance` bounds this to
 `MIA_SEQ_DECODE_BUDGET` (32) opcodes per call; exceeding it without reaching
 a time-consuming or stopping opcode is treated as a malformed track and stops
@@ -135,7 +153,7 @@ Per voice, alongside the existing oscillator/envelope state:
 | `cursor` | Absolute MIA RAM offset of the event currently active. |
 | `countdown` | Ticks the current event still holds after the one being played. The next event decodes on the first tick that finds it at `0`. |
 | `event_duration` | Full length of the current event in ticks: `dur`, or `1` for a `dur` of `0` (needed to reconcile a `VOICE_RELEASE`, see below). |
-| `note_index` | Count of notes/rests decoded so far since this voice was last loaded. `0` means never started; not reset by `JUMP` (see Looping above). |
+| `note_index` | Count of notes, ties and rests decoded so far since this voice was last loaded. `0` means never started; not reset by `JUMP` (see Looping above). |
 
 All of this is decoded and applied inside the audio ISR, at the top of each
 tick, before the envelope and oscillator pass — the same point live-write queue
@@ -222,6 +240,10 @@ else:
     decode and apply the first event budget doesn't fully cover, in full, live
 ```
 
+A `TIE` that catch-up lands on starts a new note, like `NOTE`, even if the
+gate is up: the note it continued was skipped, and whatever is sounding is
+what the program played while it held the voice.
+
 The walk-forward loop never truncates a note to make up time — it skips
 whole events that are entirely in the past and starts the first one that
 isn't, fresh, rather than resuming it partway through. Cutting a note short
@@ -243,7 +265,7 @@ rewritten by the audio ISR every tick:
 
 | Voice offset | Name | Description |
 | ---: | --- | --- |
-| `$09-$0A` | `SEQ_NOTE_INDEX` | Little-endian count of notes/rests decoded since the track was last loaded, not reset by `JUMP` (see Looping above). `0` = never started. Backs `CUE(v)`. |
+| `$09-$0A` | `SEQ_NOTE_INDEX` | Little-endian count of notes, ties and rests decoded since the track was last loaded, not reset by `JUMP` (see Looping above). `0` = never started. Backs `CUE(v)`. |
 | `$0B` | `SEQ_STATUS` | Bit 0: `running`. Bit 1: `taken`. Backs `PLAYING(v)`. |
 
 A program that writes all 16 bytes of a voice record (per the programmer's
