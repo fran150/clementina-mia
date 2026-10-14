@@ -20,7 +20,8 @@ mounting, directory traversal, file open, file read/write, and cluster-chain
 I/O.
 
 `MIA_STAT_SD_PRESENT` means that SD initialization succeeded. It is not a
-physical card-detect switch.
+physical card-detect switch. After swapping cards, send `FS_MOUNT` or reset;
+see [Swapping Cards](sd.md#swapping-cards).
 
 ## Constants
 
@@ -1152,6 +1153,7 @@ state during bring-up.
 ## Practical Advice
 
 - Use FAT32 on SD cards unless there is a specific reason to use FAT16.
+  exFAT is not supported; cards of 64 GB and up usually need reformatting.
 - Keep filenames short and ASCII while the kernel and monitor are young.
 - Mount once at startup, then open/read/close as needed.
 - Prefer `FS_LOAD_TO_MIA_RAM` for program and asset loading.

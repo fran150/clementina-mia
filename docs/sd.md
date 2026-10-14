@@ -70,9 +70,10 @@ MIA_SD_MISO_PIN=16 MIA_SD_CS_PIN=17 MIA_SD_SCK_PIN=18 MIA_SD_MOSI_PIN=19 make bu
 The SD card socket or module must be 3.3 V compatible. Do not connect a 5 V SD
 module directly to Pico GPIOs unless it has appropriate level shifting.
 
-MIA does not currently use dedicated card-detect or write-protect GPIOs. The
-`SD_STATUS_PRESENT` and `MIA_STAT_SD_PRESENT` bits mean that a card answered SD
-initialization successfully; they are not live socket-switch state.
+MIA has no card-detect or write-protect input. The `SD_STATUS_PRESENT` and
+`MIA_STAT_SD_PRESENT` bits mean that a card answered SD initialization
+successfully; they are not live socket-switch state. See
+[Swapping Cards](#swapping-cards).
 
 ## Memory Map
 
@@ -402,24 +403,46 @@ The USB terminal exposes:
 | `sd mount` | Request FAT mount. |
 | `errors list` | Show queued MIA error codes. |
 
+## Swapping Cards
+
+MIA does not notice a card being pulled or inserted. A card inserted after boot
+is picked up by the first file command, which mounts it. Swapping cards after
+the filesystem is mounted is different: MIA keeps the old mount, the new card
+has not been initialized, and file commands fail until the card is mounted
+again. Either send `FS_MOUNT` (or type `sd mount` in the USB terminal), which
+initializes the card and mounts it, or reset the 6502; the reset unmounts, and
+the next file command mounts the new card. Files opened on the old card do not
+carry over: `FS_CLOSE` their slots, which frees a slot even when it reports an
+error. `MIA_STAT_SD_PRESENT` stays set after a card is pulled until an
+initialization fails.
+
 ## Limitations
 
 - The file API supports open/read/write/sync/seek/close, stat, mkdir, delete,
   rename, and free-space query. Formatting is not exposed.
-- Whole-file load/save jobs process 512-byte chunks and return to the core 0
-  service loop between chunks. Individual SD card operations can still block for
-  card-internal erase/program latency.
+- FAT12, FAT16 and FAT32 only. MIA builds FatFs with the configuration bundled
+  in the Pico SDK (TinyUSB's `ffconf.h`): long filenames on, code page 437,
+  exFAT and formatting off. Cards of 64 GB and up usually ship formatted as
+  exFAT; reformat them as FAT32 on a PC. Keep filenames ASCII/CP437-safe for
+  predictable 6502 programs.
+- An SD operation waits for the card, and after a write the card can stay busy
+  while it commits the data: usually milliseconds, at worst until MIA's
+  one-second write timeout. `FS_SYNC`, `FS_CLOSE`, metadata updates and raw
+  sector writes are the usual cases. Whole-file load/save jobs return to the
+  core 0 service loop between 512-byte chunks, but not during one chunk's
+  wait. While core 0 waits, the rest of its work waits too: video frames to
+  the client, input from it, Wi-Fi, the USB console, queued commands and the
+  reset button. Core 1 keeps serving the bus, so the 6502 keeps running and
+  can poll MIA's registers.
 - Raw sector write exists for advanced tools, but it bypasses FAT consistency
   checks at the MIA API level.
 - Up to 16 concurrent file-handle slots are exposed (`SD_HANDLE_SELECT`), but
   only one implicit directory cursor. There is no allocator: a program picks
   which slot to use, same as picking a BASIC/application-level file number.
-- No physical card-detect or write-protect GPIO is wired into MIA yet. Present
-  means "initialization succeeded."
-- FAT long filename support comes from the bundled FatFs configuration. Keep
-  filenames ASCII/CP437-safe for predictable 6502 programs.
-- `FS_SYNC`, `FS_CLOSE`, metadata updates, and raw sector writes may still block
-  core 0 while the card commits data internally.
+  The directory cursor is only for listing; copying a file between folders
+  opens the source and the destination in two slots.
+- There is no card-detect or write-protect input. Present means
+  "initialization succeeded"; see [Swapping Cards](#swapping-cards).
 
 ## Protocol version 7: partial loads
 
