@@ -60,6 +60,7 @@ These defaults can be overridden at build time:
 | `MIA_SD_MOSI_PIN` | MOSI GPIO. |
 | `MIA_SD_SPI_FAST_BAUD` | post-initialization SPI clock. Default `12000000`. |
 | `MIA_SD_SERVICE_BUDGET_US` | Core 0 SD job service budget per call. Default `1000`. |
+| `MIA_SD_WAIT_SERVICE_AFTER_US` | How long a card wait polls before core 0 also serves Wi-Fi, video and input from inside it. Default `1000`. |
 
 Example:
 
@@ -428,14 +429,17 @@ initialization fails.
 - An SD operation waits for the card, and after a write the card can stay busy
   while it commits the data: usually milliseconds, at worst until MIA's
   one-second write timeout. `FS_SYNC`, `FS_CLOSE`, metadata updates and raw
-  sector writes are the usual cases. Whole-file load/save jobs return to the
-  core 0 service loop between 512-byte chunks, but not during one chunk's
-  wait. While core 0 waits, the rest of its main loop waits too: video frames
-  to the client, input from it, Wi-Fi, the USB console and the reset button.
-  6502 commands still run, because core 0 handles them in an interrupt (another
-  SD command gets `ERROR_SD_BUSY`, as at any time one is in progress), and
-  audio keeps playing. Core 1 keeps serving the bus, so the 6502 keeps running
-  and can poll MIA's registers.
+  sector writes are the usual cases. Once a wait passes 1 ms
+  (`MIA_SD_WAIT_SERVICE_AFTER_US`), core 0 keeps serving Wi-Fi, video frames
+  to the client and input from it between polls of the card. It runs them on
+  a separate 4 KB stack, so they have the same room as in the main loop
+  however deep in FatFs the wait is. The USB console, the reset button and
+  PHI2 speed changes still wait until the SD operation finishes, because they
+  can reset or reclock the card mid-transfer. 6502 commands still run, because
+  core 0 handles them in an interrupt (another SD command gets
+  `ERROR_SD_BUSY`, as at any time one is in progress), and audio keeps
+  playing. Core 1 keeps serving the bus, so the 6502 keeps running and can
+  poll MIA's registers.
 - Raw sector write exists for advanced tools, but it bypasses FAT consistency
   checks at the MIA API level.
 - Up to 16 concurrent file-handle slots are exposed (`SD_HANDLE_SELECT`), but
