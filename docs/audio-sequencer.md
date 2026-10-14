@@ -85,6 +85,10 @@ below) and consume time; `SET_*` and `JUMP` are all zero-duration and are
 decoded and applied within the same tick, with no delay before the next
 opcode, precisely so inserting one never shifts note numbering.
 
+A `NOTE` or `REST` lasts exactly `dur` ticks, counting the tick that decodes
+it, so the next event decodes `dur` ticks later. A `dur` of `0` behaves like
+`1`, since decoding the event takes that tick.
+
 ### Looping, and why there is no `LOOP` opcode
 
 "Loop the whole track" (or loop just a repeating body after a non-repeating
@@ -129,8 +133,8 @@ Per voice, alongside the existing oscillator/envelope state:
 | `taken` | Set by `VOICE_TAKE`, cleared by `VOICE_RELEASE`. While set, the stream doesn't advance, but nothing is silenced — the caller is driving registers directly. |
 | `track_base` | Set by `AUDIO_SEQ_SET_BASE<voice>`. None until then, and again after boot or `AUDIO_RESET` (see Memory layout). Where `AUDIO_SEQ_LOAD` resets `cursor` to. |
 | `cursor` | Absolute MIA RAM offset of the event currently active. |
-| `countdown` | Ticks remaining until the current event ends. |
-| `event_duration` | Full original duration of the current event (needed to reconcile a `VOICE_RELEASE`, see below). |
+| `countdown` | Ticks the current event still holds after the one being played. The next event decodes on the first tick that finds it at `0`. |
+| `event_duration` | Full length of the current event in ticks: `dur`, or `1` for a `dur` of `0` (needed to reconcile a `VOICE_RELEASE`, see below). |
 | `note_index` | Count of notes/rests decoded so far since this voice was last loaded. `0` means never started; not reset by `JUMP` (see Looping above). |
 
 All of this is decoded and applied inside the audio ISR, at the top of each

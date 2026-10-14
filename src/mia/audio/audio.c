@@ -102,8 +102,8 @@ typedef struct {
     bool catching_up;          // VOICE_RELEASE is silently skipping past elapsed events
     uint32_t track_base;       // this voice's track base, set by AUDIO_SEQ_SET_BASE<voice>
     uint32_t cursor;           // absolute MIA RAM offset of the current event
-    uint32_t countdown;        // ticks remaining until the current event ends
-    uint32_t event_duration;   // full duration of the current event (0 for none yet)
+    uint32_t countdown;        // ticks the current event still holds after the one being played
+    uint32_t event_duration;   // full length of the current event in ticks (0 for none yet)
     uint32_t catchup_remaining;// ticks still to silently skip during catch-up
     uint32_t taken_at;         // audio_seq_clock snapshot when VOICE_TAKE was issued
     uint16_t note_index;       // 1-based index of the current note/rest; 0 = not started
@@ -537,6 +537,12 @@ static uint32_t __not_in_flash_func(audio_seq_read_duration24)(uint32_t offset) 
     return (uint32_t)mem[offset] | ((uint32_t)mem[offset + 1] << 8) | ((uint32_t)mem[offset + 2] << 16);
 }
 
+// A NOTE/REST lasts exactly dur ticks, counting the tick that decodes it, so
+// the next event decodes dur ticks later. dur = 0 still takes that one tick.
+static __force_inline uint32_t audio_seq_event_ticks(uint32_t dur) {
+    return dur ? dur : 1u;
+}
+
 // audio_seq_jump_target: resolves a JUMP's 3-byte signed offset (stored at
 // cursor+1) into an absolute cursor, relative to the address right after
 // this 4-byte record. A malformed offset that lands outside MIA RAM is
@@ -596,15 +602,16 @@ static void __not_in_flash_func(audio_seq_advance)(uint8_t voice) {
         }
 
         if (op == MIA_SEQ_OP_NOTE || op == MIA_SEQ_OP_REST) {
-            uint32_t dur = audio_seq_read_duration24(seq->cursor + (op == MIA_SEQ_OP_NOTE ? 3u : 1u));
+            uint32_t ticks = audio_seq_event_ticks(
+                audio_seq_read_duration24(seq->cursor + (op == MIA_SEQ_OP_NOTE ? 3u : 1u)));
             if (op == MIA_SEQ_OP_NOTE) {
                 audio_seq_apply_note(voice, seq->cursor);
             } else {
                 audio_seq_gate(voice, false);
             }
             seq->note_index++;
-            seq->event_duration = dur;
-            seq->countdown = dur;
+            seq->event_duration = ticks;
+            seq->countdown = ticks - 1u;
             seq->cursor += size;
             return;
         }
@@ -654,11 +661,12 @@ static void __not_in_flash_func(audio_seq_catchup_step)(uint8_t voice) {
         }
 
         if (op == MIA_SEQ_OP_NOTE || op == MIA_SEQ_OP_REST) {
-            uint32_t dur = audio_seq_read_duration24(seq->cursor + (op == MIA_SEQ_OP_NOTE ? 3u : 1u));
+            uint32_t ticks = audio_seq_event_ticks(
+                audio_seq_read_duration24(seq->cursor + (op == MIA_SEQ_OP_NOTE ? 3u : 1u)));
 
-            if (dur <= seq->catchup_remaining) {
+            if (ticks <= seq->catchup_remaining) {
                 // Fully in the past: skip it silently, no register writes.
-                seq->catchup_remaining -= dur;
+                seq->catchup_remaining -= ticks;
                 seq->note_index++;
                 seq->cursor += size;
                 continue;
@@ -672,8 +680,8 @@ static void __not_in_flash_func(audio_seq_catchup_step)(uint8_t voice) {
                 audio_seq_gate(voice, false);
             }
             seq->note_index++;
-            seq->event_duration = dur;
-            seq->countdown = dur;
+            seq->event_duration = ticks;
+            seq->countdown = ticks - 1u;
             seq->cursor += size;
             return;
         }
