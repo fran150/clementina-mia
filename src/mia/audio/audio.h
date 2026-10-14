@@ -7,7 +7,7 @@
 /* The PWM interrupt runs the oscillators and the mix at MIA_AUDIO_SAMPLE_RATE.
  * MIA_AUDIO_TICK_RATE is the control clock: the register-write queue, the
  * sequencer and the envelopes step once per tick, on every
- * MIA_AUDIO_SAMPLES_PER_TICK-th sample. NOTE/REST durations and the header's
+ * MIA_AUDIO_SAMPLES_PER_TICK-th sample. NOTE/TIE/REST durations and the header's
  * RATE field count ticks, so tracks encoded for 24 kHz play unchanged. */
 #define MIA_AUDIO_SAMPLE_RATE 48000u
 #define MIA_AUDIO_TICK_RATE 24000u
@@ -92,11 +92,14 @@
 // clears none of it.
 #define MIA_SEQ_NO_BASE 0xFFFFFFFFu
 
-// Event opcodes. NOTE/REST durations are 24-bit little-endian tick counts
+// Event opcodes. NOTE/REST/TIE durations are 24-bit little-endian tick counts
 // (MIA_AUDIO_TICK_RATE per second), resolved once at encode time - MIA never
 // interprets tempo or note names.
 #define MIA_SEQ_OP_END       0x00u   // stop
-#define MIA_SEQ_OP_NOTE      0x01u   // freq_l, freq_h, dur_l, dur_m, dur_h
+// NOTE: freq_l, freq_h, dur_l, dur_m, dur_h - always starts a new note: the
+// gate drops and rises again, so the envelope restarts from attack even if
+// the previous event was a NOTE.
+#define MIA_SEQ_OP_NOTE      0x01u
 #define MIA_SEQ_OP_REST      0x02u   // dur_l, dur_m, dur_h
 #define MIA_SEQ_OP_SET_WAVE  0x03u   // waveform
 #define MIA_SEQ_OP_SET_ADSR  0x04u   // attack_decay, sustain_release
@@ -111,6 +114,12 @@
 // note_index. "Loop the whole track" is just a JUMP back to the top; there
 // is no separate loop opcode or header field.
 #define MIA_SEQ_OP_JUMP      0x08u
+// TIE: freq_l, freq_h, dur_l, dur_m, dur_h - like NOTE but, while the gate is
+// up, writes only the frequency: gate, phase and envelope carry on, so it
+// continues the sounding note (a tie, a legato pitch change, or one step of a
+// pitch slide). With the voice released (after a REST, or at the start) there
+// is no note to continue, and TIE starts one exactly like NOTE.
+#define MIA_SEQ_OP_TIE       0x09u
 
 // Live sequencer status, read through the existing per-voice audio index.
 // These reuse voice-record offsets $09-$0B, documented elsewhere as
@@ -157,7 +166,7 @@ _Static_assert(MIA_AUDIO_INDEX_ALL > 0xDFu,
 
 // Max zero-duration opcodes (SET_*/JUMP) decoded in a row within a single
 // audio_seq_advance() call before it gives up and stops the voice. Without
-// this, a track whose JUMPs form a cycle with no NOTE/REST/END in between
+// this, a track whose JUMPs form a cycle with no NOTE/TIE/REST/END in between
 // would spin the shared audio ISR forever on one sample - fail-safe, silent,
 // exactly like an unrecognized opcode byte.
 #define MIA_SEQ_DECODE_BUDGET 32u
