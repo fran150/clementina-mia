@@ -430,10 +430,12 @@ initialization fails.
   one-second write timeout. `FS_SYNC`, `FS_CLOSE`, metadata updates and raw
   sector writes are the usual cases. Whole-file load/save jobs return to the
   core 0 service loop between 512-byte chunks, but not during one chunk's
-  wait. While core 0 waits, the rest of its work waits too: video frames to
-  the client, input from it, Wi-Fi, the USB console, queued commands and the
-  reset button. Core 1 keeps serving the bus, so the 6502 keeps running and
-  can poll MIA's registers.
+  wait. While core 0 waits, the rest of its main loop waits too: video frames
+  to the client, input from it, Wi-Fi, the USB console and the reset button.
+  6502 commands still run, because core 0 handles them in an interrupt (another
+  SD command gets `ERROR_SD_BUSY`, as at any time one is in progress), and
+  audio keeps playing. Core 1 keeps serving the bus, so the 6502 keeps running
+  and can poll MIA's registers.
 - Raw sector write exists for advanced tools, but it bypasses FAT consistency
   checks at the MIA API level.
 - Up to 16 concurrent file-handle slots are exposed (`SD_HANDLE_SELECT`), but
