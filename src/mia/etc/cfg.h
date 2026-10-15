@@ -6,6 +6,36 @@
 #include "mem/regs.h"
 #include "sys/speed.h"
 
+// Config ids (CFG_SELECT values). README.md "Configuration Registers" lists them
+// without the CFG_ prefix. Ids $00-$0B configure the index selected in window A
+// and $10-$1B the one in window B; the low nibble is the field, so the window A
+// ids double as field numbers. $0C-$0F and $1C-$1F are reserved.
+#define CFG_IDXA_ADDR_L 0x00u
+#define CFG_IDXA_ADDR_M 0x01u
+#define CFG_IDXA_ADDR_H 0x02u
+#define CFG_IDXA_DEF_L 0x03u
+#define CFG_IDXA_DEF_M 0x04u
+#define CFG_IDXA_DEF_H 0x05u
+#define CFG_IDXA_LIM_L 0x06u
+#define CFG_IDXA_LIM_M 0x07u
+#define CFG_IDXA_LIM_H 0x08u
+#define CFG_IDXA_STP_L 0x09u
+#define CFG_IDXA_STP_H 0x0Au
+#define CFG_IDXA_FLAGS 0x0Bu
+
+#define CFG_IDXB_ADDR_L 0x10u
+#define CFG_IDXB_ADDR_M 0x11u
+#define CFG_IDXB_ADDR_H 0x12u
+#define CFG_IDXB_DEF_L 0x13u
+#define CFG_IDXB_DEF_M 0x14u
+#define CFG_IDXB_DEF_H 0x15u
+#define CFG_IDXB_LIM_L 0x16u
+#define CFG_IDXB_LIM_M 0x17u
+#define CFG_IDXB_LIM_H 0x18u
+#define CFG_IDXB_STP_L 0x19u
+#define CFG_IDXB_STP_H 0x1Au
+#define CFG_IDXB_FLAGS 0x1Bu
+
 #define CFG_SPEED_L 0x20
 #define CFG_SPEED_M 0x21
 #define CFG_SPEED_H 0x22
@@ -26,22 +56,22 @@ static inline __force_inline uint8_t get_cfg(uint8_t id) {
         uint8_t field = id & 0x0F;
 
         switch (field) {
-            case 0x00: return index_get_current_addr_byte(index_id, ADDR24_L);
-            case 0x01: return index_get_current_addr_byte(index_id, ADDR24_M);
-            case 0x02: return index_get_current_addr_byte(index_id, ADDR24_H);
+            case CFG_IDXA_ADDR_L: return index_get_current_addr_byte(index_id, ADDR24_L);
+            case CFG_IDXA_ADDR_M: return index_get_current_addr_byte(index_id, ADDR24_M);
+            case CFG_IDXA_ADDR_H: return index_get_current_addr_byte(index_id, ADDR24_H);
             
-            case 0x03: return index_get_default_addr_byte(index_id, ADDR24_L);
-            case 0x04: return index_get_default_addr_byte(index_id, ADDR24_M);
-            case 0x05: return index_get_default_addr_byte(index_id, ADDR24_H);
+            case CFG_IDXA_DEF_L: return index_get_default_addr_byte(index_id, ADDR24_L);
+            case CFG_IDXA_DEF_M: return index_get_default_addr_byte(index_id, ADDR24_M);
+            case CFG_IDXA_DEF_H: return index_get_default_addr_byte(index_id, ADDR24_H);
             
-            case 0x06: return index_get_limit_addr_byte(index_id, ADDR24_L);
-            case 0x07: return index_get_limit_addr_byte(index_id, ADDR24_M);
-            case 0x08: return index_get_limit_addr_byte(index_id, ADDR24_H);
+            case CFG_IDXA_LIM_L: return index_get_limit_addr_byte(index_id, ADDR24_L);
+            case CFG_IDXA_LIM_M: return index_get_limit_addr_byte(index_id, ADDR24_M);
+            case CFG_IDXA_LIM_H: return index_get_limit_addr_byte(index_id, ADDR24_H);
             
-            case 0x09: return index_get_step_byte(index_id, ADDR16_L);
-            case 0x0A: return index_get_step_byte(index_id, ADDR16_H);
+            case CFG_IDXA_STP_L: return index_get_step_byte(index_id, ADDR16_L);
+            case CFG_IDXA_STP_H: return index_get_step_byte(index_id, ADDR16_H);
             
-            case 0x0B: return index_get_flag(index_id);        
+            case CFG_IDXA_FLAGS: return index_get_flag(index_id);        
         }
     } else {
         switch (id) {
@@ -61,22 +91,22 @@ static inline __force_inline void set_cfg(uint8_t id, uint8_t value) {
         uint8_t field = id & 0x0F;
 
         switch (field) {
-            case 0x00: index_set_current_addr_byte(index_id, ADDR24_L, value); break;
-            case 0x01: index_set_current_addr_byte(index_id, ADDR24_M, value); break;
-            case 0x02: index_set_current_addr_byte(index_id, ADDR24_H, value); break;
+            case CFG_IDXA_ADDR_L: index_set_current_addr_byte(index_id, ADDR24_L, value); break;
+            case CFG_IDXA_ADDR_M: index_set_current_addr_byte(index_id, ADDR24_M, value); break;
+            case CFG_IDXA_ADDR_H: index_set_current_addr_byte(index_id, ADDR24_H, value); break;
 
-            case 0x03: index_set_default_addr_byte(index_id, ADDR24_L, value); break;
-            case 0x04: index_set_default_addr_byte(index_id, ADDR24_M, value); break;
-            case 0x05: index_set_default_addr_byte(index_id, ADDR24_H, value); break;
+            case CFG_IDXA_DEF_L: index_set_default_addr_byte(index_id, ADDR24_L, value); break;
+            case CFG_IDXA_DEF_M: index_set_default_addr_byte(index_id, ADDR24_M, value); break;
+            case CFG_IDXA_DEF_H: index_set_default_addr_byte(index_id, ADDR24_H, value); break;
 
-            case 0x06: index_set_limit_addr_byte(index_id, ADDR24_L, value); break;
-            case 0x07: index_set_limit_addr_byte(index_id, ADDR24_M, value); break;
-            case 0x08: index_set_limit_addr_byte(index_id, ADDR24_H, value); break;
+            case CFG_IDXA_LIM_L: index_set_limit_addr_byte(index_id, ADDR24_L, value); break;
+            case CFG_IDXA_LIM_M: index_set_limit_addr_byte(index_id, ADDR24_M, value); break;
+            case CFG_IDXA_LIM_H: index_set_limit_addr_byte(index_id, ADDR24_H, value); break;
 
-            case 0x09: index_set_step_byte(index_id, ADDR16_L, value); break;
-            case 0x0A: index_set_step_byte(index_id, ADDR16_H, value); break;
+            case CFG_IDXA_STP_L: index_set_step_byte(index_id, ADDR16_L, value); break;
+            case CFG_IDXA_STP_H: index_set_step_byte(index_id, ADDR16_H, value); break;
 
-            case 0x0B: index_set_flag(index_id, value); break;
+            case CFG_IDXA_FLAGS: index_set_flag(index_id, value); break;
 
             default: return;  // reserved field: nothing to update
         }
