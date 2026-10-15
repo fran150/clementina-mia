@@ -431,28 +431,28 @@ void mia_command_init() {
     }   
 
     // Creates the command lookup table
-    commands[0x00] = command_reset_index_a;
-    commands[0x01] = command_reset_index_b;
-    commands[0x02] = command_reset_index;
-    commands[0x03] = command_set_index_default_to_current_addr;
-    commands[0x04] = command_set_index_limit_to_current_addr;
-    commands[0x05] = command_reset_all_index;
-    commands[0x06] = command_peek_from_index_to_a;
-    commands[0x07] = command_peek_from_index_to_b;
+    commands[MIA_CMD_RESET_INDEX_A] = command_reset_index_a;
+    commands[MIA_CMD_RESET_INDEX_B] = command_reset_index_b;
+    commands[MIA_CMD_RESET_INDEX] = command_reset_index;
+    commands[MIA_CMD_CURRENT_TO_DEFAULT] = command_set_index_default_to_current_addr;
+    commands[MIA_CMD_CURRENT_TO_LIMIT] = command_set_index_limit_to_current_addr;
+    commands[MIA_CMD_RESET_ALL_INDEXES] = command_reset_all_index;
+    commands[MIA_CMD_PEEK_INDEX_TO_A] = command_peek_from_index_to_a;
+    commands[MIA_CMD_PEEK_INDEX_TO_B] = command_peek_from_index_to_b;
 
-    commands[0x10] = command_copy_indexes;
-    commands[0x11] = command_copy_rect;
+    commands[MIA_CMD_COPY_INDEXES] = command_copy_indexes;
+    commands[MIA_CMD_COPY_RECT] = command_copy_rect;
 
-    commands[0x30] = command_exec_pause;
+    commands[MIA_CMD_EXEC_PAUSE] = command_exec_pause;
 
-    commands[0x42] = command_video_force_full_refresh;
-    commands[0x43] = command_video_set_mode;
+    commands[MIA_CMD_VIDEO_FORCE_FULL_REFRESH] = command_video_force_full_refresh;
+    commands[MIA_CMD_VIDEO_SET_MODE] = command_video_set_mode;
 
-    commands[0x50] = command_input_set_mode;
-    commands[0x51] = command_input_set_probe;
-    commands[0x52] = command_input_repeat_delay;
-    commands[0x53] = command_input_repeat_interval;
-    commands[0x54] = command_input_repeat_key;
+    commands[MIA_CMD_INPUT_SET_MODE] = command_input_set_mode;
+    commands[MIA_CMD_INPUT_SET_PROBE] = command_input_set_probe;
+    commands[MIA_CMD_INPUT_REPEAT_DELAY] = command_input_repeat_delay;
+    commands[MIA_CMD_INPUT_REPEAT_INTERVAL] = command_input_repeat_interval;
+    commands[MIA_CMD_INPUT_REPEAT_KEY] = command_input_repeat_key;
     commands[MIA_CMD_CLOCK_SNAPSHOT] = command_clock_snapshot;
     commands[MIA_CMD_CLOCK_SET_TI] = command_clock_set_ti;
 

@@ -74,19 +74,19 @@ static void input_configure_index(uint8_t index_id, uint32_t start, uint32_t len
 
 static void input_configure_indexes(void) {
     for (uint8_t i = 0; i < 8u; i++) {
-        input_configure_index((uint8_t)(0x50u + i), MIA_INPUT_KEYBOARD_BITMAP_OFFSET, 1u, false);
-        input_configure_index((uint8_t)(0x58u + i), MIA_INPUT_CONSUMER_BITMAP_OFFSET, 1u, false);
+        input_configure_index((uint8_t)(MIA_INPUT_INDEX_KEYBOARD_PROBE_0 + i), MIA_INPUT_KEYBOARD_BITMAP_OFFSET, 1u, false);
+        input_configure_index((uint8_t)(MIA_INPUT_INDEX_CONSUMER_PROBE_0 + i), MIA_INPUT_CONSUMER_BITMAP_OFFSET, 1u, false);
     }
 
-    input_configure_index(0x60, MIA_INPUT_STATE_OFFSET, MIA_INPUT_STATE_SIZE, true);
-    input_configure_index(0x61, MIA_INPUT_KEYBOARD_BITMAP_OFFSET, 32u, true);
-    input_configure_index(0x62, MIA_INPUT_CONSUMER_BITMAP_OFFSET, 32u, true);
-    input_configure_index(0x63, MIA_INPUT_MOUSE_STATE_OFFSET, 5u, true);
-    input_configure_index(0x64, MIA_INPUT_GAMEPAD_OFFSET, GAMEPAD_SLOT_SIZE, true);
-    input_configure_index(0x65, MIA_INPUT_GAMEPAD_OFFSET + GAMEPAD_SLOT_SIZE, GAMEPAD_SLOT_SIZE, true);
-    input_configure_index(0x66, MIA_INPUT_GAMEPAD_OFFSET + GAMEPAD_SLOT_SIZE * 2u, GAMEPAD_SLOT_SIZE, true);
-    input_configure_index(0x67, MIA_INPUT_GAMEPAD_OFFSET + GAMEPAD_SLOT_SIZE * 3u, GAMEPAD_SLOT_SIZE, true);
-    input_configure_index(0x68, MIA_INPUT_CONTROL_OFFSET, 11u, true);
+    input_configure_index(MIA_INPUT_INDEX_INPUT_STATE, MIA_INPUT_STATE_OFFSET, MIA_INPUT_STATE_SIZE, true);
+    input_configure_index(MIA_INPUT_INDEX_KEYBOARD_BITMAP, MIA_INPUT_KEYBOARD_BITMAP_OFFSET, 32u, true);
+    input_configure_index(MIA_INPUT_INDEX_CONSUMER_BITMAP, MIA_INPUT_CONSUMER_BITMAP_OFFSET, 32u, true);
+    input_configure_index(MIA_INPUT_INDEX_MOUSE_STATE, MIA_INPUT_MOUSE_STATE_OFFSET, 5u, true);
+    input_configure_index(MIA_INPUT_INDEX_GAMEPAD_0, MIA_INPUT_GAMEPAD_OFFSET, GAMEPAD_SLOT_SIZE, true);
+    input_configure_index(MIA_INPUT_INDEX_GAMEPAD_1, MIA_INPUT_GAMEPAD_OFFSET + GAMEPAD_SLOT_SIZE, GAMEPAD_SLOT_SIZE, true);
+    input_configure_index(MIA_INPUT_INDEX_GAMEPAD_2, MIA_INPUT_GAMEPAD_OFFSET + GAMEPAD_SLOT_SIZE * 2u, GAMEPAD_SLOT_SIZE, true);
+    input_configure_index(MIA_INPUT_INDEX_GAMEPAD_3, MIA_INPUT_GAMEPAD_OFFSET + GAMEPAD_SLOT_SIZE * 3u, GAMEPAD_SLOT_SIZE, true);
+    input_configure_index(MIA_INPUT_INDEX_INPUT_CONTROL, MIA_INPUT_CONTROL_OFFSET, 11u, true);
 }
 
 static bool input_mode_available(mia_input_mode_t mode) {
@@ -160,12 +160,12 @@ bool mia_input_set_probe(uint8_t probe_id, uint8_t byte_offset) {
     uint8_t offset = byte_offset & 0x1Fu;
 
     if (probe_id < 8u) {
-        input_configure_index((uint8_t)(0x50u + probe_id), MIA_INPUT_KEYBOARD_BITMAP_OFFSET + offset, 1u, false);
+        input_configure_index((uint8_t)(MIA_INPUT_INDEX_KEYBOARD_PROBE_0 + probe_id), MIA_INPUT_KEYBOARD_BITMAP_OFFSET + offset, 1u, false);
         return true;
     }
 
     if (probe_id < 16u) {
-        input_configure_index((uint8_t)(0x58u + probe_id - 8u), MIA_INPUT_CONSUMER_BITMAP_OFFSET + offset, 1u, false);
+        input_configure_index((uint8_t)(MIA_INPUT_INDEX_CONSUMER_PROBE_0 + probe_id - 8u), MIA_INPUT_CONSUMER_BITMAP_OFFSET + offset, 1u, false);
         return true;
     }
 
