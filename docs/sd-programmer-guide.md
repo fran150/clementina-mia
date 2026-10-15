@@ -20,8 +20,9 @@ mounting, directory traversal, file open, file read/write, and cluster-chain
 I/O.
 
 `MIA_STAT_SD_PRESENT` means that SD initialization succeeded. It is not a
-physical card-detect switch. After swapping cards, send `FS_MOUNT` or reset;
-see [Swapping Cards](sd.md#swapping-cards).
+physical card-detect switch. Cards can be swapped between file commands: the
+next one notices and remounts, dropping files left open on the old card; see
+[Swapping Cards](sd.md#swapping-cards).
 
 ## Constants
 
