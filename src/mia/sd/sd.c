@@ -52,6 +52,7 @@
 #define SD_CMD0_GO_IDLE_STATE 0u
 #define SD_CMD8_SEND_IF_COND 8u
 #define SD_CMD9_SEND_CSD 9u
+#define SD_CMD13_SEND_STATUS 13u
 #define SD_CMD16_SET_BLOCKLEN 16u
 #define SD_CMD17_READ_SINGLE_BLOCK 17u
 #define SD_CMD24_WRITE_BLOCK 24u
@@ -834,6 +835,31 @@ static bool sd_mount_filesystem(FRESULT *out_result) {
     return sd_mounted;
 }
 
+// Asks the card for its status. A card that was pulled does not answer, and
+// neither does a newly inserted one, because it has not been initialized yet.
+static bool sd_card_answers(void) {
+    sd_select();
+    uint8_t response = sd_command(SD_CMD13_SEND_STATUS, 0, 0xFFu);
+    (void)sd_xfer(0xFFu); // second byte of the status response
+    sd_deselect();
+    return (response & 0x80u) == 0;
+}
+
+// MIA has no card-detect pin, so before each filesystem command it checks that
+// the mounted card still answers, asking twice so one bad transfer does not
+// count. If it does not, the card was pulled or swapped: remount, as FS_MOUNT
+// does, so the command runs on the card now in the socket. That drops every
+// open file and the directory cursor, and the current directory goes back to
+// the root. With no card, the remount fails and the command reports it.
+static void sd_remount_if_card_changed(void) {
+    if (!sd_mounted || sd_card_answers() || sd_card_answers()) {
+        return;
+    }
+
+    FRESULT fr;
+    (void)sd_mount_filesystem(&fr);
+}
+
 static bool sd_require_mounted(FRESULT *out_result) {
     if (sd_mounted) {
         *out_result = FR_OK;
@@ -1193,6 +1219,10 @@ static void sd_service_request(void) {
 
     sd_eof = false;
     sd_write_u16(MIA_SD_CONTROL_OFFSET + MIA_SD_CONTROL_RESULT_LEN_L, 0);
+
+    if (fs_event && command != MIA_CMD_FS_MOUNT) {
+        sd_remount_if_card_changed();
+    }
 
     switch ((sd_request_t)command) {
         case sd_request_init:

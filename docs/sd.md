@@ -73,8 +73,8 @@ module directly to Pico GPIOs unless it has appropriate level shifting.
 
 MIA has no card-detect or write-protect input. The `SD_STATUS_PRESENT` and
 `MIA_STAT_SD_PRESENT` bits mean that a card answered SD initialization
-successfully; they are not live socket-switch state. See
-[Swapping Cards](#swapping-cards).
+successfully; they are not live socket-switch state. File commands check for a
+pulled or swapped card themselves; see [Swapping Cards](#swapping-cards).
 
 ## Memory Map
 
@@ -406,16 +406,29 @@ The USB terminal exposes:
 
 ## Swapping Cards
 
-MIA does not notice a card being pulled or inserted. A card inserted after boot
-is picked up by the first file command, which mounts it. Swapping cards after
-the filesystem is mounted is different: MIA keeps the old mount, the new card
-has not been initialized, and file commands fail until the card is mounted
-again. Either send `FS_MOUNT` (or type `sd mount` in the USB terminal), which
-initializes the card and mounts it, or reset the 6502; the reset unmounts, and
-the next file command mounts the new card. Files opened on the old card do not
-carry over: `FS_CLOSE` their slots, which frees a slot even when it reports an
-error. `MIA_STAT_SD_PRESENT` stays set after a card is pulled until an
-initialization fails.
+MIA has no card-detect pin, so it checks the card itself. A card inserted
+after boot is picked up by the first file command, which mounts it. Once the
+filesystem is mounted, every file command (`FS_OPENDIR` through
+`FS_LOAD_PART`, except `FS_MOUNT`) first asks the card for its status
+(`SEND_STATUS`, CMD13). A card that was pulled does not answer, and neither
+does a newly inserted one, because it has not been initialized yet. When the
+card does not answer twice in a row, MIA remounts before running the command,
+just as `FS_MOUNT` does, so cards can be swapped between commands:
+
+- The command runs on the card now in the socket.
+- Files left open on the old card, and the directory cursor, are dropped. A
+  read or write on such a slot fails with `ERROR_FS_NO_FILE_OPEN`; `FS_CLOSE`
+  on it succeeds, and the slot can be opened again.
+- The current directory goes back to the root.
+- With no card in the socket, the remount fails, the command reports
+  `ERROR_FS_MOUNT_FAILED` or its own error, and `MIA_STAT_SD_PRESENT` clears.
+  The next file command tries again.
+
+The check costs one short command to the card. Pulling a card in the middle of
+a command fails that command; the next one remounts. Data a program wrote but
+had not yet flushed with `FS_SYNC` or `FS_CLOSE` is lost with the old card.
+Raw sector commands (`SD_READ_SECTOR`, `SD_WRITE_SECTOR`) do not check: after a
+swap, send `SD_INIT` first.
 
 ## Limitations
 
@@ -448,7 +461,8 @@ initialization fails.
   The directory cursor is only for listing; copying a file between folders
   opens the source and the destination in two slots.
 - There is no card-detect or write-protect input. Present means
-  "initialization succeeded"; see [Swapping Cards](#swapping-cards).
+  "initialization succeeded", and a pulled card is only noticed by the next
+  file command; see [Swapping Cards](#swapping-cards).
 
 ## Protocol version 7: partial loads
 
