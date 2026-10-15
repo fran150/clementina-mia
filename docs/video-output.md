@@ -514,7 +514,7 @@ no address preparation.
 | `$C0-$DF` | `VIDX_OAM_SPRITE_0-31` | `$10850 + n * 5` | 5 | stream one OAM sprite record |
 | `$E0-$E5` | SD/FS indexes (not video) | - | - | see [sd.md](sd.md) |
 | `$E6-$EF` | audio indexes (not video) | - | - | see [audio.md](audio.md) |
-| `$F0-$FF` | unassigned | - | - | reserved |
+| `$F0-$FF` | kernel indexes (not video) | - | - | reserved for the ROM kernel; see clementina-rom `docs/memory-map.md` |
 
 The default OAM sprite indexes cover the first 32 sprite records. Programs that
 need bulk OAM writes or records beyond 31 can use the general-purpose index
