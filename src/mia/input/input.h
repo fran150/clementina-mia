@@ -19,6 +19,26 @@
 
 #define MIA_INPUT_TEXT_FIFO_SIZE 64u
 
+#define MIA_CMD_INPUT_SET_MODE 0x50u
+#define MIA_CMD_INPUT_SET_PROBE 0x51u
+#define MIA_CMD_INPUT_REPEAT_DELAY 0x52u
+#define MIA_CMD_INPUT_REPEAT_INTERVAL 0x53u
+#define MIA_CMD_INPUT_REPEAT_KEY 0x54u
+
+/* Index IDs preconfigured at reset (the IIDX_* names in docs/input.md). The
+ * probes are runs of eight: keyboard probes $50-$57, consumer probes $58-$5F. */
+#define MIA_INPUT_INDEX_KEYBOARD_PROBE_0 0x50u
+#define MIA_INPUT_INDEX_CONSUMER_PROBE_0 0x58u
+#define MIA_INPUT_INDEX_INPUT_STATE 0x60u
+#define MIA_INPUT_INDEX_KEYBOARD_BITMAP 0x61u
+#define MIA_INPUT_INDEX_CONSUMER_BITMAP 0x62u
+#define MIA_INPUT_INDEX_MOUSE_STATE 0x63u
+#define MIA_INPUT_INDEX_GAMEPAD_0 0x64u
+#define MIA_INPUT_INDEX_GAMEPAD_1 0x65u
+#define MIA_INPUT_INDEX_GAMEPAD_2 0x66u
+#define MIA_INPUT_INDEX_GAMEPAD_3 0x67u
+#define MIA_INPUT_INDEX_INPUT_CONTROL 0x68u
+
 #define INPUT_TEXT_READY      (1u << 0)
 #define INPUT_KEYBOARD_DOWN   (1u << 1)
 #define INPUT_CONSUMER_DOWN   (1u << 2)

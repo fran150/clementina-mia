@@ -372,35 +372,35 @@ static void video_clear_dirty_maps(void) {
 }
 
 static void video_configure_indexes(void) {
-    video_configure_index(0x70, 0x00000u, 32u);
-    video_configure_index(0x71, 0x00004u, 4u);
-    video_configure_index(0x72, 0x00008u, 2u);
+    video_configure_index(MIA_VIDEO_INDEX_LOCAL_CONTROL, 0x00000u, 32u);
+    video_configure_index(MIA_VIDEO_INDEX_FRAME_ID, 0x00004u, 4u);
+    video_configure_index(MIA_VIDEO_INDEX_LAST_RESPONSE_DIRTY_PAGES, 0x00008u, 2u);
 
-    video_configure_index(0x80, MIA_VIDEO_RENDER_CONTROL_OFFSET, 32u);
-    video_configure_index(0x81, 0x00021u, 1u);
-    video_configure_index(0x82, 0x00022u, 2u);
-    video_configure_index(0x83, 0x00024u, 2u);
-    video_configure_index(0x84, 0x00026u, 2u);
-    video_configure_index(0x85, 0x00028u, 5u);
-    video_configure_index(0x86, 0x0002Du, 2u);
-    video_configure_index(0x87, 0x0002Fu, 1u);
-    video_configure_index(0x88, 0x00030u, 1u);
+    video_configure_index(MIA_VIDEO_INDEX_RENDER_CONTROL, MIA_VIDEO_RENDER_CONTROL_OFFSET, 32u);
+    video_configure_index(MIA_VIDEO_INDEX_LAYER_ENABLE, 0x00021u, 1u);
+    video_configure_index(MIA_VIDEO_INDEX_BG_VIEWPORT, 0x00022u, 2u);
+    video_configure_index(MIA_VIDEO_INDEX_SCROLL_X, 0x00024u, 2u);
+    video_configure_index(MIA_VIDEO_INDEX_SCROLL_Y, 0x00026u, 2u);
+    video_configure_index(MIA_VIDEO_INDEX_BANK_SELECT, 0x00028u, 5u);
+    video_configure_index(MIA_VIDEO_INDEX_CHR_1BPP, 0x0002Du, 2u);
+    video_configure_index(MIA_VIDEO_INDEX_BACKDROP_COLOR, 0x0002Fu, 1u);
+    video_configure_index(MIA_VIDEO_INDEX_OAM_LAST, 0x00030u, 1u);
 
     for (uint32_t i = 0; i < 16u; i++) {
-        video_configure_index((uint8_t)(0x90u + i), MIA_VIDEO_PALETTE_OFFSET + i * 16u, 16u);
+        video_configure_index((uint8_t)(MIA_VIDEO_INDEX_PALETTE_0 + i), MIA_VIDEO_PALETTE_OFFSET + i * 16u, 16u);
     }
 
     for (uint32_t i = 0; i < 8u; i++) {
-        video_configure_index((uint8_t)(0xA0u + i), MIA_VIDEO_CHR_OFFSET + i * 6144u, 6144u);
-        video_configure_index((uint8_t)(0xA8u + i), MIA_VIDEO_BG_NT_OFFSET + i * 1000u, 1000u);
-        video_configure_index((uint8_t)(0xB0u + i), MIA_VIDEO_BG_ATTR_OFFSET + i * 1000u, 1000u);
+        video_configure_index((uint8_t)(MIA_VIDEO_INDEX_CHR_BANK_0 + i), MIA_VIDEO_CHR_OFFSET + i * 6144u, 6144u);
+        video_configure_index((uint8_t)(MIA_VIDEO_INDEX_BG_NT_0 + i), MIA_VIDEO_BG_NT_OFFSET + i * 1000u, 1000u);
+        video_configure_index((uint8_t)(MIA_VIDEO_INDEX_BG_ATTR_0 + i), MIA_VIDEO_BG_ATTR_OFFSET + i * 1000u, 1000u);
     }
 
-    video_configure_index(0xB8, MIA_VIDEO_OVERLAY_NT_OFFSET, 1000u);
-    video_configure_index(0xB9, MIA_VIDEO_OVERLAY_ATTR_OFFSET, 1000u);
+    video_configure_index(MIA_VIDEO_INDEX_OVERLAY_NT, MIA_VIDEO_OVERLAY_NT_OFFSET, 1000u);
+    video_configure_index(MIA_VIDEO_INDEX_OVERLAY_ATTR, MIA_VIDEO_OVERLAY_ATTR_OFFSET, 1000u);
 
     for (uint32_t i = 0; i < 32u; i++) {
-        video_configure_index((uint8_t)(0xC0u + i), MIA_VIDEO_OAM_OFFSET + i * 5u, 5u);
+        video_configure_index((uint8_t)(MIA_VIDEO_INDEX_OAM_SPRITE_0 + i), MIA_VIDEO_OAM_OFFSET + i * 5u, 5u);
     }
 }
 
