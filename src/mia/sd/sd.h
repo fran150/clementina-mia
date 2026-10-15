@@ -153,6 +153,11 @@ void mia_sd_init(void);
 void mia_sd_reset_runtime_state(void);
 void mia_sd_service(void);
 
+// Sets the function a card wait inside mia_sd_service runs once it has spun for
+// MIA_SD_WAIT_SERVICE_AFTER_US, such as a write's busy time. It runs on its own
+// 4 KB stack and must not touch the card or SD state. NULL turns it off.
+void mia_sd_set_wait_service(void (*service)(void));
+
 bool mia_sd_request(uint8_t command);
 
 bool mia_sd_card_init(void);

@@ -67,6 +67,11 @@
 #define MIA_SD_SERVICE_BUDGET_US 1000u
 #endif
 
+// How long a card wait spins before it starts running the wait service.
+#ifndef MIA_SD_WAIT_SERVICE_AFTER_US
+#define MIA_SD_WAIT_SERVICE_AFTER_US 1000u
+#endif
+
 typedef enum {
     sd_request_none = 0,
     sd_request_init = MIA_CMD_SD_INIT,
@@ -141,12 +146,25 @@ static DIR sd_dir;
 static sd_job_state_t sd_job;
 static uint8_t sd_job_buffer[SD_JOB_CHUNK_SIZE];
 
+static void (*sd_wait_service)(void);
+// True only while mia_sd_service runs a request or job step, so the boot-time
+// WIFI.CFG read and a reset's card access never run the wait service.
+static bool sd_wait_service_allowed;
+
+// The wait service runs Wi-Fi and video, which need as much stack as they get
+// in the main loop, and a card wait can happen deep inside FatFs. Core 0's own
+// stack is 4 KB, so the service gets a separate 4 KB stack instead of running
+// on top of the SD calls. Interrupts taken meanwhile also use it.
+#define SD_WAIT_SERVICE_STACK_SIZE 4096u
+static uint64_t sd_wait_service_stack[SD_WAIT_SERVICE_STACK_SIZE / sizeof(uint64_t)];
+
 static void sd_configure_indexes(void);
 static void sd_configure_index(uint8_t index_id, uint32_t start, uint32_t length);
 static void sd_publish_state(void);
 static void sd_finish(bool ok, uint8_t error, FRESULT fatfs_result, bool fs_event);
 static void sd_set_busy(bool busy);
 static void sd_service_job(void);
+static void sd_service_request(void);
 static void sd_update_file_position(uint8_t slot);
 
 // Reads SD_HANDLE_SELECT and validates it against MIA_SD_MAX_HANDLES. Returns
@@ -206,16 +224,58 @@ static void sd_deselect(void) {
     (void)sd_xfer(0xFFu);
 }
 
+// Calls fn with the stack pointer set to top and the stack limit, which faults
+// on overflow, set to bottom, then restores both. Arguments arrive in r0-r2;
+// fn preserves r4 and r5, which hold the old limit and stack pointer. r6 is
+// pushed only to keep the stack 8-byte aligned.
+static void __attribute__((naked, noinline)) sd_call_on_stack(__unused void (*fn)(void),
+                                                               __unused uintptr_t bottom,
+                                                               __unused uintptr_t top) {
+    __asm volatile(
+        "push {r4, r5, r6, lr}\n"
+        "mrs r4, msplim\n"
+        "mov r5, sp\n"
+        "msr msplim, r1\n"
+        "mov sp, r2\n"
+        "blx r0\n"
+        "mov sp, r5\n"
+        "msr msplim, r4\n"
+        "pop {r4, r5, r6, pc}\n");
+}
+
+// Called on each pass of a loop that polls the card. Once the wait has lasted
+// MIA_SD_WAIT_SERVICE_AFTER_US, runs the wait service so a slow card (a write's
+// busy time can reach a second) does not stall the rest of core 0. Short waits
+// never run it. Returns true when it ran.
+static bool sd_wait_idle(absolute_time_t started) {
+    if (!sd_wait_service_allowed || sd_wait_service == NULL ||
+        absolute_time_diff_us(started, get_absolute_time()) < MIA_SD_WAIT_SERVICE_AFTER_US) {
+        tight_loop_contents();
+        return false;
+    }
+
+    // Disallowed while it runs, so nothing it calls can start it again.
+    sd_wait_service_allowed = false;
+    sd_call_on_stack(sd_wait_service, (uintptr_t)sd_wait_service_stack,
+                     (uintptr_t)sd_wait_service_stack + sizeof(sd_wait_service_stack));
+    sd_wait_service_allowed = true;
+    return true;
+}
+
 static bool sd_wait_ready(uint32_t timeout_ms) {
-    absolute_time_t deadline = make_timeout_time_ms(timeout_ms);
-    do {
+    absolute_time_t started = get_absolute_time();
+    absolute_time_t deadline = delayed_by_ms(started, timeout_ms);
+    // Polls once more after the deadline, so a wait service that ran past it
+    // cannot fail a card that became ready meanwhile.
+    while (true) {
         if (sd_xfer(0xFFu) == 0xFFu) {
             return true;
         }
-        tight_loop_contents();
-    } while (!time_reached(deadline));
-
-    return false;
+        if (time_reached(deadline)) {
+            return false;
+        }
+        (void)sd_wait_idle(started);
+    }
 }
 
 static uint8_t sd_command(uint8_t cmd, uint32_t arg, uint8_t crc) {
@@ -245,10 +305,11 @@ static uint8_t sd_command(uint8_t cmd, uint32_t arg, uint8_t crc) {
 }
 
 static bool sd_read_token_data(uint8_t *buffer, uint32_t len, uint32_t timeout_ms) {
-    absolute_time_t deadline = make_timeout_time_ms(timeout_ms);
+    absolute_time_t started = get_absolute_time();
+    absolute_time_t deadline = delayed_by_ms(started, timeout_ms);
     uint8_t token;
 
-    do {
+    while (true) {
         token = sd_xfer(0xFFu);
         if (token == SD_DATA_TOKEN) {
             spi_read_blocking(MIA_SD_SPI_PORT, 0xFFu, buffer, len);
@@ -256,13 +317,11 @@ static bool sd_read_token_data(uint8_t *buffer, uint32_t len, uint32_t timeout_m
             (void)sd_xfer(0xFFu);
             return true;
         }
-        if (token != 0xFFu) {
+        if (token != 0xFFu || time_reached(deadline)) {
             return false;
         }
-        tight_loop_contents();
-    } while (!time_reached(deadline));
-
-    return false;
+        (void)sd_wait_idle(started);
+    }
 }
 
 static bool sd_read_csd(uint8_t csd[16]) {
@@ -364,7 +423,8 @@ bool mia_sd_card_init(void) {
         v2 = true;
     }
 
-    absolute_time_t deadline = make_timeout_time_ms(2000);
+    absolute_time_t started = get_absolute_time();
+    absolute_time_t deadline = delayed_by_ms(started, 2000);
     do {
         sd_select();
         response = sd_command(SD_CMD55_APP_CMD, 0, 0xFFu);
@@ -379,7 +439,9 @@ bool mia_sd_card_init(void) {
         if (response == 0) {
             break;
         }
-        sleep_ms(1);
+        if (!sd_wait_idle(started)) {
+            sleep_ms(1);
+        }
     } while (!time_reached(deadline));
 
     if (response != 0) {
@@ -1099,7 +1161,17 @@ static void sd_service_job(void) {
     sd_publish_state();
 }
 
+void mia_sd_set_wait_service(void (*service)(void)) {
+    sd_wait_service = service;
+}
+
 void mia_sd_service(void) {
+    sd_wait_service_allowed = true;
+    sd_service_request();
+    sd_wait_service_allowed = false;
+}
+
+static void sd_service_request(void) {
     if (sd_job.type != sd_job_none) {
         sd_service_job();
         return;
