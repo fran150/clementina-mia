@@ -85,8 +85,10 @@ See [docs/input.md](docs/input.md),
 [docs/input-protocol.md](docs/input-protocol.md).
 
 The console command `input console` feeds terminal key presses into the input
-FIFO until `Ctrl+Q`. The console command `input wifi` enables the Wi-Fi input
-listener on UDP port `6503` and accepts one client at a time. The build-time
+FIFO until `Ctrl+Q`, turning the terminal's cursor, Home, Insert and Delete
+sequences into Clementina key codes ([docs/input.md](docs/input.md)). The
+console command `input wifi` enables the Wi-Fi input listener on UDP port
+`6503` and accepts one client at a time. The build-time
 default input mode is selected with `MIA_INPUT_DEFAULT_MODE` and defaults to
 `wifi`. The 6502 can change input modes at any point with the
 `CMD_INPUT_SET_MODE` command. Input mode `2` is reserved for a USB keyboard on

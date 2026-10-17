@@ -38,7 +38,25 @@ unavailable at boot, MIA falls back to `console`.
 The terminal console command `input console` enters console text input mode.
 While this mode is active, terminal key presses are forwarded to the text FIFO
 until the user presses `Ctrl+Q`, which returns the terminal to normal command
-mode.
+mode. Enter (`$0A` or `$0D`) arrives as `$0D` and Backspace (`$7F`) as `$08`.
+A terminal sends its cursor, Home, Insert and Delete keys as escape sequences;
+MIA turns them into the bytes its keyboard decode gives those keys:
+
+| Key | Terminal sends | Text FIFO byte |
+| --- | --- | --- |
+| Up | `ESC [ A` or `ESC O A` | `$91` |
+| Down | `ESC [ B` or `ESC O B` | `$11` |
+| Right | `ESC [ C` or `ESC O C` | `$1D` |
+| Left | `ESC [ D` or `ESC O D` | `$9D` |
+| Home | `ESC [ H`, `ESC O H`, `ESC [ 1 ~` or `ESC [ 7 ~` | `$13` |
+| Insert | `ESC [ 2 ~` | `$94` |
+| Delete | `ESC [ 3 ~` | `$7F` |
+
+Modifier forms such as `ESC [ 1 ; 5 C` (Ctrl+Right) give the plain key's byte.
+Other sequences (End, Page Up, Page Down, function keys) are dropped. Esc
+itself reaches the FIFO as `$1B` once 20 ms pass with no further byte, or at
+once when an ordinary key follows it. `Ctrl+Q` always ends console input, so
+`$11` comes from the Down key.
 
 The terminal console command `input wifi` enables the Wi-Fi input listener on
 UDP port `6503`. A Wi-Fi input client owns the Wi-Fi input session until it
