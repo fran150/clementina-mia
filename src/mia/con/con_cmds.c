@@ -689,12 +689,12 @@ typedef struct {
 } con_cmd_t;
 
 static const con_cmd_t commands[] = {
-    { "status",  cmd_status,  "status [video|input|audio|sd|wifi|irq|speed|exec|mem|index]" },
+    { "status",  cmd_status,  "status [video|input|audio|sd|wifi|irq|speed|exec|errors|mem|index]" },
     { "errors",  cmd_errors,  "errors [list|clear]"                      },
     { "speed",   cmd_speed,   "speed HZ  — set PHI2 clock frequency"     },
     { "wifi",    cmd_wifi,    "wifi [status|off|connect|ap]"             },
     { "input",   cmd_input,   "input [status|console|wifi]"              },
-    { "audio",   cmd_audio,   "audio [status|enable|stop|reset|seq]"     },
+    { "audio",   cmd_audio,   "audio [status|enable|stop|reset|meter|seq]" },
     { "sd",      cmd_sd,      "sd [status|init|mount]"                   },
     { "exec",    cmd_exec,    "exec [status|pause|resume]"               },
     { "monitor", cmd_monitor, "Enter 65C02 machine language monitor"     },

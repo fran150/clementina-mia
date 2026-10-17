@@ -186,8 +186,8 @@ void mia_reset_runtime_state(void) {
     mia_exec_resume();
     mia_video_reset_runtime_state();
 
-    // Pre-initialize video indices so they are ready the moment the 6502
-    // is released from reset, preventing races with VIDEO_ENABLE.
+    // Set up video state and the video indexes so they are ready the moment
+    // the 6502 is released from reset.
     mia_video_enable();
     mia_input_reset_runtime_state();
     mia_timing_reset();

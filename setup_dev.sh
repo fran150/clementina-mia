@@ -114,13 +114,13 @@ fi
 echo -e "\n${GREEN}✓ Development environment setup complete!${NC}"
 echo
 echo -e "${BLUE}Next steps:${NC}"
-echo "1. Run ./build.sh to build the firmware"
-echo "2. Flash the generated mia.uf2 file to your Pico 2 W"
+echo "1. Run make build to build the firmware"
+echo "2. Run make flash to load build/mia.uf2 onto your Pico 2 W"
 echo "3. Connect the MIA to your Clementina system"
 echo
 echo -e "${BLUE}Useful commands:${NC}"
-echo "  ./build.sh          - Build the firmware"
-echo "  ./build.sh clean    - Clean build directory"
-echo "  make -C build       - Build from build directory"
+echo "  make build          - Build the firmware"
+echo "  make flash          - Build and load it with picotool"
+echo "  make clean          - Clean build directory"
 echo
 echo -e "${YELLOW}Happy coding!${NC}"

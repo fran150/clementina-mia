@@ -166,8 +166,11 @@ If `usage_id <= $00FF`, MIA updates the matching bit in the internal bitmap for
 the selected usage page. Keyboard and consumer usages above `$00FF` are not
 represented by the 32-byte bitmap and are ignored for bitmap state.
 
-For Keyboard/Keypad events, if `DOWN` is set and `text` is nonzero, MIA appends
-`text` to the text FIFO. Release events do not enqueue text. To enqueue byte
+For a Keyboard/Keypad event with `DOWN` set, MIA appends `text` to the text
+FIFO. When `text` is `$00`, MIA decodes the usage itself: Enter, Keypad Enter,
+Tab, Backspace, Esc, Insert, Home, Delete and the four cursor keys queue their
+key code, and other usages queue nothing. The [Key Codes](input.md#key-codes)
+table lists the bytes. Release events do not enqueue text. To enqueue byte
 `$00`, use `TEXT`.
 
 Consumer events do not enqueue text.
