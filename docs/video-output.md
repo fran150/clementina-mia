@@ -53,8 +53,8 @@ MIA appears to Clementina as a 32-byte register block at `$FFE0-$FFFF`. It owns
 Core split:
 
 - Core 1 services the time-critical 6502 bus action loop.
-- Core 0 runs the firmware service loop, Wi-Fi polling, dirty-map rotation,
-  packet construction, repair, and video publishing.
+- Core 0 runs the firmware service loop, Wi-Fi polling, dirty-map rotation
+  requests, packet construction, repair, and video publishing.
 
 The firmware executes most code from flash/XIP. The bus-critical path remains
 RAM-resident:
@@ -482,8 +482,10 @@ or writes bytes through the matching data port, `IDXA_PORT` (`$FFE0`) or
 `IDXB_PORT` (`$FFE4`). Each descriptor supplies the RAM address, length, step,
 wrap behavior, and optional wrap IRQ behavior for that window.
 
-Video indexes are preconfigured descriptors for common video access. They are
-initialized by `VIDEO_ENABLE` and restored by reset. All video indexes below
+Video indexes are preconfigured descriptors for common video access. MIA sets
+them up at every reset, in `mia_video_enable()`, which also clears the video
+region, loads the default palette and character set, and marks every syncable
+page dirty. All video indexes below
 use forward step-on-read, forward step-on-write, and wrap. Small control
 registers wrap over exactly their field size, so repeated reads or writes need
 no address preparation.
@@ -556,7 +558,7 @@ MIA keeps two 270-byte dirty maps:
 
 | Dirty map | Owner | Meaning |
 | --- | --- | --- |
-| active | core 1 write path | receives bits for new 6502 writes |
+| active | core 1 write path (core 0 marks its own writes too, see [Marking Pages](#marking-pages)) | receives bits for new writes |
 | pending | core 0 video service | retained page list for the current response |
 
 When no response is pending, the non-active map is already clear and ready for
@@ -574,8 +576,53 @@ active_dirty[page >> 3] |= 1 << (page & 7)
 
 Core 1 does not copy page data. Core 0 does the slower work: dirty-map rotation,
 dirty page list construction, packet construction, repair handling, bounded send
-scheduling, and UDP sending. Core 0 never clears the active map and never clears
-the pending map while it is retained for repair.
+scheduling, and UDP sending. Core 0 never clears the pending map while it is
+retained for repair, and clears the active map only when it resets the video
+session (a `HELLO`, a protocol error, or a MIA reset); the next session starts
+with every syncable page marked dirty.
+
+### Marking Pages
+
+Core 1 marks pages in `index_write_and_step()` (`src/mia/mem/indexes.h`), the
+path for every 6502 write to `IDXA_PORT` or `IDXB_PORT`. It marks the address
+the byte went to, before the index steps or wraps. The mark,
+`mia_video_mark_dirty()` in `src/mia/video/video_dirty.h`, is force-inlined and
+runs from RAM, and it finds the active map through an index,
+`mia_video_active_dirty_index`, rather than a pointer. It takes no lock, sends
+no FIFO message and never waits for core 0.
+
+Core 0 also marks pages in the active map, with `mia_video_mark_dirty_range()`,
+when it changes video RAM itself:
+
+- each finished row of a DMA copy (the DMA interrupt in `src/mia/mem/dma.c`);
+- an SD file load into MIA RAM (`src/mia/sd/sd.c`);
+- an `e` edit in the USB console monitor (`src/mia/con/monitor.c`);
+- `CMD_VIDEO_SET_MODE`, which writes the mode byte.
+
+### Rotation Handshake
+
+Core 0 cannot swap the two maps on its own, because core 1 may be in the middle
+of marking the active one. Core 0 asks core 1 to do it, through shared flags in
+`src/mia/video/video_dirty.h`:
+
+1. Core 0 clears `mia_video_rotate_done`, sets `mia_video_rotate_request`,
+   signals core 1 with `__sev()`, and spins until `mia_video_rotate_done` is
+   set.
+2. Core 1 checks the request in `mia_video_core1_poll()` at the top of every
+   pass of its bus loop, `act_loop()`, between bus actions. It flips
+   `mia_video_active_dirty_index` to the other map, which is already clear,
+   stores the old index in `mia_video_rotated_pending_index`, issues a memory
+   barrier (`__dmb()`), then clears the request and sets
+   `mia_video_rotate_done`.
+3. Core 0 takes the old index as the pending map and scans it. No core 1 mark
+   can still be on its way to that map, because core 1 finished its last bus
+   action before it flipped the index.
+
+A full refresh uses the same handshake with `mia_video_mark_all_request` and
+`mia_video_mark_all_done`: core 1 sets every syncable bit of the active map
+(`mia_video_mark_all_active_dirty()`) between bus actions, so core 0 never
+fills the map while core 1 is marking it. Core 1 answers on its next pass,
+which runs whether the 6502 is running, paused, or still in loader mode.
 
 ## Update Lifecycle
 
@@ -591,8 +638,9 @@ small coordinated dirty-map rotation:
 5. set `MIA_STAT_VIDEO_FRAME_REQUESTED`;
 6. set `IRQ_VIDEO_FRAME_REQUEST` in `IRQ_STATUS`.
 
-After the rotation, new 6502 writes are tracked in the active map for the next
-client update. Core 0 reads the pending dirty map, builds fixed page records in
+The rotation is the handshake in [Rotation Handshake](#rotation-handshake).
+After it, new 6502 writes are tracked in the active map for the next client
+update. Core 0 reads the pending dirty map, builds fixed page records in
 ascending page order, and sends `FRAME_DATA` chunks.
 
 If the request returns `STATUS(NO_DIRTY_PAGES)`, MIA writes `0` to
@@ -616,6 +664,40 @@ If the client requests missing chunks, MIA regenerates those chunks from the
 same pending dirty map and current MIA RAM values. Repair does not change
 the `MIA_STATUS` lifecycle bits; the update remains in the requested/sent
 lifecycle until ACK.
+
+### Pending Response State
+
+MIA holds at most one outstanding response, in `video_response`
+(`src/mia/video/video.c`):
+
+| Field | Holds |
+| --- | --- |
+| `valid` | a response is pending |
+| `map_index` | which of the two dirty maps is the pending map |
+| `request_id` | the `request_id` of the accepted `REQUEST_FRAME` |
+| `frame_id` | the `FRAME_ID` assigned to this response |
+| `last_complete_frame_id` | the request's `last_complete_frame_id`, so a resend of the same request is recognized |
+| `page_count`, `chunk_count` | pages in the response, and the chunks they fill at 14 pages a chunk |
+| `next_chunk_to_send` | the next chunk of the first send |
+| `initial_send_done` | the first send has finished |
+
+Two arrays go with it:
+
+- `video_pending_pages[]` holds the pending map scanned into ascending page
+  indexes, once, when the request is accepted (2,154 entries, 4,308 bytes at
+  most), so sending and repair never rescan the bitmap.
+- `video_repair_chunks[]`, with `video_repair_count` and `video_repair_pos`,
+  holds the chunks the latest `NACK_CHUNKS` asked for. A new `NACK_CHUNKS`
+  replaces the list.
+
+A repeated `REQUEST_FRAME` with the same `request_id` and
+`last_complete_frame_id` restarts the first send from chunk 0.
+
+`video_release_pending_response()` releases the response. It clears the pending
+map first, then marks the response invalid and empties the repair list. On an
+ACK, explicit or implicit, it then finishes with the ACK steps above. A
+`HELLO`, a protocol error or a reset releases the response without them, and
+clears the `MIA_STATUS` video lifecycle bits on its own.
 
 ## Visibility Rules
 
@@ -700,9 +782,25 @@ while (true) {
     cyw43_arch_poll();
     mia_video_service();
     update_onboard_led_blink();
+    con_process();
     tight_loop_contents();
 }
 ```
 
-`mia_video_service()` is nonblocking and bounded per call. It sends only the
-packets allowed by pbuf availability and the accepted transport budget.
+`con_process()` handles at most one USB console byte per pass. While an SD
+request waits on a slow card, `serve_during_sd_wait()` in `src/mia/main.c`
+runs `mia_input_service()`, `cyw43_arch_poll()`, `mia_video_service()` and the
+LED blink from inside the wait, so video keeps flowing.
+
+### Send Budget
+
+`mia_video_service()` is nonblocking and bounded per call. It sends at most
+`MIA_VIDEO_SEND_BUDGET` (4) `FRAME_DATA` chunks per call: requested repair
+chunks first, then the next chunks of the first send. Each chunk is built from
+live MIA RAM and handed to lwIP. When `pbuf_alloc()` or `udp_sendto()` fails,
+the call stops and leaves the chunk position unchanged, so the same chunk goes
+out on a later pass. There is no rate limit beyond that backpressure. When the
+last chunk of the first send has gone out, MIA updates
+`LAST_RESPONSE_DIRTY_PAGES`, sets `MIA_STAT_VIDEO_FRAME_SENT` and sets
+`IRQ_VIDEO_FRAME_SENT`. With no client session or no pending response, the
+call returns at once.

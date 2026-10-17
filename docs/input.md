@@ -38,25 +38,9 @@ unavailable at boot, MIA falls back to `console`.
 The terminal console command `input console` enters console text input mode.
 While this mode is active, terminal key presses are forwarded to the text FIFO
 until the user presses `Ctrl+Q`, which returns the terminal to normal command
-mode. Enter (`$0A` or `$0D`) arrives as `$0D` and Backspace (`$7F`) as `$08`.
-A terminal sends its cursor, Home, Insert and Delete keys as escape sequences;
-MIA turns them into the bytes its keyboard decode gives those keys:
-
-| Key | Terminal sends | Text FIFO byte |
-| --- | --- | --- |
-| Up | `ESC [ A` or `ESC O A` | `$91` |
-| Down | `ESC [ B` or `ESC O B` | `$11` |
-| Right | `ESC [ C` or `ESC O C` | `$1D` |
-| Left | `ESC [ D` or `ESC O D` | `$9D` |
-| Home | `ESC [ H`, `ESC O H`, `ESC [ 1 ~` or `ESC [ 7 ~` | `$13` |
-| Insert | `ESC [ 2 ~` | `$94` |
-| Delete | `ESC [ 3 ~` | `$7F` |
-
-Modifier forms such as `ESC [ 1 ; 5 C` (Ctrl+Right) give the plain key's byte.
-Other sequences (End, Page Up, Page Down, function keys) are dropped. Esc
-itself reaches the FIFO as `$1B` once 20 ms pass with no further byte, or at
-once when an ordinary key follows it. `Ctrl+Q` always ends console input, so
-`$11` comes from the Down key.
+mode. A terminal sends its cursor, Home, Insert and Delete keys as escape
+sequences; MIA turns them into the same bytes the Wi-Fi keyboard gives those
+keys (see [Key Codes](#key-codes)).
 
 The terminal console command `input wifi` enables the Wi-Fi input listener on
 UDP port `6503`. A Wi-Fi input client owns the Wi-Fi input session until it
@@ -157,12 +141,61 @@ queues the new byte. No overflow flag is kept.
 the count is nonzero. Reading `INPUT_CHAR` pops one byte from the FIFO. Reading
 `INPUT_CHAR` while the FIFO is empty returns `$00`.
 
-Keyboard and Wi-Fi key events enqueue text only when they carry a nonzero text
-byte. Key releases do not enqueue text. Wi-Fi clients can also send text bytes
-directly without changing HID key state.
+A Wi-Fi key event queues its text byte, or, when that byte is `$00`, the key
+code MIA decodes for an editing key (see [Key Codes](#key-codes)). Key releases
+do not enqueue text. Wi-Fi clients can also send text bytes directly without
+changing HID key state.
 
 The console source writes only to the text FIFO. It does not update the HID
 bitmap, mouse state, or gamepad state.
+
+## Key Codes
+
+Every key that types something reaches the 6502 as one byte in the text FIFO,
+and a key gives the same byte from either input mode (`Ctrl+I` is the one
+exception, below), so BASIC's screen editor and other programs need no
+per-source handling. Printable characters are
+ASCII. The cursor and Home keys use their PETSCII codes, as on the Commodore
+64; Insert uses the PETSCII insert code `$94`; the other keys use ASCII
+control codes.
+
+| Key | Byte | Wi-Fi input | Console input: the terminal sends |
+| --- | --- | --- | --- |
+| Printable character | `$20-$7E` | `TEXT` packet | the character |
+| Enter | `$0D` | text byte | `$0D` or `$0A` |
+| Tab | `$09` | text byte | `$09` |
+| Backspace | `$08` | text byte | `$7F` or `$08` |
+| Esc | `$1B` | text byte | `ESC`, then 20 ms with no further byte |
+| Ctrl+A to Ctrl+Z | `$01-$1A` | text byte | `$01-$1A`, except `Ctrl+Q` |
+| Insert | `$94` | MIA decode, usage `$49` | `ESC [ 2 ~` |
+| Home | `$13` | MIA decode, usage `$4A` | `ESC [ H`, `ESC O H`, `ESC [ 1 ~` or `ESC [ 7 ~` |
+| Delete | `$7F` | MIA decode, usage `$4C` | `ESC [ 3 ~` |
+| Right | `$1D` | MIA decode, usage `$4F` | `ESC [ C` or `ESC O C` |
+| Left | `$9D` | MIA decode, usage `$50` | `ESC [ D` or `ESC O D` |
+| Down | `$11` | MIA decode, usage `$51` | `ESC [ B` or `ESC O B` |
+| Up | `$91` | MIA decode, usage `$52` | `ESC [ A` or `ESC O A` |
+
+In Wi-Fi input, "text byte" is the `text` field of the client's `HID_EVENT`
+packet ([input-protocol.md](input-protocol.md#hid_event-payload)). When a
+key-down event carries `text = $00`, MIA decodes the keyboard usage itself
+(`input_decode_key_usage()` in `src/mia/input/input_state.c`).
+The decode covers the editing keys above, and also Enter, Keypad Enter, Tab,
+Backspace and Esc, so a client that sends only HID usages can still type them.
+Other usages with `text = $00` queue nothing. The Clementina video client
+sends printable characters as `TEXT`, attaches the text byte for Enter, Tab,
+Backspace, Esc and Ctrl+letter, and leaves the editing keys to MIA. It keeps
+`Ctrl+M` (control mode) and `Ctrl+V` (paste) for itself, and sends `Ctrl+I` as
+Insert (`$94`) as a stand-in for the Insert key Mac keyboards lack.
+
+In console input, modifier forms such as `ESC [ 1 ; 5 C` (Ctrl+Right) give the
+plain key's byte. Other sequences (End, Page Up, Page Down, function keys) are
+dropped. Esc reaches the FIFO as `$1B` once 20 ms pass with no further byte, or
+at once when an ordinary key follows it. `Ctrl+Q` always ends console input, so
+there `$11` comes only from the Down key, and `Ctrl+I` types Tab.
+
+Some control codes share a byte with an editing key: `Ctrl+H` is Backspace
+(`$08`), `Ctrl+M` is Enter (`$0D`), `Ctrl+Q` is Down (`$11`) and `Ctrl+S` is
+Home (`$13`). `Ctrl+C` (`$03`) stops a running BASIC program.
 
 ## HID Digital Bitmap
 

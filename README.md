@@ -86,7 +86,7 @@ See [docs/input.md](docs/input.md),
 
 The console command `input console` feeds terminal key presses into the input
 FIFO until `Ctrl+Q`, turning the terminal's cursor, Home, Insert and Delete
-sequences into Clementina key codes ([docs/input.md](docs/input.md)). The
+sequences into Clementina key codes ([docs/input.md](docs/input.md#key-codes)). The
 console command `input wifi` enables the Wi-Fi input listener on UDP port
 `6503` and accepts one client at a time. The build-time
 default input mode is selected with `MIA_INPUT_DEFAULT_MODE` and defaults to
@@ -367,33 +367,72 @@ protocol.
 
 Unassigned command ids report `ERROR_CMD_UNKNOWN`.
 
-## Terminal Diagnostics
+## USB Console
 
-The USB terminal command `status` prints a compact dashboard. Use
-`status <subsystem>` for deeper diagnostics:
+MIA's USB port is a serial console (USB stdio; UART stdio is off). Open it with
+any terminal program; over USB the baud rate setting does not matter. MIA waits
+two seconds after power-on, prints its startup messages, then
+`MIA ready. Type 'help' for commands.` and the `> ` prompt. Commands are
+lowercase words with space-separated arguments. A line holds up to 79
+characters, and Backspace edits it.
+
+| Command | What it does |
+| ------- | ------------ |
+| `help` or `?` | List the commands. |
+| `status [subsystem]` | Print the dashboard, or one subsystem's detail (next table). |
+| `errors list` | Print the queued error codes with their names (see [Errors](#errors)). |
+| `errors clear` | Empty the error queue. |
+| `speed` | Print the applied `PHI2` frequency. |
+| `speed HZ` | Request a `PHI2` frequency, a decimal number in Hz, as a write to `SPEED_L/M/H` would (see [PHI2 Speed Control](#phi2-speed-control)). `status speed` shows the value applied. |
+| `wifi` or `wifi status` | Print a short Wi-Fi summary; `status wifi` has the detail. |
+| `wifi connect SSID [PASSWORD]` | Join a network until the next boot, without touching `WIFI.CFG`. |
+| `wifi ap SSID [PASSWORD]` | Start an access point at `192.168.4.1` until the next boot. Clients need a static address in `192.168.4.x`. |
+| `wifi off` | Turn Wi-Fi off until the next boot. |
+| `input` or `input status` | Print the input summary. |
+| `input console` | Send terminal key presses to the text FIFO until `Ctrl+Q` (see [docs/input.md](docs/input.md#key-codes)). |
+| `input wifi` | Hand input to the Wi-Fi input client on UDP port `6503`. |
+| `audio [status\|enable\|stop\|reset\|meter\|seq ...]` | Audio diagnostics during bring-up; see [docs/audio.md](docs/audio.md#terminal-diagnostics). |
+| `sd [status\|init\|mount]` | SD and FAT diagnostics; see [docs/sd.md](docs/sd.md#terminal-diagnostics). |
+| `exec` or `exec status` | Print whether `PHI2` is running or paused. |
+| `exec pause` / `exec resume` | Stop or restart `PHI2`. |
+| `monitor` | Enter the MIA RAM monitor ([below](#monitor)). |
+| `quit` | Reboot the Pico into BOOTSEL mode, ready for a new firmware image. |
+
+An SSID or password given on the command line cannot contain spaces.
+
+`status` alone, `status summary` and `status all` print a compact dashboard.
+Use `status <subsystem>` for deeper diagnostics:
 
 | Command | Description |
 | ------- | ----------- |
 | `status video` | Video UDP/session, frame response, dirty maps, and repair/NACK state. |
 | `status input` | Active input source, Wi-Fi input client, device flags, event flags/masks/acks, mouse, and gamepads. |
 | `status audio` | PWM audio state, pins, register block, queue state, and voice register dump. |
-| `status sd` | SD/FAT state, pins, memory ranges, indexes, and last result. |
+| `status sd` or `status fs` | SD/FAT state, pins, memory ranges, indexes, and last result. |
 | `status wifi` | Wi-Fi mode, SSID, where the boot settings came from, IP/netif details, and last Wi-Fi error. |
 | `status irq` | IRQ status, mask, enabled pending sources, set requests, and line state. |
 | `status speed` | Applied/requested/staged `PHI2` speed and pending speed-change state. |
 | `status exec` | Whether `PHI2` is running or paused. |
-| `status mem` | RAM/register summary and selected index descriptors. |
+| `status mem` or `status memory` | RAM/register summary and selected index descriptors. |
 | `status index [id]` | Selected index descriptors, or one explicit index id. |
-| `status errors` | Error queue contents. |
+| `status errors` | Error queue contents, as `errors list`. |
 
-Use `exec pause` to stop `PHI2` from the terminal and `exec resume` to restart
-it. A 6502 program can also issue command `30` to pause itself at a diagnostic
+A 6502 program can also issue command `30` to pause itself at a diagnostic
 point; once paused, the terminal normally performs the resume.
 
-The terminal command `audio [status|enable|stop|reset]` provides direct control
-over the PWM audio subsystem during bring-up.
-The terminal command `sd [status|init|mount]` provides direct SD/FAT diagnostics
-during storage bring-up.
+### Monitor
+
+`monitor` switches the prompt to `MON> `. The monitor works on MIA's 256 KiB
+of RAM (`$00000-$3FFFF`), not on the 6502's own address space. Numbers are
+hex, with or without `$`, and the commands are case-insensitive.
+
+| Command | What it does |
+| ------- | ------------ |
+| `m [ADDR [LEN]]` | Dump LEN bytes (default 128) as hex and ASCII. Without ADDR, continue after the last dump. |
+| `u [ADDR [COUNT]]` | Disassemble COUNT 65C02 instructions (default 16). Without ADDR, continue after the last listing. |
+| `e ADDR BYTE...` | Write the bytes from ADDR on. A write into video memory goes out in the next client update. |
+| `?` or `help` | List the monitor commands. |
+| `quit` | Return to the `> ` prompt. |
 
 ## IRQ Status
 
@@ -525,16 +564,51 @@ The glue-logic figures come from the "Glue logic timing" section of the `clement
 
 ## Build and Flash
 
-The build expects the Pico SDK and uses `kernel.bin` from the repository root. CMake converts that binary into `kernel_data.c` during the build.
+The firmware builds with the Pico SDK 2.2.0, the Arm GNU toolchain
+(`arm-none-eabi-gcc`) and CMake 3.13 or later; `make flash` also needs
+`picotool`. `setup_dev.sh` checks for them. Point `PICO_SDK_PATH` at the SDK:
+when it is unset, `CMakeLists.txt` falls back to the hard-coded path
+`/Users/fran150/.pico-sdk/sdk/2.2.0`.
+
+The build converts three binary files into C and embeds them: `kernel.bin`
+from the repository root (the ROM image built by `clementina-rom`), the
+character set `charsets/<MIA_CHARSET>.bin`, and the default palette
+`palettes/<MIA_PALETTE>.palette.bin`.
+
+| Target | What it does |
+| ------ | ------------ |
+| `make` or `make build` | Configure into `build/` and compile. The firmware image is `build/mia.uf2`. |
+| `make release` | The same with `CMAKE_BUILD_TYPE=Release`. |
+| `make flash` | Build, then load `build/mia.uf2` with `picotool load -f`, which reboots a running MIA into BOOTSEL first. |
+| `make clean` | Delete `build/`, including the CMake cache. |
+
+### Build options
+
+Most options are environment variables. CMake reads them each time it
+configures, and `make build` configures every time, so give them on the
+command line:
 
 ```sh
-make build
-make flash
+MIA_INPUT_DEFAULT_MODE=console make build
 ```
 
-USB stdio is enabled and UART stdio is disabled. During the initial debug
-loop, sending `c` over USB continues into MIA initialization, and sending `q`
-reboots the Pico into BOOTSEL.
+`PICO_BOARD`, `MIA_CHARSET` and `MIA_PALETTE` are CMake cache variables
+instead. Set them once with `cmake -B build -DMIA_CHARSET=openroms`; the value
+stays in `build/CMakeCache.txt` for later `make build` runs until you change it
+or run `make clean`.
+
+| Option | Kind | Default | What it sets |
+| ------ | ---- | ------- | ------------ |
+| `PICO_SDK_PATH` | environment | see above | Where the Pico SDK is. |
+| `PICO_BOARD` | CMake | `pico2_w` | The Pico SDK board. |
+| `MIA_CHARSET` | CMake | `clascii` | The character set to embed, `charsets/<name>.bin`. `openroms` is the other one in the repository. |
+| `MIA_PALETTE` | CMake | `clementina-text` | The default palette to embed, `palettes/<name>.palette.bin`. |
+| `MIA_WIFI_SSID`, `MIA_WIFI_PASSWORD`, `MIA_WIFI_MODE` | environment | none, so Wi-Fi off | The Wi-Fi settings used when `WIFI.CFG` is missing or broken; see [Wi-Fi setup](#wi-fi-setup). |
+| `MIA_VIDEO_UDP_PORT` | environment | `6502` | The video UDP port. |
+| `MIA_INPUT_UDP_PORT` | environment | `6503` | The Wi-Fi input UDP port. |
+| `MIA_INPUT_DEFAULT_MODE` | environment | `wifi` | The input mode at boot, `wifi` or `console`. |
+| `MIA_AUDIO_L_PIN`, `MIA_AUDIO_R_PIN`, `MIA_AUDIO_IRQ_PIN` | environment | `4`, `5`, `28` | The audio GPIOs; see [docs/audio.md](docs/audio.md). |
+| `MIA_SD_SPI_INSTANCE`, `MIA_SD_MISO_PIN`, `MIA_SD_CS_PIN`, `MIA_SD_SCK_PIN`, `MIA_SD_MOSI_PIN`, `MIA_SD_SPI_FAST_BAUD`, `MIA_SD_SERVICE_BUDGET_US`, `MIA_SD_WAIT_SERVICE_AFTER_US` | environment | `SPI0` on GPIO 0-3 | SD wiring and timing; see [docs/sd.md](docs/sd.md). |
 
 ## License
 
