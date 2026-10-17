@@ -6,6 +6,7 @@
 #include "pico/stdlib.h"
 
 #include "con.h"
+#include "con_keys.h"
 #include "input/input.h"
 #include "monitor.h"
 
@@ -18,6 +19,7 @@ static char       line_buf[CON_LINE_MAX];
 static int        line_len     = 0;
 static bool       prompt_shown = false;
 static con_mode_t con_mode     = CON_MODE_NORMAL;
+static con_keys_t con_keys;
 
 // Defined in con_cmds.c — dispatches a normal-mode command line.
 extern void con_dispatch(const char *line);
@@ -31,11 +33,23 @@ void con_enter_monitor(void) {
 void con_enter_input(void) {
     con_mode = CON_MODE_INPUT;
     prompt_shown = true;
+    con_keys_reset(&con_keys);
     printf("Console input active. Press Ctrl+Q to return to commands.\n");
 }
 
+static void con_send_keys(const uint8_t *keys, int count) {
+    for (int i = 0; i < count; i++) {
+        mia_input_console_byte(keys[i]);
+    }
+}
+
+// Terminal bytes go to the text FIFO through the key decoder, so the cursor,
+// Home, Insert and Delete keys arrive as Clementina key codes. Ctrl+Q ends.
 static bool con_process_input_byte(int c) {
+    uint8_t keys[2];
+
     if (c == CTRL_Q) {
+        con_keys_reset(&con_keys);
         mia_input_console_end_capture();
         con_mode = CON_MODE_NORMAL;
         line_len = 0;
@@ -44,13 +58,7 @@ static bool con_process_input_byte(int c) {
         return true;
     }
 
-    if (c == '\n') {
-        c = '\r';
-    } else if (c == 127) {
-        c = '\b';
-    }
-
-    mia_input_console_byte((uint8_t)c);
+    con_send_keys(keys, con_keys_feed(&con_keys, (uint8_t)c, time_us_64(), keys));
     return true;
 }
 
@@ -62,7 +70,13 @@ void con_process(void) {
     }
 
     int c = getchar_timeout_us(0);
-    if (c == PICO_ERROR_TIMEOUT) return;
+    if (c == PICO_ERROR_TIMEOUT) {
+        if (con_mode == CON_MODE_INPUT) {
+            uint8_t keys[2];
+            con_send_keys(keys, con_keys_expire(&con_keys, time_us_64(), keys));
+        }
+        return;
+    }
 
     if (con_mode == CON_MODE_INPUT) {
         (void)con_process_input_byte(c);

@@ -105,6 +105,7 @@ add_executable(mia
     src/mia/mem/regs.c
     src/mia/con/con.c
     src/mia/con/con_cmds.c
+    src/mia/con/con_keys.c
     src/mia/con/monitor.c
     src/mia/input/input.c
     src/mia/input/input_state.c
