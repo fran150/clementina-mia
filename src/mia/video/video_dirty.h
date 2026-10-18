@@ -34,7 +34,13 @@
 #define MIA_VIDEO_OVERLAY_ATTR_OFFSET 0x10468u
 #define MIA_VIDEO_OAM_OFFSET 0x10850u
 
-extern uint8_t mia_video_dirty_maps[2][MIA_VIDEO_DIRTY_MAP_SIZE];
+// Maps 0 and 1 take turns as core 1's active map and the pending map of a
+// response. Map 2 is core 0's own: core 1 marks the active map without a lock,
+// and a read-modify-write of the same byte from each core can lose a bit, so
+// core 0 marks map 2 and merges it into the pending map when it takes a frame.
+#define MIA_VIDEO_CORE0_DIRTY_MAP 2u
+
+extern uint8_t mia_video_dirty_maps[3][MIA_VIDEO_DIRTY_MAP_SIZE];
 extern volatile uint8_t mia_video_active_dirty_index;
 
 extern volatile bool mia_video_rotate_request;
@@ -44,7 +50,8 @@ extern volatile uint8_t mia_video_rotated_pending_index;
 extern volatile bool mia_video_mark_all_request;
 extern volatile bool mia_video_mark_all_done;
 
-static inline __force_inline void __not_in_flash_func(mia_video_mark_dirty)(uint32_t addr) {
+// Core 1 only: marks a 6502 write in the active map.
+static inline __force_inline void __not_in_flash_func(mia_video_core1_mark_dirty)(uint32_t addr) {
     if (addr < MIA_VIDEO_SYNC_START || addr >= MIA_VIDEO_STATE_SIZE) {
         return;
     }
@@ -54,6 +61,24 @@ static inline __force_inline void __not_in_flash_func(mia_video_mark_dirty)(uint
     dirty[page >> 3] |= (uint8_t)(1u << (page & 7u));
 }
 
+// Core 0 only: marks a byte core 0 wrote itself in core 0's map. SD loads and
+// the monitor mark from core 0's main loop, DMA completion and commands from its
+// interrupts, so core 0 marks with interrupts off: otherwise an interrupt's mark
+// could land between the main loop's read and write of the same byte.
+static inline __force_inline void __not_in_flash_func(mia_video_mark_dirty)(uint32_t addr) {
+    if (addr < MIA_VIDEO_SYNC_START || addr >= MIA_VIDEO_STATE_SIZE) {
+        return;
+    }
+
+    uint32_t page = addr >> MIA_VIDEO_PAGE_SHIFT;
+    uint8_t *dirty = mia_video_dirty_maps[MIA_VIDEO_CORE0_DIRTY_MAP];
+    uint32_t irq = save_and_disable_interrupts();
+    dirty[page >> 3] |= (uint8_t)(1u << (page & 7u));
+    restore_interrupts(irq);
+}
+
+// Core 0 only: marks a range core 0 wrote itself in core 0's map, with
+// interrupts off like mia_video_mark_dirty().
 static inline __force_inline void __not_in_flash_func(mia_video_mark_dirty_range)(uint32_t start, uint32_t len) {
     if (len == 0) {
         return;
@@ -76,11 +101,14 @@ static inline __force_inline void __not_in_flash_func(mia_video_mark_dirty_range
 
     uint32_t first_page = start >> MIA_VIDEO_PAGE_SHIFT;
     uint32_t last_page = end >> MIA_VIDEO_PAGE_SHIFT;
-    uint8_t *dirty = mia_video_dirty_maps[mia_video_active_dirty_index];
+    uint8_t *dirty = mia_video_dirty_maps[MIA_VIDEO_CORE0_DIRTY_MAP];
+    uint32_t irq = save_and_disable_interrupts();
 
     for (uint32_t page = first_page; page <= last_page; page++) {
         dirty[page >> 3] |= (uint8_t)(1u << (page & 7u));
     }
+
+    restore_interrupts(irq);
 }
 
 static inline __force_inline void __not_in_flash_func(mia_video_mark_all_active_dirty)(void) {

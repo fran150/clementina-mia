@@ -68,7 +68,7 @@ static inline __force_inline uint8_t __not_in_flash_func(index_read)(uint8_t ind
 static inline __force_inline void __not_in_flash_func(index_write)(uint8_t index_id, uint8_t value) {
     uint32_t offset = idx[index_id].current_addr & MIA_RAM_MASK;
     mem[offset] = value;
-    mia_video_mark_dirty(offset);
+    mia_video_core1_mark_dirty(offset);
 }
 
 // Steps the index according to it's configuration and reads the value in RAM to where the index ends up pointing to.
@@ -116,7 +116,7 @@ static inline __force_inline void __not_in_flash_func(index_write_and_step)(uint
     uint32_t write_offset = entry->current_addr & MIA_RAM_MASK;
 
     mem[write_offset] = value;
-    mia_video_mark_dirty(write_offset);
+    mia_video_core1_mark_dirty(write_offset);
 
     uint32_t is_enabled = (flags >> IDX_FLAG_W_STP_ENA) & 1;
     uint32_t is_backward = (flags >> IDX_FLAG_STP_DIR) & 1;
