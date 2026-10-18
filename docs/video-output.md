@@ -12,8 +12,10 @@ MIA video uses a client-paced update model:
 - MIA tracks the 2,154 syncable pages with a 270-byte dirty map, where each
   syncable page keeps its absolute page bit and bit 0 is reserved.
 - The client requests updates at the pace its display and network can sustain.
-- MIA keeps two dirty maps: one active map for new 6502 writes, and one pending
-  map for the update currently being generated or repaired.
+- MIA keeps two dirty maps that take turns: one active map for new 6502 writes,
+  and one pending map for the update currently being generated or repaired. A
+  third map collects the writes core 0 makes itself (DMA copies, SD loads) and
+  is merged into the pending map.
 - When a request is accepted, MIA moves the active map into the pending role,
   makes the already-clear other map active for new writes, and sends the pages
   named by the pending map.
@@ -554,16 +556,18 @@ ceil(68,944 B / 32 B) = 2,155 pages
 2,155 absolute page bits = 270 bytes, with bit 0 reserved
 ```
 
-MIA keeps two 270-byte dirty maps:
+MIA keeps three 270-byte dirty maps. Maps 0 and 1 take turns as the active and
+the pending map; map 2 is core 0's own:
 
 | Dirty map | Owner | Meaning |
 | --- | --- | --- |
-| active | core 1 write path (core 0 marks its own writes too, see [Marking Pages](#marking-pages)) | receives bits for new writes |
+| active | core 1 write path | receives bits for new 6502 writes |
 | pending | core 0 video service | retained page list for the current response |
+| core 0 | core 0 | receives bits for the writes core 0 makes itself (see [Marking Pages](#marking-pages)), merged into the next pending map |
 
-When no response is pending, the non-active map is already clear and ready for
-the next rotation. There is no separate third map and no explicit "free" flag:
-with two maps, the clear non-active map is the available map by definition.
+When no response is pending, the non-active map of the pair is already clear and
+ready for the next rotation. There is no explicit "free" flag: the clear
+non-active map is the available map by definition.
 
 The core 1 write-side operation is bounded:
 
@@ -577,27 +581,37 @@ active_dirty[page >> 3] |= 1 << (page & 7)
 Core 1 does not copy page data. Core 0 does the slower work: dirty-map rotation,
 dirty page list construction, packet construction, repair handling, bounded send
 scheduling, and UDP sending. Core 0 never clears the pending map while it is
-retained for repair, and clears the active map only when it resets the video
-session (a `HELLO`, a protocol error, or a MIA reset); the next session starts
-with every syncable page marked dirty.
+retained for repair, and clears the active map and its own map only when it
+resets the video session (a `HELLO`, a protocol error, or a MIA reset); the
+next session starts with every syncable page marked dirty.
 
 ### Marking Pages
 
 Core 1 marks pages in `index_write_and_step()` (`src/mia/mem/indexes.h`), the
 path for every 6502 write to `IDXA_PORT` or `IDXB_PORT`. It marks the address
 the byte went to, before the index steps or wraps. The mark,
-`mia_video_mark_dirty()` in `src/mia/video/video_dirty.h`, is force-inlined and
-runs from RAM, and it finds the active map through an index,
+`mia_video_core1_mark_dirty()` in `src/mia/video/video_dirty.h`, is
+force-inlined and runs from RAM, and it finds the active map through an index,
 `mia_video_active_dirty_index`, rather than a pointer. It takes no lock, sends
 no FIFO message and never waits for core 0.
 
-Core 0 also marks pages in the active map, with `mia_video_mark_dirty_range()`,
-when it changes video RAM itself:
+Core 0 marks pages in its own map, with `mia_video_mark_dirty_range()` and
+`mia_video_mark_dirty()`, when it changes video RAM itself:
 
 - each finished row of a DMA copy (the DMA interrupt in `src/mia/mem/dma.c`);
 - an SD file load into MIA RAM (`src/mia/sd/sd.c`);
 - an `e` edit in the USB console monitor (`src/mia/con/monitor.c`);
 - `CMD_VIDEO_SET_MODE`, which writes the mode byte.
+
+A mark is a read-modify-write of one map byte. An atomic OR on the RP2350 is an
+exclusive load/store retry loop, which would slow core 1's path. If both cores
+marked the same byte at once, one bit could be lost and that page would stay
+stale on the client until it was written again. With a map each, no byte has
+two writers. Core 0 itself marks from two contexts, its main loop (SD loads,
+the monitor) and its interrupts (DMA completion, commands), so it marks with
+its interrupts off. When core 0 takes a frame, it moves its marks into the
+pending map (`video_merge_core0_dirty_map()` in `src/mia/video/video.c`), one
+nonzero byte at a time with its interrupts off, for the same reason.
 
 ### Rotation Handshake
 
@@ -614,9 +628,9 @@ of marking the active one. Core 0 asks core 1 to do it, through shared flags in
    stores the old index in `mia_video_rotated_pending_index`, issues a memory
    barrier (`__dmb()`), then clears the request and sets
    `mia_video_rotate_done`.
-3. Core 0 takes the old index as the pending map and scans it. No core 1 mark
-   can still be on its way to that map, because core 1 finished its last bus
-   action before it flipped the index.
+3. Core 0 takes the old index as the pending map, merges its own map into it
+   and scans it. No core 1 mark can still be on its way to that map, because
+   core 1 finished its last bus action before it flipped the index.
 
 A full refresh uses the same handshake with `mia_video_mark_all_request` and
 `mia_video_mark_all_done`: core 1 sets every syncable bit of the active map
@@ -629,14 +643,15 @@ which runs whether the 6502 is running, paused, or still in loader mode.
 When the client requests an update and no response is pending, MIA performs a
 small coordinated dirty-map rotation:
 
-1. if the active dirty map has no syncable page bits set, return
-   `STATUS(NO_DIRTY_PAGES)`;
+1. if neither the active dirty map nor core 0's map has syncable page bits set,
+   return `STATUS(NO_DIRTY_PAGES)`;
 2. rotate the active dirty map into the pending role and the already-clear other
    map into the active role;
-3. scan the pending dirty map into a page list;
-4. assign the next nonzero `FRAME_ID`;
-5. set `MIA_STAT_VIDEO_FRAME_REQUESTED`;
-6. set `IRQ_VIDEO_FRAME_REQUEST` in `IRQ_STATUS`.
+3. merge core 0's map into the pending map and clear core 0's map;
+4. scan the pending dirty map into a page list;
+5. assign the next nonzero `FRAME_ID`;
+6. set `MIA_STAT_VIDEO_FRAME_REQUESTED`;
+7. set `IRQ_VIDEO_FRAME_REQUEST` in `IRQ_STATUS`.
 
 The rotation is the handshake in [Rotation Handshake](#rotation-handshake).
 After it, new 6502 writes are tracked in the active map for the next client

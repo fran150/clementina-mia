@@ -39,7 +39,7 @@ typedef struct {
     bool initial_send_done;
 } mia_video_response_t;
 
-uint8_t mia_video_dirty_maps[2][MIA_VIDEO_DIRTY_MAP_SIZE] __attribute__((aligned(4)));
+uint8_t mia_video_dirty_maps[3][MIA_VIDEO_DIRTY_MAP_SIZE] __attribute__((aligned(4)));
 volatile uint8_t mia_video_active_dirty_index;
 
 volatile bool mia_video_rotate_request;
@@ -70,6 +70,7 @@ static void video_clear_dirty_maps(void);
 static void video_configure_indexes(void);
 static void video_configure_index(uint8_t index_id, uint32_t start, uint32_t length);
 static bool video_has_dirty_pages(uint8_t map_index);
+static void video_merge_core0_dirty_map(uint8_t map_index);
 static uint16_t video_scan_dirty_pages(uint8_t map_index);
 static void video_request_dirty_rotation(void);
 static void video_request_mark_all_dirty(void);
@@ -137,7 +138,8 @@ void mia_video_print_summary(void) {
     const char *pipeline = "idle";
     if (video_response.valid) {
         pipeline = video_response.initial_send_done ? "sent" : "sending";
-    } else if (video_has_dirty_pages(mia_video_active_dirty_index)) {
+    } else if (video_has_dirty_pages(mia_video_active_dirty_index) ||
+               video_has_dirty_pages(MIA_VIDEO_CORE0_DIRTY_MAP)) {
         pipeline = "dirty";
     }
 
@@ -146,7 +148,8 @@ void mia_video_print_summary(void) {
            video_udp_ready ? "ready" : "unavailable",
            video_session.active ? "active" : "none",
            (unsigned long)video_frame_id,
-           (unsigned)video_count_dirty_pages(mia_video_active_dirty_index),
+           (unsigned)(video_count_dirty_pages(mia_video_active_dirty_index) +
+                      video_count_dirty_pages(MIA_VIDEO_CORE0_DIRTY_MAP)),
            pipeline);
 }
 
@@ -154,6 +157,7 @@ void mia_video_print_status(void) {
     uint16_t st = mia_regs->mia_status;
     uint16_t dirty0 = video_count_dirty_pages(0);
     uint16_t dirty1 = video_count_dirty_pages(1);
+    uint16_t dirty_core0 = video_count_dirty_pages(MIA_VIDEO_CORE0_DIRTY_MAP);
 
     printf("Video:\n");
     printf("  enabled: %s\n", video_enable ? "yes" : "no");
@@ -177,10 +181,11 @@ void mia_video_print_status(void) {
            (unsigned long)video_last_peer_seq,
            (unsigned long)video_next_seq_value);
 
-    printf("  dirty:   active-map:%u  map0:%u  map1:%u\n",
+    printf("  dirty:   active-map:%u  map0:%u  map1:%u  core0:%u\n",
            (unsigned)mia_video_active_dirty_index,
            (unsigned)dirty0,
-           (unsigned)dirty1);
+           (unsigned)dirty1,
+           (unsigned)dirty_core0);
 
     printf("  rotate:  request:%s  done:%s  pending-map:%u\n",
            mia_video_rotate_request ? "yes" : "no",
@@ -369,6 +374,7 @@ static void video_clear_dirty_map(uint8_t map_index) {
 static void video_clear_dirty_maps(void) {
     video_clear_dirty_map(0);
     video_clear_dirty_map(1);
+    video_clear_dirty_map(MIA_VIDEO_CORE0_DIRTY_MAP);
 }
 
 static void video_configure_indexes(void) {
@@ -431,6 +437,25 @@ static bool video_has_dirty_pages(uint8_t map_index) {
     }
 
     return false;
+}
+
+// Moves core 0's marks into the pending map before it is scanned. A DMA or
+// command interrupt on core 0 can mark a byte between the read and the clear,
+// so each nonzero byte moves with core 0's interrupts off.
+static void video_merge_core0_dirty_map(uint8_t map_index) {
+    uint8_t *dirty = mia_video_dirty_maps[map_index];
+    uint8_t *core0 = mia_video_dirty_maps[MIA_VIDEO_CORE0_DIRTY_MAP];
+
+    for (uint32_t byte_i = 0; byte_i < MIA_VIDEO_DIRTY_MAP_SIZE; byte_i++) {
+        if (core0[byte_i] == 0) {
+            continue;
+        }
+
+        uint32_t irq = save_and_disable_interrupts();
+        dirty[byte_i] |= core0[byte_i];
+        core0[byte_i] = 0;
+        restore_interrupts(irq);
+    }
 }
 
 static uint16_t video_scan_dirty_pages(uint8_t map_index) {
@@ -822,7 +847,8 @@ static void video_handle_request_frame(const mia_video_header_t *header, const u
 }
 
 static void video_handle_request_frame_no_pending(uint16_t request_id, uint32_t last_complete, const ip_addr_t *addr, uint16_t port) {
-    if (!video_has_dirty_pages(mia_video_active_dirty_index)) {
+    if (!video_has_dirty_pages(mia_video_active_dirty_index) &&
+        !video_has_dirty_pages(MIA_VIDEO_CORE0_DIRTY_MAP)) {
         video_set_last_response_dirty_pages(0);
         (void)video_send_status(MIA_VIDEO_STATUS_NO_DIRTY_PAGES, request_id, 0, addr, port);
         return;
@@ -831,6 +857,7 @@ static void video_handle_request_frame_no_pending(uint16_t request_id, uint32_t 
     video_request_dirty_rotation();
 
     video_response.map_index = mia_video_rotated_pending_index;
+    video_merge_core0_dirty_map(video_response.map_index);
     video_response.page_count = video_scan_dirty_pages(video_response.map_index);
     video_response.chunk_count = (uint16_t)((video_response.page_count + MIA_VIDEO_RECORDS_PER_CHUNK - 1u) / MIA_VIDEO_RECORDS_PER_CHUNK);
     video_response.frame_id = video_next_frame_id();
