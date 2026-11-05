@@ -154,7 +154,7 @@ void mia_video_print_summary(void) {
 }
 
 void mia_video_print_status(void) {
-    uint16_t st = mia_regs->mia_status;
+    uint16_t st = mia_status_get();
     uint16_t dirty0 = video_count_dirty_pages(0);
     uint16_t dirty1 = video_count_dirty_pages(1);
     uint16_t dirty_core0 = video_count_dirty_pages(MIA_VIDEO_CORE0_DIRTY_MAP);

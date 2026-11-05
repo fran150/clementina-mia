@@ -629,7 +629,7 @@ bool mia_sd_request(uint8_t command) {
             return false;
     }
 
-    if (sd_request_pending || (mia_regs->mia_status & MIA_STAT_SD_BUSY)) {
+    if (sd_request_pending || (mia_status_get() & MIA_STAT_SD_BUSY)) {
         error_push(ERROR_SD_BUSY);
         mia_irq_set_flag(IRQ_SD_ERROR);
         return false;
@@ -695,7 +695,7 @@ static void sd_publish_state(void) {
     if (sd_mounted) {
         status |= MIA_SD_STATUS_MOUNTED;
     }
-    if (mia_regs->mia_status & MIA_STAT_SD_BUSY) {
+    if (mia_status_get() & MIA_STAT_SD_BUSY) {
         status |= MIA_SD_STATUS_BUSY;
     }
     if (sel_open) {
@@ -1675,7 +1675,7 @@ void mia_sd_print_status(void) {
     printf("  state:     initialized:%s mounted:%s busy:%s dir:%s job:%u\n",
            sd_initialized ? "yes" : "no",
            sd_mounted ? "yes" : "no",
-           (mia_regs->mia_status & MIA_STAT_SD_BUSY) ? "yes" : "no",
+           (mia_status_get() & MIA_STAT_SD_BUSY) ? "yes" : "no",
            sd_dir_open ? "open" : "closed",
            (unsigned)sd_job.type);
     printf("  handles:   max:%u open:%u selected:%u (%s) selected-file:%s eof:%s\n",

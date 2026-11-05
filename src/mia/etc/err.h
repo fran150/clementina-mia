@@ -58,16 +58,34 @@
 extern volatile uint8_t _err_first;
 extern volatile uint8_t _err_last;
 extern volatile uint8_t _err_buf[16];
+// The error value the 6502 reads at MIA_ERROR ($FFEC-$FFED). Like the status
+// word it lives in firmware RAM and is copied to the register only in normal
+// mode, because the loader program owns $FFEC in loader mode. Errors queued
+// during boot stay queued and become visible when MIA enters normal mode.
+extern volatile uint16_t mia_error_word;
 extern atomic_uint _err_deferred_flags;
 
 void error_service(void);
+
+// Returns the current error value (the head of the queue, or zero).
+static inline __force_inline uint16_t error_current(void) {
+    return mia_error_word;
+}
+
+// Sets the error value and copies it into MIA_ERROR when MIA is in normal mode.
+static inline __force_inline void error_set_current(uint16_t error) {
+    mia_error_word = error;
+    if (mia_status_word & MIA_STAT_MASTER_MODE) {
+        mia_regs->mia_error = error;
+    }
+}
 
 // Clears the error queue, the CPU-visible register, and its status bit.
 static inline __force_inline void error_reset(void) {
     _err_first = 0;
     _err_last = 0;
     atomic_store(&_err_deferred_flags, 0);
-    mia_regs->mia_error = 0;
+    error_set_current(0);
     mia_status_clear_flag(MIA_STAT_ERRORS);
 }
 
@@ -96,9 +114,9 @@ static inline __force_inline void error_push(uint8_t error) {
     mia_irq_set_flag(IRQ_ERROR);
 
     if (was_empty) {
-        mia_regs->mia_error = error;
+        error_set_current(error);
     } else if (overwrote_head) {
-        mia_regs->mia_error = _err_buf[_err_first];
+        error_set_current(_err_buf[_err_first]);
     }
 }
 
@@ -125,7 +143,7 @@ static inline __force_inline uint8_t error_consume(void) {
         next = _err_buf[_err_first];
     }
 
-    mia_regs->mia_error = next;
+    error_set_current(next);
     return next;
 }
 
