@@ -205,7 +205,7 @@ static void cmd_errors_list(void);
 // ---- Command handlers -------------------------------------------------------
 
 static void cmd_status_summary(void) {
-    uint16_t st = mia_regs->mia_status;
+    uint16_t st = mia_status_get();
     uint8_t err_count = error_queue_count();
 
     printf("MIA Status:\n");
@@ -225,8 +225,8 @@ static void cmd_status_summary(void) {
     printf("  Errors: %u queued", (unsigned)err_count);
     if (err_count != 0) {
         printf("  current:0x%02X %s",
-               (unsigned)mia_regs->mia_error,
-               error_name((uint8_t)mia_regs->mia_error));
+               (unsigned)error_current(),
+               error_name((uint8_t)error_current()));
     }
     printf("\n");
 
@@ -376,7 +376,7 @@ static void cmd_errors_list(void) {
 
     printf("MIA Errors: %u queued", (unsigned)count);
     if (count != 0) {
-        printf("  current: 0x%02X %s", (unsigned)mia_regs->mia_error, error_name((uint8_t)mia_regs->mia_error));
+        printf("  current: 0x%02X %s", (unsigned)error_current(), error_name((uint8_t)error_current()));
     }
     printf("\n");
 

@@ -163,6 +163,16 @@ static inline __force_inline void __not_in_flash_func(mia_core1_assert_cpu_reset
     sio_hw->gpio_clr = 1u << CPU_RESB_PIN;
 }
 
+// Empties the error queue for a new boot and queues again the errors of
+// subsystems that only initialize once (Wi-Fi, video and input UDP), so every
+// boot reports them exactly once.
+static void mia_boot_errors_reset(void) {
+    error_reset();
+    mia_net_wifi_report_errors();
+    mia_video_report_errors();
+    mia_input_report_errors();
+}
+
 // Resets MIA runtime state back into loader mode.
 // This is used when the external reset request asks MIA and the 6502 to restart from the loader.
 void mia_reset_runtime_state(void) {
@@ -172,7 +182,11 @@ void mia_reset_runtime_state(void) {
     memset((void *)idx, 0, sizeof(idx));
 
     // Reset loader bookkeeping and runtime status managed outside the register block.
-    error_reset();
+    // The status word and the error queue start empty for the new boot; the
+    // subsystems below set their flags again, and errors queued from here on
+    // are handed to the 6502 when MIA enters normal mode.
+    mia_status_reset();
+    mia_boot_errors_reset();
     kernel_index = 0;
     can_update_kernel_pointer = false;
     normal_mode_transition_requested = false;
@@ -181,7 +195,6 @@ void mia_reset_runtime_state(void) {
 
     // Rebuild the loader program and watch the byte that the 6502 reads as kernel data.
     mia_irq_init();
-    mia_status_clear_flag(MIA_STAT_MASTER_MODE); // 0 - Bootloader mode
     mia_speed_reset_runtime_state();
     mia_exec_resume();
     mia_video_reset_runtime_state();
@@ -626,8 +639,9 @@ static void mia_enter_normal_mode(void) {
     // register block and replaced with the normal runtime register state.
     mia_set_cpu_reset(true);
 
+    // The status word and the error queue live outside the register block,
+    // so they keep what happened during boot; they are copied in below.
     memset((void *)mia_regs, 0, sizeof(*mia_regs));
-    error_reset();
 
     // Restore runtime-managed registers after clearing the loader bytes.
     mia_irq_init();
@@ -652,16 +666,20 @@ static void mia_enter_normal_mode(void) {
     mia_input_reset_runtime_state();
     mia_timing_reset();
     mia_audio_reset_runtime_state();
-    mia_net_wifi_report_errors();
-    mia_video_report_errors();
-    mia_input_report_errors();
 
     // Enter normal mode. Most read side effects are on addresses where
     // (addr & 3)==0 and are caught by the action PIO automatically. The
     // configurable read-watch slot is used for INPUT_CHAR ($FFF3), which is
     // read-to-pop.
     mia_state = mia_state_normal;
-    mia_status_set_flag(MIA_STAT_MASTER_MODE);
+    mia_status_set_flag(MIA_STAT_MASTER_MODE);   // also copies the status word to $FFEA
+
+    // Hand the errors queued during boot to the 6502: load the head error
+    // into $FFEC and raise IRQ_ERROR again, since mia_irq_init cleared it.
+    error_set_current(error_current());
+    if (mia_status_get() & MIA_STAT_ERRORS) {
+        mia_irq_set_flag(IRQ_ERROR);
+    }
     __dmb(); // Ensure memory writes to regs/state are visible to Core 1
     mia_set_watch_address(0xFFF3);
     mia_drain_action_fifo();
@@ -696,6 +714,8 @@ static void fast_loader_init(void) {
 
     // Parking loop used after the loader has copied the last byte. If reset does
     // not assert before the CPU gets here, it will spin safely until reset lands.
+    // $FFEA-$FFEC overlap MIA_STATUS and MIA_ERROR, which is why those two words
+    // are only copied into the register block in normal mode (see status.h).
     REGS(0xFFEA) = 0x4C;                            // FFEA:  4C EA FF  JMP $FFEA
     REGS(0xFFEB) = 0xEA;
     REGS(0xFFEC) = 0xFF;
@@ -751,6 +771,9 @@ void mia_init(void)
     bus_ctrl_hw->priority |= BUSCTRL_BUS_PRIORITY_PROC1_BITS;
 
     // It might be tempting to raise DMA_R/W here, but this causes problems with mia_write_buf
+
+    // Start the boot with an error queue that holds each init error once.
+    mia_boot_errors_reset();
 
     // Setup the fast loader program for the 6502 in the first 9 records of the MIA and set the
     // reset vector pointing to the start of this program.

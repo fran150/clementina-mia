@@ -17,14 +17,40 @@
 #define MIA_STAT_SD_BUSY             (1u << 10) // SD/FS command is in progress
 #define MIA_STAT_FS_MOUNTED          (1u << 11) // FAT filesystem is mounted
 
+// The status word lives here, in firmware RAM. MIA_STATUS ($FFEA-$FFEB) is
+// only a copy, written while MIA is in normal mode: in loader mode those bytes
+// belong to the 6502 loader program, so they are left alone and the copy is
+// made when MIA enters normal mode. Firmware code (the console included) reads
+// the word with mia_status_get(), never from the register.
+extern volatile uint16_t mia_status_word;
+
+// Returns the current status word.
+static inline __force_inline uint16_t mia_status_get(void) {
+    return mia_status_word;
+}
+
+// Stores a new status word and copies it into MIA_STATUS when MIA is in
+// normal mode.
+static inline __force_inline void mia_status_store(uint16_t st) {
+    mia_status_word = st;
+    if (st & MIA_STAT_MASTER_MODE) {
+        mia_regs->mia_status = st;
+    }
+}
+
+// Clears every status flag. Used when MIA restarts the 6502 from the loader.
+static inline __force_inline void mia_status_reset(void) {
+    mia_status_word = 0;
+}
+
 // Sets the status flag
 static inline __force_inline void mia_status_set_flag(uint16_t flag) {
-    mia_regs->mia_status |= flag;
+    mia_status_store(mia_status_word | flag);
 }
 
 // Clears the status flag
 static inline __force_inline void mia_status_clear_flag(uint16_t flag) {
-    mia_regs->mia_status &= ~flag;
+    mia_status_store(mia_status_word & ~flag);
 }
 
 #endif

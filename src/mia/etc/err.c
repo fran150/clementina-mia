@@ -5,6 +5,8 @@ volatile uint8_t _err_first = 0;
 volatile uint8_t _err_last = 0;
 volatile uint8_t _err_buf[16];
 atomic_uint _err_deferred_flags;
+volatile uint16_t mia_error_word = 0;
+volatile uint16_t mia_status_word = 0;
 
 void error_service(void) {
     uint32_t flags = atomic_exchange(&_err_deferred_flags, 0);

@@ -17,6 +17,8 @@ The firmware executes most code from flash/XIP while keeping the time-critical P
 
 MIA starts in loader mode. During initialization it writes a tiny 6502 program into the register block and points the reset vector at `$FFE0`. The loader streams `kernel.bin`, embedded at build time as `kernel_data`, into Clementina RAM starting at `$0400` (right after working RAM; the kernel+WozMon+BASIC image grows upward from there). Once the embedded kernel bytes are consumed, MIA switches to normal mode and sets `MIA_STAT_MASTER_MODE`.
 
+The loader program uses `$FFEA-$FFEC` as well, the bytes that hold `MIA_STATUS` and `MIA_ERROR` in normal mode. In loader mode MIA keeps the status word and the error queue in its own RAM and leaves those bytes to the loader; the console `status` and `errors` commands show the real values in both modes. When MIA enters normal mode it copies the status word in and loads the head of the error queue into `$FFEC`, so errors queued during boot reach the 6502 (with `IRQ_ERROR` raised again).
+
 In normal mode, register reads and writes operate as the interface described below. The main loop also services requested `PHI2` speed changes and reset requests.
 
 ## Wi-Fi video output
@@ -476,7 +478,7 @@ hex, with or without `$`, and the commands are case-insensitive.
 
 ## Errors
 
-Errors are stored in a 16-entry ring buffer. Reading `$FFEC` pulls one error into `ERROR_L`; when the queue becomes empty, `MIA_STAT_ERRORS` is cleared. If the queue fills, MIA keeps error reporting non-blocking by discarding the oldest unread entry and queuing `ERROR_QUEUE_OVERFLOW`.
+Errors are stored in a 16-entry ring buffer. Reading `$FFEC` pulls one error into `ERROR_L`; when the queue becomes empty, `MIA_STAT_ERRORS` is cleared. If the queue fills, MIA keeps error reporting non-blocking by discarding the oldest unread entry and queuing `ERROR_QUEUE_OVERFLOW`. Errors queued during boot stay queued for the 6502; a reset request empties the queue and queues again the init errors of Wi-Fi, video and input UDP, so each boot reports them once.
 
 | Code | Name | Description |
 | ---- | ---- | ----------- |
