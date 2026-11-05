@@ -53,7 +53,7 @@ password = your-password
   start or end with a space. Windows line endings are fine.
 - `mode` is `sta` (join the network named by `ssid`, the default), `ap` (start
   an access point named `ssid` at `192.168.4.1`; clients need a static address
-  in `192.168.4.x`), or `off` (no Wi-Fi; no `ssid` needed).
+  in `192.168.4.x`), or `off` (no Wi-Fi at boot; no `ssid` needed, but one given here is the network a bare `wifi connect` joins).
 - `ssid` is 1 to 32 characters. Leave `password` empty or out for an open
   network; otherwise it is 8 to 63 characters.
 - The file is at most 512 bytes. An unknown key or a line without `=` makes MIA
@@ -71,11 +71,20 @@ MIA_WIFI_SSID="your-ssid" MIA_WIFI_PASSWORD="your-password" make build
 to `sta` when `MIA_WIFI_SSID` is set and to `off` otherwise. With neither a
 usable file nor build settings, MIA boots with Wi-Fi off.
 
-MIA reads `WIFI.CFG` only at boot, so restart the Pico after editing it. The
-USB console commands `wifi connect <ssid> [password]`, `wifi ap <ssid>
-[password]`, and `wifi off` change the connection until the next boot without
-touching the file. `status wifi` shows where the boot settings came from
-(`config: WIFI.CFG` or `config: build`).
+A join tries up to three times, 30 seconds each with a 2-second pause between
+attempts, because the first join after power-up often fails with a link (`-8`)
+or timeout (`-2`) error while the radio and the access point settle. A wrong
+password (`-7`) stops at once. With no network in reach the boot join takes
+about 95 seconds before the 6502 starts.
+
+MIA reads `WIFI.CFG` only at boot, so restart the Pico after editing it. It
+keeps the settings it read (or the build settings) in memory, and `wifi connect`
+or `wifi ap` with no SSID uses them again without touching the card: `wifi
+connect` when the settings are for `sta`, or for `off` with an `ssid`, and `wifi
+ap` when they are for `ap`. The USB console commands `wifi connect <ssid>
+[password]`, `wifi ap <ssid> [password]`, and `wifi off` change the connection
+until the next boot without touching the file. `status wifi` shows where the
+boot settings came from (`config: WIFI.CFG` or `config: build`).
 
 ## Input subsystem
 
@@ -387,7 +396,9 @@ characters, and Backspace edits it.
 | `speed` | Print the applied `PHI2` frequency. |
 | `speed HZ` | Request a `PHI2` frequency, a decimal number in Hz, as a write to `SPEED_L/M/H` would (see [PHI2 Speed Control](#phi2-speed-control)). `status speed` shows the value applied. |
 | `wifi` or `wifi status` | Print a short Wi-Fi summary; `status wifi` has the detail. |
-| `wifi connect SSID [PASSWORD]` | Join a network until the next boot, without touching `WIFI.CFG`. |
+| `wifi connect` | Join the network from the settings read at boot (`WIFI.CFG`, else the build), up to three attempts. |
+| `wifi connect SSID [PASSWORD]` | Join a network until the next boot, without touching `WIFI.CFG`; up to three attempts, a wrong password stops at once. |
+| `wifi ap` | Start the access point from the settings read at boot, when they use `mode = ap`. |
 | `wifi ap SSID [PASSWORD]` | Start an access point at `192.168.4.1` until the next boot. Clients need a static address in `192.168.4.x`. |
 | `wifi off` | Turn Wi-Fi off until the next boot. |
 | `input` or `input status` | Print the input summary. |
