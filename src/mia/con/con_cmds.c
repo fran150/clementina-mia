@@ -457,8 +457,10 @@ static void cmd_wifi(const char *args) {
     bool is_connect = (strncmp(args, "connect",  7) == 0 && (args[7] == ' ' || args[7] == '\t' || args[7] == '\0'));
 
     if (!is_ap && !is_connect) {
-        printf("Usage: wifi [status|off|connect <ssid> [password]|ap <ssid> [password]]\n");
-        printf("  Notes: SSID and password may not contain spaces.\n");
+        printf("Usage: wifi [status|off|connect [<ssid> [password]]|ap [<ssid> [password]]]\n");
+        printf("  Notes: with no SSID, connect and ap use the settings read at power-up\n");
+        printf("         (WIFI.CFG, else the build).\n");
+        printf("         SSID and password may not contain spaces.\n");
         printf("         AP clients must use a static IP; no DHCP is provided.\n");
         return;
     }
@@ -469,7 +471,11 @@ static void cmd_wifi(const char *args) {
     int i = 0;
     while (*args && *args != ' ' && *args != '\t' && i < 63) ssid[i++] = *args++;
     if (!ssid[0]) {
-        printf("Usage: wifi %s <ssid> [password]\n", is_ap ? "ap" : "connect");
+        if (is_ap) {
+            mia_net_wifi_start_ap_saved();
+        } else {
+            mia_net_wifi_connect_saved();
+        }
         return;
     }
 

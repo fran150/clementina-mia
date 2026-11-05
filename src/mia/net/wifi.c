@@ -33,6 +33,19 @@ static char current_ssid[64];
 static uint8_t wifi_error_code;
 // Where the boot settings came from: WIFI.CFG on the SD card, or the build.
 static const char *config_source = "build";
+// The settings read at power-up, kept so a bare 'wifi connect' or 'wifi ap'
+// can reuse them without touching the SD card again. Never printed whole:
+// the password stays in RAM only.
+static mia_wifi_config_t saved_config;
+static bool saved_config_valid;
+
+// Boot joins and console joins try this many times before giving up, with a
+// short pause and a fresh station mode between attempts. A first join right
+// after power-up often fails with a link or timeout error while the radio
+// and the access point settle; a later attempt usually works.
+#define MIA_WIFI_CONNECT_ATTEMPTS   3
+#define MIA_WIFI_CONNECT_TIMEOUT_MS 30000
+#define MIA_WIFI_RETRY_PAUSE_MS     2000
 
 static bool wifi_arch_available(void) {
     if (wifi_error_code == ERROR_WIFI_INIT_FAILED) {
@@ -57,9 +70,31 @@ bool mia_net_wifi_connect(const char *ssid, const char *password) {
     current_mode = MIA_WIFI_MODE_OFF;
 
     printf("Wi-Fi: connecting to '%s'...\n", ssid);
-    int rc = cyw43_arch_wifi_connect_timeout_ms(ssid, password, sta_auth(password), 30000);
-    if (rc != 0) {
+    int rc = 0;
+    for (int attempt = 1; attempt <= MIA_WIFI_CONNECT_ATTEMPTS; attempt++) {
+        if (attempt > 1) {
+            // Drop the half-made link and start the station again.
+            cyw43_arch_disable_sta_mode();
+            sleep_ms(MIA_WIFI_RETRY_PAUSE_MS);
+            cyw43_arch_enable_sta_mode();
+            printf("Wi-Fi: attempt %d of %d...\n", attempt, MIA_WIFI_CONNECT_ATTEMPTS);
+        }
+
+        rc = cyw43_arch_wifi_connect_timeout_ms(ssid, password, sta_auth(password),
+                                                MIA_WIFI_CONNECT_TIMEOUT_MS);
+        if (rc == 0) {
+            break;
+        }
+
         printf("Wi-Fi: connection failed (%d)\n", rc);
+        if (rc == PICO_ERROR_BADAUTH) {
+            // Another attempt cannot fix a wrong password.
+            printf("Wi-Fi: wrong password; not retrying.\n");
+            break;
+        }
+    }
+
+    if (rc != 0) {
         wifi_error_code = ERROR_WIFI_CONNECT_FAILED;
         error_push(ERROR_WIFI_CONNECT_FAILED);
         return false;
@@ -235,6 +270,8 @@ static bool wifi_init_from_sd(void) {
     }
 
     config_source = "WIFI.CFG";
+    saved_config = config;
+    saved_config_valid = true;
     printf("Wi-Fi: using WIFI.CFG from the SD card.\n");
     switch (config.mode) {
         case MIA_WIFI_MODE_STA:
@@ -251,7 +288,25 @@ static bool wifi_init_from_sd(void) {
     return true;
 }
 
+// Keeps the build settings for a bare 'wifi connect' or 'wifi ap' when the
+// card gave none.
+static void wifi_save_build_config(void) {
+#ifdef MIA_WIFI_SSID
+    if (MIA_WIFI_SSID[0] == '\0' ||
+        strlen(MIA_WIFI_SSID) >= sizeof(saved_config.ssid) ||
+        strlen(MIA_WIFI_PASSWORD) >= sizeof(saved_config.password)) {
+        return;
+    }
+    saved_config.mode = MIA_WIFI_DEFAULT_MODE == MIA_WIFI_MODE_AP ? MIA_WIFI_MODE_AP
+                                                                  : MIA_WIFI_MODE_STA;
+    strcpy(saved_config.ssid, MIA_WIFI_SSID);
+    strcpy(saved_config.password, MIA_WIFI_PASSWORD);
+    saved_config_valid = true;
+#endif
+}
+
 static bool wifi_init_from_build(void) {
+    wifi_save_build_config();
 #if MIA_WIFI_DEFAULT_MODE == MIA_WIFI_MODE_AP
 #ifdef MIA_WIFI_SSID
     if (MIA_WIFI_SSID[0] != '\0') {
@@ -285,4 +340,33 @@ bool mia_net_wifi_init(void) {
         return current_mode != MIA_WIFI_MODE_OFF;
     }
     return wifi_init_from_build();
+}
+
+// The saved settings name a network to join when they are for station mode,
+// or for mode = off with an SSID (Wi-Fi stays off at boot, but the network
+// is known), and an access point to publish when they are for AP mode.
+bool mia_net_wifi_connect_saved(void) {
+    if (!saved_config_valid || saved_config.ssid[0] == '\0') {
+        printf("Wi-Fi: no saved network (none in WIFI.CFG at power-up or in the build).\n");
+        printf("Usage: wifi connect <ssid> [password]\n");
+        return false;
+    }
+    if (saved_config.mode == MIA_WIFI_MODE_AP) {
+        printf("Wi-Fi: the saved settings (%s) are for AP mode; use 'wifi ap'.\n", config_source);
+        return false;
+    }
+
+    printf("Wi-Fi: using the saved settings (%s).\n", config_source);
+    return mia_net_wifi_connect(saved_config.ssid, saved_config.password);
+}
+
+bool mia_net_wifi_start_ap_saved(void) {
+    if (!saved_config_valid || saved_config.mode != MIA_WIFI_MODE_AP) {
+        printf("Wi-Fi: no saved AP settings (WIFI.CFG or the build must use mode = ap).\n");
+        printf("Usage: wifi ap <ssid> [password]\n");
+        return false;
+    }
+
+    printf("Wi-Fi: using the saved settings (%s).\n", config_source);
+    return mia_net_wifi_start_ap(saved_config.ssid, saved_config.password);
 }
