@@ -16,9 +16,16 @@ typedef enum {
 bool mia_net_wifi_init(void);
 
 // Connect to an existing Wi-Fi network (STA mode).
-// Prints progress and result. Blocks up to 30 s.
+// Prints progress and result. Tries up to 3 times, 30 s each with a 2 s pause
+// between them (about 95 s at most); a wrong password stops at once.
 // Tears down any existing connection first.
 bool mia_net_wifi_connect(const char *ssid, const char *password);
+
+// Same as mia_net_wifi_connect / mia_net_wifi_start_ap, with the settings
+// read at power-up (WIFI.CFG, else the build). Says why on the console and
+// returns false when there are no saved settings for that mode.
+bool mia_net_wifi_connect_saved(void);
+bool mia_net_wifi_start_ap_saved(void);
 
 // Publish a Wi-Fi access point (AP mode) at 192.168.4.1.
 // Tears down any existing connection first.
