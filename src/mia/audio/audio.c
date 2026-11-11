@@ -1053,7 +1053,7 @@ void mia_audio_init(void) {
     }
 
     pwm_config irq_config = pwm_get_default_config();
-    pwm_init(AUDIO_IRQ_SLICE, &irq_config, false);
+    pwm_init(AUDIO_IRQ_SLICE, &irq_config, true);
 
     audio_set_pwm_center();
 
