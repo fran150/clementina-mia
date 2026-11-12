@@ -408,6 +408,8 @@ characters, and Backspace edits it.
 | `sd [status\|init\|mount]` | SD and FAT diagnostics; see [docs/sd.md](docs/sd.md#terminal-diagnostics). |
 | `exec` or `exec status` | Print whether `PHI2` is running or paused. |
 | `exec pause` / `exec resume` | Stop or restart `PHI2`. |
+| `dump regs\|idx [id]\|ram ADDR LEN [FILE]\|all [FILE]` | Print raw MIA state, or write it to a file on the SD card; see [docs/diagnostics.md](docs/diagnostics.md). |
+| `trace [clear]` | Print the bus event trace. Only the diagnostic build (`make diag`) has it; see [docs/diagnostics.md](docs/diagnostics.md#bus-event-trace). |
 | `monitor` | Enter the MIA RAM monitor ([below](#monitor)). |
 | `quit` | Reboot the Pico into BOOTSEL mode, ready for a new firmware image. |
 
@@ -429,6 +431,8 @@ Use `status <subsystem>` for deeper diagnostics:
 | `status mem` or `status memory` | RAM/register summary and selected index descriptors. |
 | `status index [id]` | Selected index descriptors, or one explicit index id. |
 | `status errors` | Error queue contents, as `errors list`. |
+| `status ctx` | `MIA_CTX` stack depth and the saved entries (see [Context stack](#context-stack)). |
+| `status pio [clear]` | Bus PIO stall and underrun flags, FIFO levels and program counters; `clear` resets the sticky flags. |
 
 A 6502 program can also issue command `30` to pause itself at a diagnostic
 point; once paused, the terminal normally performs the resume.
@@ -593,7 +597,9 @@ character set `charsets/<MIA_CHARSET>.bin`, and the default palette
 | `make` or `make build` | Configure into `build/` and compile. The firmware image is `build/mia.uf2`. |
 | `make release` | The same with `CMAKE_BUILD_TYPE=Release`. |
 | `make flash` | Build, then load `build/mia.uf2` with `picotool load -f`, which reboots a running MIA into BOOTSEL first. |
-| `make clean` | Delete `build/`, including the CMake cache. |
+| `make diag` | Build the diagnostic firmware into `build-diag/`: normal firmware plus the bus event trace (see [docs/diagnostics.md](docs/diagnostics.md#bus-event-trace)). |
+| `make flash-diag` | Build the diagnostic firmware and load `build-diag/mia.uf2`. |
+| `make clean` | Delete `build/` and `build-diag/`, including the CMake caches. |
 
 ### Build options
 
@@ -620,6 +626,7 @@ or run `make clean`.
 | `MIA_VIDEO_UDP_PORT` | environment | `6502` | The video UDP port. |
 | `MIA_INPUT_UDP_PORT` | environment | `6503` | The Wi-Fi input UDP port. |
 | `MIA_INPUT_DEFAULT_MODE` | environment | `wifi` | The input mode at boot, `wifi` or `console`. |
+| `MIA_DIAG` | CMake | `OFF` | `ON` adds the bus event trace; `make diag` sets it. |
 | `MIA_AUDIO_L_PIN`, `MIA_AUDIO_R_PIN`, `MIA_AUDIO_IRQ_PIN` | environment | `4`, `5`, `28` | The audio GPIOs; see [docs/audio.md](docs/audio.md). |
 | `MIA_SD_SPI_INSTANCE`, `MIA_SD_MISO_PIN`, `MIA_SD_CS_PIN`, `MIA_SD_SCK_PIN`, `MIA_SD_MOSI_PIN`, `MIA_SD_SPI_FAST_BAUD`, `MIA_SD_SERVICE_BUDGET_US`, `MIA_SD_WAIT_SERVICE_AFTER_US` | environment | `SPI0` on GPIO 0-3 | SD wiring and timing; see [docs/sd.md](docs/sd.md). |
 

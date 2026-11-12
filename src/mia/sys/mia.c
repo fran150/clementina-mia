@@ -107,20 +107,111 @@ static inline __force_inline void __not_in_flash_func(mia_core1_try_push_command
 // The MIA_CTX stack (see regs.h). Only core 1 touches it, from the action
 // loop, so it needs no locking; mia_reset_runtime_state empties it while the
 // 6502 is held in reset.
-typedef struct {
-    uint8_t idxa_selector;
-    uint8_t idxb_selector;
-    uint8_t cfg_selector;
-    uint8_t cmd_param[3];
-    index_t idxa;
-    index_t idxb;
-} mia_ctx_t;
-
+// mia_ctx_t is in mia.h so the console can print the stack.
 static mia_ctx_t mia_ctx_stack[MIA_CTX_DEPTH];
 static uint8_t mia_ctx_depth;
 
+#if MIA_DIAG
+// Diagnostic build only: core 1 keeps the last MIA_TRACE_RING raw action
+// words. The first MIA_CTX overflow or underflow freezes a copy (oldest
+// first, the failing write last) with the PIO FDEBUG bits; `trace` prints it
+// and `trace clear` re-arms it.
+static uint32_t mia_trace_ring[MIA_TRACE_RING];
+static volatile uint32_t mia_trace_pos;
+static volatile uint32_t mia_trace_pushes;
+static volatile uint32_t mia_trace_pops;
+static volatile uint32_t mia_trace_overflows;
+static volatile uint32_t mia_trace_underflows;
+static volatile uint32_t mia_trace_snap[MIA_TRACE_RING];
+static volatile uint32_t mia_trace_snap_at;
+static volatile uint32_t mia_trace_snap_fdebug0;
+static volatile uint32_t mia_trace_snap_fdebug1;
+static volatile bool mia_trace_frozen;
+
+static void __no_inline_not_in_flash_func(mia_trace_freeze)(void) {
+    if (mia_trace_frozen) {
+        return;
+    }
+    mia_trace_snap_fdebug0 = pio0->fdebug;
+    mia_trace_snap_fdebug1 = pio1->fdebug;
+    uint32_t pos = mia_trace_pos;
+    for (uint32_t i = 0; i < MIA_TRACE_RING; i++) {
+        mia_trace_snap[i] = mia_trace_ring[(pos + i) & (MIA_TRACE_RING - 1u)];
+    }
+    mia_trace_snap_at = pos;
+    __dmb();
+    mia_trace_frozen = true;
+}
+
+void mia_trace_read(mia_trace_t *out) {
+    memset(out, 0, sizeof(*out));
+    out->pushes = mia_trace_pushes;
+    out->pops = mia_trace_pops;
+    out->overflows = mia_trace_overflows;
+    out->underflows = mia_trace_underflows;
+    out->frozen = mia_trace_frozen;
+    __dmb();
+
+    uint32_t pos;
+    if (out->frozen) {
+        pos = mia_trace_snap_at;
+        out->frozen_at = pos;
+        out->fdebug0 = mia_trace_snap_fdebug0;
+        out->fdebug1 = mia_trace_snap_fdebug1;
+        for (uint32_t i = 0; i < MIA_TRACE_RING; i++) {
+            out->words[i] = mia_trace_snap[i];
+        }
+    } else {
+        // Live copy: core 1 keeps writing, so the oldest entries may be newer
+        // than the rest. Pause execution first for an exact copy.
+        pos = mia_trace_pos;
+        for (uint32_t i = 0; i < MIA_TRACE_RING; i++) {
+            out->words[i] = mia_trace_ring[(pos + i) & (MIA_TRACE_RING - 1u)];
+        }
+    }
+    out->events = mia_trace_pos;
+
+    // Fewer events than the ring holds: keep only the real ones.
+    if (pos < MIA_TRACE_RING) {
+        memmove(out->words, &out->words[MIA_TRACE_RING - pos], pos * sizeof(out->words[0]));
+        out->count = pos;
+    } else {
+        out->count = MIA_TRACE_RING;
+    }
+}
+
+void mia_trace_clear(void) {
+    mia_trace_pushes = 0;
+    mia_trace_pops = 0;
+    mia_trace_overflows = 0;
+    mia_trace_underflows = 0;
+    mia_trace_pos = 0;
+    memset(mia_trace_ring, 0, sizeof(mia_trace_ring));
+    __dmb();
+    mia_trace_frozen = false;
+}
+#endif
+
+uint8_t mia_ctx_read(mia_ctx_t *out) {
+    uint8_t depth = mia_ctx_depth;
+    if (depth > MIA_CTX_DEPTH) {
+        depth = MIA_CTX_DEPTH;
+    }
+    for (uint8_t i = 0; i < depth; i++) {
+        out[i] = mia_ctx_stack[i];
+    }
+    return depth;
+}
+
 static inline __force_inline void __not_in_flash_func(mia_core1_ctx_push)(void) {
+#if MIA_DIAG
+    mia_trace_pushes++;
+#endif
     if (mia_ctx_depth == MIA_CTX_DEPTH) {
+#if MIA_DIAG
+        mia_trace_overflows++;
+        mia_trace_freeze();
+#endif
         error_defer(ERROR_DEFER_CTX_OVERFLOW);
         return;
     }
@@ -137,7 +228,14 @@ static inline __force_inline void __not_in_flash_func(mia_core1_ctx_push)(void) 
 }
 
 static inline __force_inline void __not_in_flash_func(mia_core1_ctx_pop)(void) {
+#if MIA_DIAG
+    mia_trace_pops++;
+#endif
     if (mia_ctx_depth == 0) {
+#if MIA_DIAG
+        mia_trace_underflows++;
+        mia_trace_freeze();
+#endif
         error_defer(ERROR_DEFER_CTX_UNDERFLOW);
         return;
     }
@@ -226,6 +324,9 @@ __attribute__((optimize("O1"))) static void __no_inline_not_in_flash_func(act_lo
         if (!(MIA_ACT_PIO->fstat & (1u << (PIO_FSTAT_RXEMPTY_LSB + MIA_ACT_SM)))) {
             // Get the pins data (CS | R/W | 5 Address bits | 8 Data bits)
             uint32_t rw_addr_data = MIA_ACT_PIO->rxf[MIA_ACT_SM];
+#if MIA_DIAG
+            mia_trace_ring[mia_trace_pos++ & (MIA_TRACE_RING - 1u)] = rw_addr_data;
+#endif
 
             // Ignore stale or late action events while the 6502 is held in reset.
             if (!((1u << CPU_RESB_PIN) & sio_hw->gpio_in)) {

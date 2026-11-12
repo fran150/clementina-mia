@@ -167,6 +167,17 @@ bool mia_sd_is_initialized(void);
 uint8_t mia_sd_card_type(void);
 uint32_t mia_sd_sector_count(void);
 
+// Console file output, for the `dump` command. These run on core 0 from the
+// console, between SD service steps, and return NULL on success or a short
+// reason on failure. Open refuses while a 6502 SD request or load/save job is
+// running. If the 6502 has not mounted the card, open mounts it and close
+// unmounts it again, so the 6502 still sees the filesystem as it left it.
+// The path is relative to the current directory, as for the 6502's commands.
+// Card waits run the SD wait service, so Wi-Fi and video keep going.
+const char *mia_sd_console_open(const char *path);
+const char *mia_sd_console_write(const void *data, uint32_t length);
+const char *mia_sd_console_close(void);
+
 void mia_sd_print_summary(void);
 void mia_sd_print_status(void);
 
