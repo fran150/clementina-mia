@@ -105,6 +105,7 @@ add_executable(mia
     src/mia/mem/regs.c
     src/mia/con/con.c
     src/mia/con/con_cmds.c
+    src/mia/con/con_diag.c
     src/mia/con/con_keys.c
     src/mia/con/monitor.c
     src/mia/input/input.c
@@ -268,6 +269,14 @@ endif()
 
 if(DEFINED ENV{MIA_SD_WAIT_SERVICE_AFTER_US})
     target_compile_definitions(mia PRIVATE MIA_SD_WAIT_SERVICE_AFTER_US=$ENV{MIA_SD_WAIT_SERVICE_AFTER_US})
+endif()
+
+# MIA_DIAG: the diagnostic build (make diag) adds the bus event trace to
+# core 1's action loop and the console's `trace` command. Normal builds leave
+# it off, so their action loop has no trace code. See docs/diagnostics.md.
+option(MIA_DIAG "Build the diagnostic firmware with the bus event trace" OFF)
+if(MIA_DIAG)
+    target_compile_definitions(mia PRIVATE MIA_DIAG=1)
 endif()
 
 # MIA_INPUT_DEFAULT_MODE: wifi (default) or console.

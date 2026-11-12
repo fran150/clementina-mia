@@ -148,8 +148,9 @@ static sd_job_state_t sd_job;
 static uint8_t sd_job_buffer[SD_JOB_CHUNK_SIZE];
 
 static void (*sd_wait_service)(void);
-// True only while mia_sd_service runs a request or job step, so the boot-time
-// WIFI.CFG read and a reset's card access never run the wait service.
+// True only while mia_sd_service runs a request or job step, or a console
+// file write runs (mia_sd_console_*), so the boot-time WIFI.CFG read and a
+// reset's card access never run the wait service.
 static bool sd_wait_service_allowed;
 
 // The wait service runs Wi-Fi and video, which need as much stack as they get
@@ -1641,6 +1642,92 @@ static void sd_service_request(void) {
     if (!deferred) {
         sd_finish(ok, error, fr, fs_event);
     }
+}
+
+// ---- Console file output (see sd.h) -------------------------------------
+
+static FIL sd_console_file;
+static bool sd_console_file_open;
+static bool sd_console_mounted_here;
+
+static void sd_console_unmount_if_ours(void) {
+    if (!sd_console_mounted_here) {
+        return;
+    }
+    f_mount(NULL, "0:", 0);
+    memset(&sd_fatfs, 0, sizeof(sd_fatfs));
+    sd_mounted = false;
+    sd_console_mounted_here = false;
+    sd_publish_state();
+}
+
+const char *mia_sd_console_open(const char *path) {
+    if (sd_console_file_open) {
+        return "a console file is already open";
+    }
+    if (sd_request_pending || sd_job.type != sd_job_none ||
+        (mia_status_get() & MIA_STAT_SD_BUSY)) {
+        return "SD busy with a 6502 request; try again";
+    }
+
+    char fatfs_path[MIA_FS_PATH_SIZE + 3u];
+    uint32_t out_i = 0;
+    fatfs_path[out_i++] = '0';
+    fatfs_path[out_i++] = ':';
+    for (uint32_t i = 0; path[i] != '\0' && out_i < sizeof(fatfs_path) - 1u; i++) {
+        fatfs_path[out_i++] = path[i] == '\\' ? '/' : path[i];
+    }
+    fatfs_path[out_i] = '\0';
+
+    if (!sd_mounted) {
+        FRESULT mount_fr;
+        if (!sd_mount_filesystem(&mount_fr)) {
+            sd_publish_state();
+            return "no card, or the card does not mount";
+        }
+        sd_console_mounted_here = true;
+        sd_publish_state();
+    }
+
+    sd_wait_service_allowed = true;
+    FRESULT fr = f_open(&sd_console_file, fatfs_path, FA_WRITE | FA_CREATE_ALWAYS);
+    sd_wait_service_allowed = false;
+    if (fr != FR_OK) {
+        sd_console_unmount_if_ours();
+        return "cannot create the file";
+    }
+
+    sd_console_file_open = true;
+    return NULL;
+}
+
+const char *mia_sd_console_write(const void *data, uint32_t length) {
+    if (!sd_console_file_open) {
+        return "no console file open";
+    }
+
+    UINT written = 0;
+    sd_wait_service_allowed = true;
+    FRESULT fr = f_write(&sd_console_file, data, (UINT)length, &written);
+    sd_wait_service_allowed = false;
+    if (fr != FR_OK || written != length) {
+        return "write failed (card full?)";
+    }
+    return NULL;
+}
+
+const char *mia_sd_console_close(void) {
+    if (!sd_console_file_open) {
+        return NULL;
+    }
+
+    sd_wait_service_allowed = true;
+    FRESULT fr = f_close(&sd_console_file);
+    sd_wait_service_allowed = false;
+    memset(&sd_console_file, 0, sizeof(sd_console_file));
+    sd_console_file_open = false;
+    sd_console_unmount_if_ours();
+    return fr == FR_OK ? NULL : "close failed";
 }
 
 void mia_sd_print_summary(void) {

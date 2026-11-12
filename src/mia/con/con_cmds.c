@@ -15,6 +15,7 @@
 #include "mem/mem.h"
 #include "input/input.h"
 #include "sd/sd.h"
+#include "con_diag.h"
 #include "sys/exec.h"
 #include "sys/speed.h"
 #include "net/wifi.h"
@@ -366,7 +367,17 @@ static void cmd_status(const char *args) {
         return;
     }
 
-    printf("Usage: status [video|input|audio|sd|wifi|irq|speed|exec|errors|mem|index [id]]\n");
+    if (strcmp(args, "ctx") == 0) {
+        con_diag_status_ctx();
+        return;
+    }
+
+    if (strncmp(args, "pio", 3) == 0 && (args[3] == '\0' || args[3] == ' ' || args[3] == '\t')) {
+        con_diag_status_pio(args + 3);
+        return;
+    }
+
+    printf("Usage: status [video|input|audio|sd|wifi|irq|speed|exec|errors|mem|index [id]|ctx|pio [clear]]\n");
 }
 
 static void cmd_errors_list(void) {
@@ -695,7 +706,7 @@ typedef struct {
 } con_cmd_t;
 
 static const con_cmd_t commands[] = {
-    { "status",  cmd_status,  "status [video|input|audio|sd|wifi|irq|speed|exec|errors|mem|index]" },
+    { "status",  cmd_status,  "status [video|input|audio|sd|wifi|irq|speed|exec|errors|mem|index|ctx|pio]" },
     { "errors",  cmd_errors,  "errors [list|clear]"                      },
     { "speed",   cmd_speed,   "speed HZ  — set PHI2 clock frequency"     },
     { "wifi",    cmd_wifi,    "wifi [status|off|connect|ap]"             },
@@ -703,6 +714,8 @@ static const con_cmd_t commands[] = {
     { "audio",   cmd_audio,   "audio [status|enable|stop|reset|meter|seq]" },
     { "sd",      cmd_sd,      "sd [status|init|mount]"                   },
     { "exec",    cmd_exec,    "exec [status|pause|resume]"               },
+    { "dump",    con_diag_dump,  "dump regs|idx [id]|ram ADDR LEN [FILE]|all [FILE]" },
+    { "trace",   con_diag_trace, "trace [clear]  — bus event trace (make diag builds)" },
     { "monitor", cmd_monitor, "Enter 65C02 machine language monitor"     },
     { "quit",    cmd_quit,    "Reboot to BOOTSEL"                        },
     { NULL, NULL, NULL }
