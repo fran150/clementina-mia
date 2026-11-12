@@ -8,6 +8,7 @@
 #include "hardware/dma.h"
 #include "hardware/sync.h"
 #include "hardware/structs/bus_ctrl.h"
+#include "hardware/structs/m33.h"
 #include "hardware/structs/sio.h"
 
 #include "etc/cfg.h"
@@ -28,6 +29,7 @@
 #include "sys/exec.h"
 #include "sys/reset.h"
 #include "sys/speed.h"
+#include "sys/sysmon.h"
 #include "sys/timing.h"
 #include "video/video.h"
 #include "video/video_dirty.h"
@@ -127,6 +129,15 @@ static volatile uint32_t mia_trace_snap_at;
 static volatile uint32_t mia_trace_snap_fdebug0;
 static volatile uint32_t mia_trace_snap_fdebug1;
 static volatile bool mia_trace_frozen;
+// Cycles of loop passes that handled a bus event, and every event seen
+// (mia_trace_pos is zeroed by `trace clear`, this is not).
+static volatile uint32_t mia_core1_busy_cycles;
+static volatile uint32_t mia_core1_events;
+
+void mia_core1_load_read(uint32_t *busy_cycles, uint32_t *events) {
+    *busy_cycles = mia_core1_busy_cycles;
+    *events = mia_core1_events;
+}
 
 static void __no_inline_not_in_flash_func(mia_trace_freeze)(void) {
     if (mia_trace_frozen) {
@@ -312,8 +323,18 @@ void mia_reset_runtime_state(void) {
 
 // This is the main loop user to process the actions after reads or writes to MIA registers
 __attribute__((optimize("O1"))) static void __no_inline_not_in_flash_func(act_loop)(void) {
+#if MIA_DIAG
+    // Diagnostic build: core 1's own cycle counter times the passes that
+    // handle a bus event (the DWT is per core, so core 0's setup does not
+    // reach it).
+    m33_hw->demcr |= M33_DEMCR_TRCENA_BITS;
+    m33_hw->dwt_ctrl |= M33_DWT_CTRL_CYCCNTENA_BITS;
+#endif
     // In here we bypass the usual SDK calls as needed for performance.
     while (true) {
+#if MIA_DIAG
+        uint32_t pass_start = m33_hw->dwt_cyccnt;
+#endif
         mia_video_core1_poll();
 
         // Core 1 owns irq_status and the IRQ line: fold in any set-requests
@@ -326,6 +347,7 @@ __attribute__((optimize("O1"))) static void __no_inline_not_in_flash_func(act_lo
             uint32_t rw_addr_data = MIA_ACT_PIO->rxf[MIA_ACT_SM];
 #if MIA_DIAG
             mia_trace_ring[mia_trace_pos++ & (MIA_TRACE_RING - 1u)] = rw_addr_data;
+            mia_core1_events++;
 #endif
 
             // Ignore stale or late action events while the 6502 is held in reset.
@@ -500,6 +522,9 @@ __attribute__((optimize("O1"))) static void __no_inline_not_in_flash_func(act_lo
                             break;
                     }
             }
+#if MIA_DIAG
+            mia_core1_busy_cycles += m33_hw->dwt_cyccnt - pass_start;
+#endif
         }
     }
 }
@@ -513,7 +538,9 @@ void mia_service(void) {
     error_service();
     mia_speed_service();
     mia_input_service();
+    sysmon_lap(SYSMON_MIA);
     mia_sd_service();
+    sysmon_lap(SYSMON_SD);
 }
 
 // Initializes the PIO program that monitors the CS and R/W enable pins and adjusts

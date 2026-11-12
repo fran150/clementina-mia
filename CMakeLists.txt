@@ -122,6 +122,7 @@ add_executable(mia
     src/mia/sys/reset.c
     src/mia/sys/timing.c
     src/mia/sys/speed.c
+    src/mia/sys/sysmon.c
     src/mia/video/video.c
     ${KERNEL_DATA_FILE}   # Add generated kernel data
     ${CHARSET_DATA_FILE}  # Add generated charset data
@@ -162,6 +163,7 @@ target_link_libraries(mia
     pico_stdlib
     pico_multicore
     pico_bootrom
+    hardware_adc
     hardware_gpio
     hardware_pwm
     hardware_clocks
