@@ -433,6 +433,7 @@ Use `status <subsystem>` for deeper diagnostics:
 | `status errors` | Error queue contents, as `errors list`. |
 | `status ctx` | `MIA_CTX` stack depth and the saved entries (see [Context stack](#context-stack)). |
 | `status pio [clear]` | Bus PIO stall and underrun flags, FIFO levels and program counters; `clear` resets the sticky flags. |
+| `status sys [clear]` | Resource use: flash, SRAM, heap, stack peaks, clock, temperature, Wi-Fi signal, reset reason, core 0's time per part of its loop and core 1's FIFO peak (busy % in the diagnostic build); `clear` resets the peaks. See [docs/diagnostics.md](docs/diagnostics.md#resource-use). |
 
 A 6502 program can also issue command `30` to pause itself at a diagnostic
 point; once paused, the terminal normally performs the resume.

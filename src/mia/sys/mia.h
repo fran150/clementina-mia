@@ -54,6 +54,11 @@ void mia_trace_read(mia_trace_t *out);
 
 // Zeroes the counters, drops the capture and re-arms it.
 void mia_trace_clear(void);
+
+// Core 1 load for `status sys`: the cycles core 1 has spent on loop passes
+// that handled a bus event, and the bus events seen. Both only count up and
+// wrap; take differences. Not reset by mia_trace_clear.
+void mia_core1_load_read(uint32_t *busy_cycles, uint32_t *events);
 #endif
 
 #endif

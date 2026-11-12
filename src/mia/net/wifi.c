@@ -169,6 +169,14 @@ static const char *wifi_mode_name(mia_wifi_mode_t mode) {
     }
 }
 
+bool mia_net_wifi_rssi(int32_t *rssi) {
+    if (current_mode != MIA_WIFI_MODE_STA ||
+        cyw43_wifi_link_status(&cyw43_state, CYW43_ITF_STA) != CYW43_LINK_JOIN) {
+        return false;
+    }
+    return cyw43_wifi_get_rssi(&cyw43_state, rssi) == 0;
+}
+
 void mia_net_wifi_print_status(void) {
     switch (current_mode) {
         case MIA_WIFI_MODE_OFF:

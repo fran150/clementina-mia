@@ -6,6 +6,7 @@
 #include "sys/mia.h"
 #include "sys/led.h"
 #include "sys/reset.h"
+#include "sys/sysmon.h"
 #include "con/con.h"
 #include "input/input.h"
 #include "net/wifi.h"
@@ -25,6 +26,8 @@ static void serve_during_sd_wait(void) {
 }
 
 int main(void) {
+    // Before anything deepens the stack or mia_init() starts core 1.
+    sysmon_init();
     stdio_init_all();
     mia_prepare_reset_lines();
 
@@ -40,13 +43,19 @@ int main(void) {
     printf("MIA ready. Type 'help' for commands.\n");
 
     while (true) {
+        // The sysmon laps time each part of the pass for `status sys`;
+        // mia_service() laps its own SD part.
         mia_handle_reset_request();
         mia_service();
         cyw43_arch_poll();
+        sysmon_lap(SYSMON_WIFI);
         mia_video_service();
+        sysmon_lap(SYSMON_VIDEO);
         update_onboard_led_blink();
 
         con_process();
+        sysmon_lap(SYSMON_CONSOLE);
+        sysmon_pass_end();
 
         tight_loop_contents();
     }

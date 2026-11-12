@@ -38,6 +38,10 @@ void mia_net_wifi_off(void);
 // Current mode.
 mia_wifi_mode_t mia_net_wifi_mode(void);
 
+// Signal strength of the joined network in dBm. False when MIA is not
+// joined to a network as a station (off, AP mode or still connecting).
+bool mia_net_wifi_rssi(int32_t *rssi);
+
 // Print a human-readable status line to stdout.
 void mia_net_wifi_print_status(void);
 void mia_net_wifi_print_detail(void);
