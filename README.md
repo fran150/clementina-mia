@@ -575,6 +575,16 @@ On Pico 2 W, the default Pico system clock is `150 MHz`. With that normal `clk_s
 | 27 | `MIA_RESETB` | Input | Active-low reset request into MIA. |
 | 28 | `AUDIO_IRQ_TIMER` | PWM timer | PWM slice used for the audio sample interrupt; not driven as an audio output. |
 
+## Install a release
+
+The [releases](https://github.com/fran150/clementina-mia/releases) attach
+`mia.uf2`, the firmware, `mia-diag.uf2`, the diagnostic build with the bus
+event trace, and `SHA256SUMS`. Hold the Pico's BOOTSEL button while plugging
+it in, then copy `mia.uf2` to the `RP2350` drive that appears; or, with
+`picotool`, run `picotool load mia.uf2 -f`. Release images hold no Wi-Fi
+credentials: put them in `WIFI.CFG` on the SD card (see
+[Wi-Fi setup](#wi-fi-setup)).
+
 ## Build and Flash
 
 The firmware builds with the Pico SDK 2.2.0, the Arm GNU toolchain
