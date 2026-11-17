@@ -49,4 +49,8 @@ void mia_video_enable(void);
 void mia_video_force_full_refresh(void);
 void mia_video_set_mode(uint8_t mode);
 
+// `status net`: video link counters and latency since boot or the last clear.
+void mia_video_print_stats(void);
+void mia_video_clear_stats(void);
+
 #endif

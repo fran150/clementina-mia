@@ -160,7 +160,13 @@ void mia_sd_set_wait_service(void (*service)(void));
 
 bool mia_sd_request(uint8_t command);
 
+// Sets up the SD pins with the card deselected. main() calls it first thing,
+// so the card is not left selected while the rest of boot runs.
+void mia_sd_prepare_pins(void);
+
 bool mia_sd_card_init(void);
+// True when the card is initialized and still answers SEND_STATUS.
+bool mia_sd_card_still_ready(void);
 bool mia_sd_block_read(uint32_t lba, uint8_t *buffer);
 bool mia_sd_block_write(uint32_t lba, const uint8_t *buffer);
 bool mia_sd_is_initialized(void);

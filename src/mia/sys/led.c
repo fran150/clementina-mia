@@ -8,6 +8,11 @@
 
 static bool onboard_led_ready;
 
+// The onboard LED is wired to the CYW43 Wi-Fi chip, so every change is a
+// blocking request over the Wi-Fi link. It is switched on once at boot as a
+// "MIA is up" indicator and never blinked: a blink from the main loop costs
+// two link requests a second, and each one stalls the loop for up to 500 ms
+// when the chip is slow to answer. Use the console for live status.
 void configure_onboard_led(void) {
     printf("Onboard led initialized...\n");
     int rc = cyw43_arch_init();
@@ -17,7 +22,7 @@ void configure_onboard_led(void) {
         return;
     }
     onboard_led_ready = true;
-    cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 0);
+    cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
 }
 
 void turn_onboard_led(bool on) {
@@ -26,19 +31,4 @@ void turn_onboard_led(bool on) {
     }
 
     cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, on);
-}
-
-void update_onboard_led_blink(void) {
-    const uint32_t blink_interval_us = 500 * 1000;
-    static uint32_t last_toggle_us = 0;
-    static bool led_on = false;
-
-    uint32_t now_us = time_us_32();
-    if ((uint32_t)(now_us - last_toggle_us) < blink_interval_us) {
-        return;
-    }
-
-    led_on = !led_on;
-    turn_onboard_led(led_on);
-    last_toggle_us = now_us;
 }

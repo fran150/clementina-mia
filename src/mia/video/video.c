@@ -19,6 +19,22 @@
 #define MIA_VIDEO_MAX_CHUNKS 154u
 #define MIA_VIDEO_SEND_BUDGET 4u
 
+// Pacing for FRAME_DATA chunks: a token bucket that holds up to
+// MIA_VIDEO_SEND_BURST chunks and earns one back every
+// MIA_VIDEO_CHUNK_INTERVAL_US. Without it a full refresh (154 chunks, about
+// 86 KB) went out as fast as the CYW43 took it. Once the chip's transmit
+// credits run out the driver waits inside the send, and every packet that
+// arrives during that wait (frame requests, acks, NACKs, key presses) is
+// dropped. The client then sees lost chunks and missed acks, times out and
+// reconnects, and each reconnect asks for another full refresh. A game frame
+// of a few chunks still goes out at once; a full refresh takes about 60 ms.
+#ifndef MIA_VIDEO_SEND_BURST
+#define MIA_VIDEO_SEND_BURST 8u
+#endif
+#ifndef MIA_VIDEO_CHUNK_INTERVAL_US
+#define MIA_VIDEO_CHUNK_INTERVAL_US 400u
+#endif
+
 typedef struct {
     bool active;
     ip_addr_t addr;
@@ -98,6 +114,36 @@ static void video_handle_ack_response(const mia_video_header_t *header, const ip
 static void video_handle_nack_chunks(const mia_video_header_t *header, const uint8_t *payload, const ip_addr_t *addr, uint16_t port);
 static void video_handle_client_status(const mia_video_header_t *header, const uint8_t *payload);
 static void video_udp_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr, u16_t port);
+
+// Link statistics for `status net`. Every field is written only from core 0's
+// main loop (the UDP callbacks and mia_video_service), so no locking is needed.
+// Times are from time_us_32().
+typedef struct {
+    uint32_t since_us;          // start of the measurement (boot or `status net clear`)
+    uint32_t sessions;          // HELLOs accepted (each one forces a full refresh)
+    uint32_t protocol_errors;   // sessions MIA dropped because a packet broke the protocol
+    uint32_t requests;          // REQUEST_FRAME packets accepted
+    uint32_t no_dirty;          // requests answered "nothing changed"
+    uint32_t frames;            // responses with dirty pages
+    uint32_t pages;             // pages in those responses
+    uint32_t chunks_sent;       // FRAME_DATA packets sent, repairs included
+    uint32_t nacks;             // NACK_CHUNKS packets (the client lost chunks)
+    uint32_t chunks_repaired;   // chunks the client asked again for
+    uint32_t send_failures;     // packets lwIP refused (out of buffers)
+    uint32_t ignored;           // requests and NACKs dropped without a reply (stale ids)
+    uint32_t rebound;           // pending frames re-sent under a client's new request id
+    uint32_t last_request_us;
+    uint32_t max_request_gap_us;
+    // A frame's time from the client's request to the last chunk queued, and
+    // from the request to the client's ack (network + client time included).
+    uint32_t response_start_us;
+    uint32_t send_count, send_max_us;
+    uint64_t send_sum_us;
+    uint32_t ack_count, ack_max_us, ack_last_us;
+    uint64_t ack_sum_us;
+} video_stats_t;
+
+static video_stats_t video_stats;
 
 void mia_video_init(void) {
     mia_video_reset_runtime_state();
@@ -226,6 +272,67 @@ void mia_video_print_status(void) {
            (st & MIA_STAT_VIDEO_FRAME_SENT) ? "yes" : "no");
 }
 
+static void print_ms(uint32_t us) {
+    printf("%lu.%lu ms", (unsigned long)(us / 1000u), (unsigned long)((us % 1000u) / 100u));
+}
+
+static uint32_t per_second(uint32_t count, uint32_t elapsed_us) {
+    if (elapsed_us < 1000u) {
+        return 0;
+    }
+    return (uint32_t)(((uint64_t)count * 1000000u) / elapsed_us);
+}
+
+void mia_video_print_stats(void) {
+    uint32_t elapsed_us = time_us_32() - video_stats.since_us;
+
+    printf("Video link (last %lu s):\n", (unsigned long)(elapsed_us / 1000000u));
+    printf("  sessions: %lu started, %lu dropped on protocol errors\n",
+           (unsigned long)video_stats.sessions,
+           (unsigned long)video_stats.protocol_errors);
+    printf("  requests: %lu (%lu/s), %lu with nothing changed, longest gap ",
+           (unsigned long)video_stats.requests,
+           (unsigned long)per_second(video_stats.requests, elapsed_us),
+           (unsigned long)video_stats.no_dirty);
+    print_ms(video_stats.max_request_gap_us);
+    printf("\n");
+    printf("  frames:   %lu (%lu/s), %lu pages, %lu chunks sent\n",
+           (unsigned long)video_stats.frames,
+           (unsigned long)per_second(video_stats.frames, elapsed_us),
+           (unsigned long)video_stats.pages,
+           (unsigned long)video_stats.chunks_sent);
+    printf("  losses:   %lu NACKs asking for %lu chunks, %lu sends refused\n",
+           (unsigned long)video_stats.nacks,
+           (unsigned long)video_stats.chunks_repaired,
+           (unsigned long)video_stats.send_failures);
+    printf("  ignored:  %lu requests or NACKs with stale ids, no reply sent\n",
+           (unsigned long)video_stats.ignored);
+    printf("  rebound:  %lu frames re-sent for a new request id\n",
+           (unsigned long)video_stats.rebound);
+
+    if (video_stats.send_count != 0) {
+        printf("  send:     request to last chunk avg ");
+        print_ms((uint32_t)(video_stats.send_sum_us / video_stats.send_count));
+        printf("  max ");
+        print_ms(video_stats.send_max_us);
+        printf("\n");
+    }
+    if (video_stats.ack_count != 0) {
+        printf("  ack:      request to client ack avg ");
+        print_ms((uint32_t)(video_stats.ack_sum_us / video_stats.ack_count));
+        printf("  max ");
+        print_ms(video_stats.ack_max_us);
+        printf("  last ");
+        print_ms(video_stats.ack_last_us);
+        printf("\n");
+    }
+}
+
+void mia_video_clear_stats(void) {
+    memset(&video_stats, 0, sizeof(video_stats));
+    video_stats.since_us = time_us_32();
+}
+
 void mia_video_reset_runtime_state(void) {
     struct udp_pcb *saved_pcb = video_pcb;
     bool saved_udp_ready = video_udp_ready;
@@ -264,7 +371,24 @@ void mia_video_service(void) {
         return;
     }
 
-    uint32_t budget = MIA_VIDEO_SEND_BUDGET;
+    // Earn tokens for the time since the last refill.
+    static uint32_t tokens = MIA_VIDEO_SEND_BURST;
+    static uint32_t refill_us;
+    uint32_t now_us = time_us_32();
+    uint32_t earned = (now_us - refill_us) / MIA_VIDEO_CHUNK_INTERVAL_US;
+    if (earned != 0) {
+        tokens += earned;
+        if (tokens > MIA_VIDEO_SEND_BURST) {
+            tokens = MIA_VIDEO_SEND_BURST;
+        }
+        refill_us += earned * MIA_VIDEO_CHUNK_INTERVAL_US;
+    }
+    if (tokens == MIA_VIDEO_SEND_BURST) {
+        // A full bucket earns nothing more: start the next interval now.
+        refill_us = now_us;
+    }
+
+    uint32_t budget = MIA_VIDEO_SEND_BUDGET < tokens ? MIA_VIDEO_SEND_BUDGET : tokens;
 
     while (budget > 0 && video_repair_pos < video_repair_count) {
         if (!video_send_frame_chunk(video_repair_chunks[video_repair_pos])) {
@@ -272,6 +396,7 @@ void mia_video_service(void) {
         }
         video_repair_pos++;
         budget--;
+        tokens--;
     }
 
     if (video_repair_pos >= video_repair_count) {
@@ -285,11 +410,18 @@ void mia_video_service(void) {
         }
         video_response.next_chunk_to_send++;
         budget--;
+        tokens--;
     }
 
     if (!video_response.initial_send_done &&
         video_response.next_chunk_to_send >= video_response.chunk_count) {
         video_response.initial_send_done = true;
+        uint32_t send_us = time_us_32() - video_stats.response_start_us;
+        video_stats.send_count++;
+        video_stats.send_sum_us += send_us;
+        if (send_us > video_stats.send_max_us) {
+            video_stats.send_max_us = send_us;
+        }
         video_set_last_response_dirty_pages(video_response.page_count);
         mia_status_set_flag(MIA_STAT_VIDEO_FRAME_SENT);
         mia_irq_set_flag(IRQ_VIDEO_FRAME_SENT);
@@ -554,6 +686,7 @@ static bool video_send_packet(const uint8_t *packet, uint16_t packet_len, const 
 
     struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, packet_len, PBUF_RAM);
     if (p == NULL) {
+        video_stats.send_failures++;
         return false;
     }
 
@@ -563,6 +696,9 @@ static bool video_send_packet(const uint8_t *packet, uint16_t packet_len, const 
     }
 
     pbuf_free(p);
+    if (err != ERR_OK) {
+        video_stats.send_failures++;
+    }
     return err == ERR_OK;
 }
 
@@ -648,7 +784,11 @@ static bool video_send_frame_chunk(uint16_t chunk_index) {
         out += MIA_VIDEO_PAGE_SIZE;
     }
 
-    return video_send_packet(video_tx_packet, packet_len, &video_session.addr, video_session.port);
+    bool sent = video_send_packet(video_tx_packet, packet_len, &video_session.addr, video_session.port);
+    if (sent) {
+        video_stats.chunks_sent++;
+    }
+    return sent;
 }
 
 static bool video_validate_hello(const mia_video_header_t *header) {
@@ -718,6 +858,13 @@ static void video_release_pending_response(bool acknowledged) {
     video_repair_pos = 0;
 
     if (acknowledged) {
+        uint32_t ack_us = time_us_32() - video_stats.response_start_us;
+        video_stats.ack_count++;
+        video_stats.ack_sum_us += ack_us;
+        video_stats.ack_last_us = ack_us;
+        if (ack_us > video_stats.ack_max_us) {
+            video_stats.ack_max_us = ack_us;
+        }
         video_session.client_frame_id = frame_id;
         mia_status_clear_flag(MIA_STAT_VIDEO_FRAME_REQUESTED | MIA_STAT_VIDEO_FRAME_SENT);
         mia_irq_set_flag(IRQ_VIDEO_FRAME_ACKED);
@@ -739,6 +886,7 @@ static void video_protocol_error(const ip_addr_t *addr, uint16_t port, uint16_t 
         0,
         2);
     mia_video_write_u16(&video_tx_packet[MIA_VIDEO_HEADER_SIZE], MIA_VIDEO_STATUS_PROTOCOL_ERROR);
+    video_stats.protocol_errors++;
     video_invalidate_session();
     (void)video_send_packet(video_tx_packet, packet_len, addr, port);
 }
@@ -776,6 +924,7 @@ static void video_handle_datagram(const uint8_t *packet, uint16_t packet_len, co
         }
 
         video_last_peer_seq = header.seq;
+        video_stats.sessions++;
         video_reset_session(addr, port);
         (void)video_send_welcome(addr, port);
         return;
@@ -814,6 +963,16 @@ static void video_handle_request_frame(const mia_video_header_t *header, const u
 
     uint32_t last_complete = mia_video_read_u32(payload);
 
+    uint32_t now_us = time_us_32();
+    if (video_stats.requests != 0) {
+        uint32_t gap_us = now_us - video_stats.last_request_us;
+        if (gap_us > video_stats.max_request_gap_us) {
+            video_stats.max_request_gap_us = gap_us;
+        }
+    }
+    video_stats.last_request_us = now_us;
+    video_stats.requests++;
+
     if (video_response.valid) {
         if (header->request_id == video_response.request_id && last_complete == video_response.last_complete_frame_id) {
             video_response.next_chunk_to_send = 0;
@@ -831,10 +990,32 @@ static void video_handle_request_frame(const mia_video_header_t *header, const u
             return;
         }
 
+        if (last_complete == video_session.client_frame_id) {
+            // The client gave up on this response and asked again with a new
+            // request id: it still has only the frame it last acked. That
+            // happens when a request is retried after MIA answered the first
+            // copy with NO_DIRTY_PAGES and built a frame for the retry; the
+            // client takes the NO_DIRTY reply, moves on, and drops the
+            // frame's chunks as belonging to an old request. Ignoring the new
+            // request here left both sides waiting until the client gave up
+            // and reconnected. The pending frame still holds every change
+            // since that ack and its chunks are built from live memory, so
+            // send it again under the new request id.
+            video_response.request_id = header->request_id;
+            video_response.last_complete_frame_id = last_complete;
+            video_response.next_chunk_to_send = 0;
+            video_repair_count = 0;
+            video_repair_pos = 0;
+            video_stats.rebound++;
+            return;
+        }
+
+        video_stats.ignored++;
         return;
     }
 
     if (last_complete < video_session.client_frame_id) {
+        video_stats.ignored++;
         return;
     }
 
@@ -850,6 +1031,7 @@ static void video_handle_request_frame_no_pending(uint16_t request_id, uint32_t 
     if (!video_has_dirty_pages(mia_video_active_dirty_index) &&
         !video_has_dirty_pages(MIA_VIDEO_CORE0_DIRTY_MAP)) {
         video_set_last_response_dirty_pages(0);
+        video_stats.no_dirty++;
         (void)video_send_status(MIA_VIDEO_STATUS_NO_DIRTY_PAGES, request_id, 0, addr, port);
         return;
     }
@@ -868,6 +1050,10 @@ static void video_handle_request_frame_no_pending(uint16_t request_id, uint32_t 
     video_response.valid = true;
     video_repair_count = 0;
     video_repair_pos = 0;
+
+    video_stats.frames++;
+    video_stats.pages += video_response.page_count;
+    video_stats.response_start_us = time_us_32();
 
     video_set_frame_id(video_response.frame_id);
     mia_status_set_flag(MIA_STAT_VIDEO_FRAME_REQUESTED);
@@ -917,6 +1103,8 @@ static void video_handle_nack_chunks(const mia_video_header_t *header, const uin
     if (!video_response.valid) {
         if (header->frame_id > video_session.client_frame_id) {
             video_protocol_error(addr, port, header->request_id, header->frame_id);
+        } else {
+            video_stats.ignored++;
         }
         return;
     }
@@ -924,6 +1112,8 @@ static void video_handle_nack_chunks(const mia_video_header_t *header, const uin
     if (header->request_id != video_response.request_id || header->frame_id != video_response.frame_id) {
         if (header->frame_id > video_response.frame_id) {
             video_protocol_error(addr, port, header->request_id, header->frame_id);
+        } else {
+            video_stats.ignored++;
         }
         return;
     }
@@ -944,6 +1134,8 @@ static void video_handle_nack_chunks(const mia_video_header_t *header, const uin
 
     video_repair_count = missing_count;
     video_repair_pos = 0;
+    video_stats.nacks++;
+    video_stats.chunks_repaired += missing_count;
 }
 
 static void video_handle_client_status(const mia_video_header_t *header, const uint8_t *payload) {
@@ -954,6 +1146,7 @@ static void video_handle_client_status(const mia_video_header_t *header, const u
 
     uint16_t status = mia_video_read_u16(payload);
     if (status == MIA_VIDEO_STATUS_PROTOCOL_ERROR) {
+        video_stats.protocol_errors++;
         video_invalidate_session();
     }
 }
