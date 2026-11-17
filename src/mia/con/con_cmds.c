@@ -323,6 +323,18 @@ static void cmd_status(const char *args) {
         return;
     }
 
+    if (strncmp(args, "net", 3) == 0 && (args[3] == '\0' || args[3] == ' ' || args[3] == '\t')) {
+        if (strcmp(skip_ws(args + 3), "clear") == 0) {
+            mia_video_clear_stats();
+            mia_input_clear_stats();
+            printf("Net: counters cleared\n");
+            return;
+        }
+        mia_video_print_stats();
+        mia_input_print_stats();
+        return;
+    }
+
     if (strcmp(args, "audio") == 0) {
         mia_audio_print_status();
         return;
@@ -720,7 +732,7 @@ typedef struct {
 } con_cmd_t;
 
 static const con_cmd_t commands[] = {
-    { "status",  cmd_status,  "status [video|input|audio|sd|wifi|irq|speed|exec|errors|mem|index|ctx|pio|sys]" },
+    { "status",  cmd_status,  "status [video|input|net|audio|sd|wifi|irq|speed|exec|errors|mem|index|ctx|pio|sys]" },
     { "errors",  cmd_errors,  "errors [list|clear]"                      },
     { "speed",   cmd_speed,   "speed HZ  — set PHI2 clock frequency"     },
     { "wifi",    cmd_wifi,    "wifi [status|off|connect|ap]"             },

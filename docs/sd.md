@@ -38,6 +38,14 @@ that read, so programs still start with the filesystem unmounted. Because the
 boot read initializes the card, `SD_STATUS_PRESENT` and `MIA_STAT_SD_PRESENT`
 are already set when the 6502 starts if a working card is inserted.
 
+Mounting (`FS_MOUNT`, or the first file command after a reset) does not
+initialize the card again when it is already initialized and still answers
+`SEND_STATUS`; it only reads the filesystem. A full initialization retries
+`GO_IDLE_STATE` (CMD0) up to eight times, clocking out a data block's worth of
+bytes before each retry, and runs twice before it gives up. That covers a card
+the MIA left mid-command or mid-block when it rebooted without a power cycle
+(`quit`, flashing new firmware), which the card itself never forgets.
+
 ## Hardware Pins
 
 The default SD pin mapping uses `SPI0`:
@@ -398,7 +406,7 @@ The USB terminal exposes:
 
 | Command | Description |
 | --- | --- |
-| `status sd` | Detailed SD/FS status, pins, memory ranges, indexes, and last result. |
+| `status sd` | Detailed SD/FS status, pins, memory ranges, indexes, and last result. After a failed card initialization, an `init:` line names the step that failed and the card's answer. |
 | `sd status` | Same as `status sd`. |
 | `sd init` | Request physical SD card initialization. |
 | `sd mount` | Request FAT mount. |

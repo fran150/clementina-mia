@@ -35,6 +35,8 @@ There are two things to keep in mind:
 | `status pio clear` | Reset the sticky `FDEBUG` flags. |
 | `status sys` | [Resource use](#resource-use): flash, SRAM, heap, stack peaks, clock, temperature, Wi-Fi signal, reset reason, where core 0's time goes, and how close core 1 comes to dropping bus events. |
 | `status sys clear` | Reset the peaks: slowest times and the action FIFO peak. |
+| `status net` | [Link statistics](#link-statistics): video requests, frames, lost chunks and round-trip time to the video client, and input packets and losses, since boot or the last clear. |
+| `status net clear` | Reset the link counters. |
 | `dump regs` | The 32 registers `$FFE0-$FFFF` with their names. |
 | `dump idx` | Every index descriptor with any non-zero field. |
 | `dump idx ID` | One descriptor, ID in decimal or `$` hex. |
@@ -134,7 +136,7 @@ its slowest single run since boot or `status sys clear`:
 | `wifi` | The Wi-Fi driver and the network stack (`cyw43_arch_poll`). |
 | `video` | Frames and packets to the video client. |
 | `console` | Console input and commands, `status sys` itself included. A command that waits, such as `wifi connect`, shows up as a slow console run. |
-| `other` | The LED blink and the loop itself. |
+| `other` | The loop itself. |
 
 The slowest pass is how long the 6502 may wait at worst for anything core 0
 does: a command result, an SD request, an input refresh. Timing the parts
@@ -154,6 +156,44 @@ loop pass that handled a bus event, and counts the events. `status sys` then
 shows `busy`, the share of the last second core 1 spent on such passes, and
 the events per second. That is the only resource figure that adds work to the
 action loop, so it stays out of the normal firmware.
+
+## Link statistics
+
+`status net` counts what crosses the Wi-Fi link since boot or `status net clear`.
+Clear it, play for a while, then read it. The numbers below are only an
+illustration of the format:
+
+```text
+Video link (last 30 s):
+  sessions: 0 started, 0 dropped on protocol errors
+  requests: 1820 (60/s), 1200 with nothing changed, longest gap 41.2 ms
+  frames:   620 (20/s), 1860 pages, 620 chunks sent
+  losses:   0 NACKs asking for 0 chunks, 0 sends refused
+  ignored:  0 requests or NACKs with stale ids, no reply sent
+  rebound:  0 frames re-sent for a new request id
+  send:     request to last chunk avg 0.4 ms  max 2.1 ms
+  ack:      request to client ack avg 6.3 ms  max 48.0 ms  last 5.1 ms
+Input link (last 30 s):
+  packets:  212 (7/s), 210 keyboard, 0 sessions started
+  losses:   0 lost (sequence skipped), 0 late or repeated
+  last:     120.4 ms ago
+```
+
+| Line | What it tells you |
+| ---- | ----------------- |
+| `sessions` | Each started session is a new HELLO from the client and a full refresh of the screen. More than one during play means the client keeps reconnecting. |
+| `requests` | How often the client asks for a frame, and the longest wait between two asks. A long gap is time the screen could not change. |
+| `frames` | Requests that had changes to send, and how much was sent. |
+| `losses` | Chunks the client never got and asked for again, and packets MIA could not send (out of network buffers). |
+| `send` | MIA's own time, from the request to the last chunk handed to the network. |
+| `ignored` | Requests and NACKs for a request id MIA no longer serves. A few are normal when a retry crosses a reply. |
+| `rebound` | Frames MIA re-sent under the client's newer request id, because the client never saw the earlier one complete. |
+| `ack` | The round trip: request, chunks, and the client's ack. This includes the Wi-Fi in both directions and the client's own time. |
+| input `losses` | Input packets that never arrived (skipped sequence numbers) or came late. A lost key-up leaves a key held. |
+
+The numbers are from MIA's side only. The client sends input only when something
+changes, so input has no round trip of its own; the video `ack` time is the
+link's round trip for both.
 
 ## Bus event trace
 

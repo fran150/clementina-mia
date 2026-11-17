@@ -64,6 +64,16 @@
 #define SD_WRITE_ACCEPTED 0x05u
 #define SD_JOB_CHUNK_SIZE 512u
 
+// GO_IDLE_STATE attempts per card initialization, and whole initializations
+// per mia_sd_card_init call. A reboot can leave the card in the middle of a
+// command or a data block (see sd_go_idle), so the first CMD0 may miss.
+#define SD_CMD0_ATTEMPTS 8u
+#define SD_INIT_ATTEMPTS 2u
+// Bytes clocked with the card selected before a retried CMD0: a whole data
+// block (token, 512 bytes, CRC) plus margin, so a block the card was still
+// sending when the MIA rebooted runs out.
+#define SD_FLUSH_BYTES 600u
+
 #ifndef MIA_SD_SERVICE_BUDGET_US
 #define MIA_SD_SERVICE_BUDGET_US 1000u
 #endif
@@ -141,6 +151,22 @@ static uint8_t sd_last_error;
 static uint8_t sd_last_fatfs_result;
 static uint8_t sd_type;
 static uint32_t sd_sectors;
+// Why the last card initialization failed (NULL when it worked) and the
+// card's answer at that step, for `status sd`.
+static const char *sd_init_failure;
+static uint8_t sd_init_failure_response;
+// Mount and sector-read history since boot, for `status sd`.
+static uint32_t sd_mount_ok_count;
+static uint32_t sd_mount_fail_count;
+static uint32_t sd_mount_retry_count;
+static uint8_t sd_mount_first_result;   // FRESULT of the first try, last mount
+static uint8_t sd_mount_last_result;    // FRESULT the last mount ended with
+static uint32_t sd_read_fail_count;
+static uint32_t sd_read_fail_lba;
+static uint8_t sd_read_fail_response;   // CMD17 R1, 0xFF = no answer
+static uint8_t sd_read_fail_token;      // last byte seen instead of the data token
+// Last byte sd_read_token_data saw when it gave up.
+static uint8_t sd_token_seen;
 
 static FATFS sd_fatfs;
 static DIR sd_dir;
@@ -168,6 +194,7 @@ static void sd_set_busy(bool busy);
 static void sd_service_job(void);
 static void sd_service_request(void);
 static void sd_update_file_position(uint8_t slot);
+static bool sd_card_answers(void);
 
 // Reads SD_HANDLE_SELECT and validates it against MIA_SD_MAX_HANDLES. Returns
 // false (leaving *out_slot untouched) when the selected value is out of range,
@@ -313,6 +340,7 @@ static bool sd_read_token_data(uint8_t *buffer, uint32_t len, uint32_t timeout_m
 
     while (true) {
         token = sd_xfer(0xFFu);
+        sd_token_seen = token;
         if (token == SD_DATA_TOKEN) {
             spi_read_blocking(MIA_SD_SPI_PORT, 0xFFu, buffer, len);
             (void)sd_xfer(0xFFu);
@@ -369,23 +397,33 @@ static void sd_spi_init_once(void) {
         return;
     }
 
+    // CS goes high before SCK becomes a clock, so the switch cannot clock a
+    // stray bit into a selected card. The pads' default pull-down would
+    // otherwise keep the card selected from reset until here.
+    gpio_init(MIA_SD_CS_PIN);
+    gpio_pull_up(MIA_SD_CS_PIN);
+    gpio_put(MIA_SD_CS_PIN, true);
+    gpio_set_dir(MIA_SD_CS_PIN, GPIO_OUT);
+
     spi_init(MIA_SD_SPI_PORT, MIA_SD_SPI_SLOW_BAUD);
     gpio_set_function(MIA_SD_MISO_PIN, GPIO_FUNC_SPI);
     gpio_set_function(MIA_SD_SCK_PIN, GPIO_FUNC_SPI);
     gpio_set_function(MIA_SD_MOSI_PIN, GPIO_FUNC_SPI);
-
-    gpio_init(MIA_SD_CS_PIN);
-    gpio_set_dir(MIA_SD_CS_PIN, GPIO_OUT);
-    gpio_put(MIA_SD_CS_PIN, true);
+    // The card leaves DO floating when it is not driving it; the SD spec asks
+    // for a pull-up so that reads as 0xFF (idle), not as a response byte.
+    gpio_pull_up(MIA_SD_MISO_PIN);
 
     sd_spi_ready = true;
 }
 
-bool mia_sd_card_init(void) {
+void mia_sd_prepare_pins(void) {
     sd_spi_init_once();
+}
 
-    sd_initialized = false;
-    sd_mounted = false;
+// Drops every open file, the directory cursor and any load/save job. Used
+// when the card is initialized or the filesystem is mounted again: FatFs
+// objects from the old mount no longer work.
+static void sd_forget_open_objects(void) {
     for (uint8_t i = 0; i < MIA_SD_MAX_HANDLES; i++) {
         sd_file_open[i] = false;
         sd_current_open_mode[i] = MIA_FS_OPEN_READ;
@@ -393,10 +431,41 @@ bool mia_sd_card_init(void) {
     sd_dir_open = false;
     sd_eof = false;
     memset(&sd_job, 0, sizeof(sd_job));
-    sd_type = MIA_SD_CARD_NONE;
-    sd_sectors = 0;
-    mia_status_clear_flag(MIA_STAT_SD_PRESENT | MIA_STAT_FS_MOUNTED);
+}
 
+static bool sd_init_failed(const char *step, uint8_t response) {
+    sd_init_failure = step;
+    sd_init_failure_response = response;
+    return false;
+}
+
+// Puts the card in the idle state with CMD0. A card the MIA left behind on a
+// reboot (`quit`, a flash, a crash) is still powered and may be in the middle
+// of a command or still sending a data block, and then ignores or garbles the
+// first CMD0. Before each retry, clock bytes with the card selected so a
+// pending command completes and a pending block runs out, then try again.
+static uint8_t sd_go_idle(void) {
+    uint8_t response = 0xFFu;
+
+    for (uint8_t attempt = 0; attempt < SD_CMD0_ATTEMPTS; attempt++) {
+        sd_select();
+        if (attempt > 0) {
+            for (uint16_t i = 0; i < SD_FLUSH_BYTES; i++) {
+                (void)sd_xfer(0xFFu);
+            }
+        }
+        response = sd_command(SD_CMD0_GO_IDLE_STATE, 0, 0x95u);
+        sd_deselect();
+        if (response == 0x01u) {
+            break;
+        }
+        sleep_ms(2);
+    }
+
+    return response;
+}
+
+static bool sd_card_init_once(void) {
     spi_set_baudrate(MIA_SD_SPI_PORT, MIA_SD_SPI_SLOW_BAUD);
     sd_deselect();
     for (uint8_t i = 0; i < 10u; i++) {
@@ -404,12 +473,9 @@ bool mia_sd_card_init(void) {
     }
 
     bool v2 = false;
-    sd_select();
-    uint8_t response = sd_command(SD_CMD0_GO_IDLE_STATE, 0, 0x95u);
-    sd_deselect();
+    uint8_t response = sd_go_idle();
     if (response != 0x01u) {
-        sd_publish_state();
-        return false;
+        return sd_init_failed("CMD0", response);
     }
 
     sd_select();
@@ -447,8 +513,7 @@ bool mia_sd_card_init(void) {
     } while (!time_reached(deadline));
 
     if (response != 0) {
-        sd_publish_state();
-        return false;
+        return sd_init_failed("ACMD41", response);
     }
 
     uint8_t ocr[4] = {0};
@@ -461,8 +526,7 @@ bool mia_sd_card_init(void) {
     }
     sd_deselect();
     if (response != 0) {
-        sd_publish_state();
-        return false;
+        return sd_init_failed("CMD58", response);
     }
 
     bool high_capacity = v2 && ((ocr[0] & 0x40u) != 0);
@@ -471,8 +535,7 @@ bool mia_sd_card_init(void) {
         response = sd_command(SD_CMD16_SET_BLOCKLEN, MIA_SD_SECTOR_SIZE, 0xFFu);
         sd_deselect();
         if (response != 0) {
-            sd_publish_state();
-            return false;
+            return sd_init_failed("CMD16", response);
         }
     }
 
@@ -485,9 +548,30 @@ bool mia_sd_card_init(void) {
     }
 
     spi_set_baudrate(MIA_SD_SPI_PORT, MIA_SD_SPI_FAST_BAUD);
-    mia_status_set_flag(MIA_STAT_SD_PRESENT);
-    sd_publish_state();
+    sd_init_failure = NULL;
     return true;
+}
+
+bool mia_sd_card_init(void) {
+    sd_spi_init_once();
+
+    sd_initialized = false;
+    sd_mounted = false;
+    sd_forget_open_objects();
+    sd_type = MIA_SD_CARD_NONE;
+    sd_sectors = 0;
+    mia_status_clear_flag(MIA_STAT_SD_PRESENT | MIA_STAT_FS_MOUNTED);
+
+    bool ok = false;
+    for (uint8_t attempt = 0; attempt < SD_INIT_ATTEMPTS && !ok; attempt++) {
+        ok = sd_card_init_once();
+    }
+
+    if (ok) {
+        mia_status_set_flag(MIA_STAT_SD_PRESENT);
+    }
+    sd_publish_state();
+    return ok;
 }
 
 static uint32_t sd_lba_to_card_addr(uint32_t lba) {
@@ -504,6 +588,7 @@ bool mia_sd_block_read(uint32_t lba, uint8_t *buffer) {
     }
 
     bool ok = false;
+    sd_token_seen = 0xFFu;
     sd_select();
     uint8_t response = sd_command(SD_CMD17_READ_SINGLE_BLOCK, sd_lba_to_card_addr(lba), 0xFFu);
     if (response == 0) {
@@ -511,6 +596,12 @@ bool mia_sd_block_read(uint32_t lba, uint8_t *buffer) {
     }
     sd_deselect();
 
+    if (!ok) {
+        sd_read_fail_count++;
+        sd_read_fail_lba = lba;
+        sd_read_fail_response = response;
+        sd_read_fail_token = sd_token_seen;
+    }
     return ok;
 }
 
@@ -660,16 +751,16 @@ static void sd_set_busy(bool busy) {
 }
 
 static void sd_finish(bool ok, uint8_t error, FRESULT fatfs_result, bool fs_event) {
-    sd_set_busy(false);
-
+    // The result goes out before BUSY clears: the 6502 reads LAST_ERROR as
+    // soon as it sees BUSY clear.
     if (ok) {
         sd_set_last_error(0, fatfs_result);
-        mia_irq_set_flag(IRQ_SD_DONE);
     } else {
         sd_set_last_error(error, fatfs_result);
         error_push(error);
-        mia_irq_set_flag(IRQ_SD_ERROR);
     }
+    sd_set_busy(false);
+    mia_irq_set_flag(ok ? IRQ_SD_DONE : IRQ_SD_ERROR);
 
     if (fs_event) {
         mia_irq_set_flag(IRQ_FS_EVENT);
@@ -830,7 +921,27 @@ static void sd_update_file_position(uint8_t slot) {
 }
 
 static bool sd_mount_filesystem(FRESULT *out_result) {
+    // A new mount invalidates the old one's files and directory cursor.
+    // (Before disk_initialize skipped a card that still answers, the card
+    // initialization dropped them.)
+    sd_mounted = false;
+    sd_forget_open_objects();
     FRESULT fr = f_mount(&sd_fatfs, "0:", 1);
+    sd_mount_first_result = (uint8_t)fr;
+    // A first mount after a reboot or a 6502 reset has been seen to fail while
+    // the next one works. Try once more, initializing the card from scratch,
+    // when the failure could be the card rather than the filesystem on it.
+    if (fr == FR_DISK_ERR || fr == FR_NOT_READY || fr == FR_NO_FILESYSTEM) {
+        sd_mount_retry_count++;
+        sd_initialized = false;
+        fr = f_mount(&sd_fatfs, "0:", 1);
+    }
+    sd_mount_last_result = (uint8_t)fr;
+    if (fr == FR_OK) {
+        sd_mount_ok_count++;
+    } else {
+        sd_mount_fail_count++;
+    }
     *out_result = fr;
     sd_mounted = (fr == FR_OK);
     return sd_mounted;
@@ -844,6 +955,10 @@ static bool sd_card_answers(void) {
     (void)sd_xfer(0xFFu); // second byte of the status response
     sd_deselect();
     return (response & 0x80u) == 0;
+}
+
+bool mia_sd_card_still_ready(void) {
+    return sd_initialized && (sd_card_answers() || sd_card_answers());
 }
 
 // MIA has no card-detect pin, so before each filesystem command it checks that
@@ -1776,6 +1891,23 @@ void mia_sd_print_status(void) {
            (unsigned)sd_type,
            (unsigned long)sd_sectors,
            (unsigned long)(sd_sectors / 2048u));
+    if (sd_init_failure != NULL) {
+        printf("  init:      failed at %s (card answered 0x%02X)\n",
+               sd_init_failure, (unsigned)sd_init_failure_response);
+    }
+    printf("  mounts:    ok:%lu failed:%lu retried:%lu last: first-try fatfs:%u final fatfs:%u\n",
+           (unsigned long)sd_mount_ok_count,
+           (unsigned long)sd_mount_fail_count,
+           (unsigned long)sd_mount_retry_count,
+           (unsigned)sd_mount_first_result,
+           (unsigned)sd_mount_last_result);
+    if (sd_read_fail_count != 0) {
+        printf("  reads:     failed:%lu last lba:%lu cmd17:0x%02X token:0x%02X\n",
+               (unsigned long)sd_read_fail_count,
+               (unsigned long)sd_read_fail_lba,
+               (unsigned)sd_read_fail_response,
+               (unsigned)sd_read_fail_token);
+    }
     printf("  pins:      SPI%u MISO:%u CS:%u SCK:%u MOSI:%u fast:%u Hz\n",
            (unsigned)MIA_SD_SPI_INSTANCE,
            (unsigned)MIA_SD_MISO_PIN,

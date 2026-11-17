@@ -708,6 +708,17 @@ Two arrays go with it:
 A repeated `REQUEST_FRAME` with the same `request_id` and
 `last_complete_frame_id` restarts the first send from chunk 0.
 
+A `REQUEST_FRAME` with a new `request_id` whose `last_complete_frame_id` is
+still the frame the client last acknowledged means the client gave up on the
+pending response without seeing it. This happens when a retried request
+reaches MIA after the first copy was answered with `NO_DIRTY_PAGES`: MIA builds
+a frame for the retry, the client accepts the `NO_DIRTY_PAGES` reply and drops
+the frame's chunks. MIA then sends the pending frame again under the new
+`request_id`, from chunk 0. Its page list still covers every change since that
+acknowledgement, and chunks are built from live memory. Before this rule the
+request was ignored, the client retried until it reconnected, and the screen
+froze for about a second each time.
+
 `video_release_pending_response()` releases the response. It clears the pending
 map first, then marks the response invalid and empties the repair list. On an
 ACK, explicit or implicit, it then finishes with the ACK steps above. A
@@ -796,7 +807,6 @@ while (true) {
     mia_service();
     cyw43_arch_poll();
     mia_video_service();
-    update_onboard_led_blink();
     con_process();
     tight_loop_contents();
 }
@@ -804,8 +814,8 @@ while (true) {
 
 `con_process()` handles at most one USB console byte per pass. While an SD
 request waits on a slow card, `serve_during_sd_wait()` in `src/mia/main.c`
-runs `mia_input_service()`, `cyw43_arch_poll()`, `mia_video_service()` and the
-LED blink from inside the wait, so video keeps flowing.
+runs `mia_input_service()`, `cyw43_arch_poll()` and `mia_video_service()` from
+inside the wait, so video keeps flowing.
 
 ### Send Budget
 
@@ -814,7 +824,18 @@ LED blink from inside the wait, so video keeps flowing.
 chunks first, then the next chunks of the first send. Each chunk is built from
 live MIA RAM and handed to lwIP. When `pbuf_alloc()` or `udp_sendto()` fails,
 the call stops and leaves the chunk position unchanged, so the same chunk goes
-out on a later pass. There is no rate limit beyond that backpressure. When the
+out on a later pass.
+
+Chunks are also paced by a token bucket: up to `MIA_VIDEO_SEND_BURST` (8)
+chunks go out at once, and the bucket earns one chunk back every
+`MIA_VIDEO_CHUNK_INTERVAL_US` (400 µs), about 1.3 MB/s. A game frame of a few
+chunks is not delayed; a full refresh (154 chunks) takes about 60 ms. Without
+the pacing a full refresh saturated the CYW43's transmit credits, and while the
+driver waits for credits it drops every packet it receives, so requests, acks,
+NACKs and input were lost and the client kept reconnecting. Both values can be
+overridden at build time.
+
+When the
 last chunk of the first send has gone out, MIA updates
 `LAST_RESPONSE_DIRTY_PAGES`, sets `MIA_STAT_VIDEO_FRAME_SENT` and sets
 `IRQ_VIDEO_FRAME_SENT`. With no client session or no pending response, the

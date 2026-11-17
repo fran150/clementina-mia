@@ -173,6 +173,11 @@ void __not_in_flash_func(sysmon_pass_end)(void) {
     }
 }
 
+void sysmon_loop_start(void) {
+    lap_cycles_start = cycles_now();
+    lap_us_start = pass_us_start = us_now();
+}
+
 void sysmon_clear(void) {
     memset(slot_max_us, 0, sizeof(slot_max_us));
     pass_max_us = 0;

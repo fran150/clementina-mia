@@ -8,6 +8,13 @@ DSTATUS disk_initialize(BYTE pdrv) {
         return STA_NOINIT;
     }
 
+    // A card that is initialized and still answers is left as it is, so a
+    // mount after a 6502 reset or the boot WIFI.CFG read does not reset the
+    // card again. A swapped or pulled card does not answer and is initialized.
+    if (mia_sd_card_still_ready()) {
+        return 0;
+    }
+
     return mia_sd_card_init() ? 0 : STA_NOINIT;
 }
 

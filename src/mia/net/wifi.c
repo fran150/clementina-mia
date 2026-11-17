@@ -105,6 +105,16 @@ bool mia_net_wifi_connect(const char *ssid, const char *password) {
     current_mode = MIA_WIFI_MODE_STA;
     wifi_error_code = 0;
 
+    // The driver's default is CYW43_PERFORMANCE_PM: the chip dozes after
+    // 200 ms without traffic and the access point holds packets for it until
+    // its next wake-up, so frame requests and key presses from the video
+    // client can arrive hundreds of milliseconds late. MIA is always on USB or
+    // board power and is a real-time link, so turn power saving off.
+    int pm_rc = cyw43_wifi_pm(&cyw43_state, CYW43_NONE_PM);
+    if (pm_rc != 0) {
+        printf("Wi-Fi: could not turn power saving off (%d)\n", pm_rc);
+    }
+
     if (netif_default != NULL) {
         printf("Wi-Fi: connected at %s\n", ip4addr_ntoa(netif_ip4_addr(netif_default)));
     } else {

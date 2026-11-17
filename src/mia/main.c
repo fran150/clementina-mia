@@ -22,7 +22,6 @@ static void serve_during_sd_wait(void) {
     mia_input_service();
     cyw43_arch_poll();
     mia_video_service();
-    update_onboard_led_blink();
 }
 
 int main(void) {
@@ -30,6 +29,8 @@ int main(void) {
     sysmon_init();
     stdio_init_all();
     mia_prepare_reset_lines();
+    // Deselect the SD card before the boot delay: a reboot leaves CS floating.
+    mia_sd_prepare_pins();
 
     sleep_ms(2000);
 
@@ -41,6 +42,7 @@ int main(void) {
     mia_sd_set_wait_service(serve_during_sd_wait);
 
     printf("MIA ready. Type 'help' for commands.\n");
+    sysmon_loop_start();
 
     while (true) {
         // The sysmon laps time each part of the pass for `status sys`;
@@ -51,7 +53,6 @@ int main(void) {
         sysmon_lap(SYSMON_WIFI);
         mia_video_service();
         sysmon_lap(SYSMON_VIDEO);
-        update_onboard_led_blink();
 
         con_process();
         sysmon_lap(SYSMON_CONSOLE);

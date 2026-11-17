@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "pico/stdlib.h"
+
 #include "lwip/pbuf.h"
 #include "lwip/udp.h"
 
@@ -43,6 +45,24 @@ static uint8_t input_tx_packet[INPUT_TX_PACKET_SIZE];
 static uint8_t input_wifi_init_error;
 
 static void input_udp_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr, u16_t port);
+
+// Link statistics for `status net`, written only from core 0's main loop (the
+// UDP callback). Sequence numbers that skip show packets lost on the way;
+// ones that go backwards arrived late or twice and are dropped. The client
+// sends packets only when something changes, so there is no input round trip
+// to time here; the video ack time in `status net` is the link's round trip.
+typedef struct {
+    uint32_t since_us;
+    uint32_t packets;           // accepted session packets
+    uint32_t hid;               // of those, keyboard/HID events and bitmaps
+    uint32_t sessions;          // HELLOs
+    uint32_t stale;             // dropped: old or repeated sequence number
+    uint32_t lost;              // sequence numbers skipped
+    uint32_t last_us;
+    uint16_t last_seq;
+} input_stats_t;
+
+static input_stats_t input_stats;
 static void input_handle_datagram(const uint8_t *packet, uint16_t packet_len, const ip_addr_t *addr, uint16_t port);
 
 bool input_wifi_available(void) {
@@ -362,14 +382,33 @@ static void input_handle_datagram(const uint8_t *packet, uint16_t packet_len, co
     uint16_t payload_len = (uint16_t)(packet_len - INPUT_HEADER_SIZE);
 
     if (type == INPUT_PACKET_HELLO) {
+        input_stats.sessions++;
         input_handle_hello(payload, payload_len, seq, version, addr, port);
+        input_stats.last_seq = seq;
         return;
     }
 
     if (version != INPUT_VERSION ||
-        active_mode != MIA_INPUT_MODE_WIFI ||
-        !input_accepts_session_packet(session, seq, addr, port)) {
+        active_mode != MIA_INPUT_MODE_WIFI) {
         return;
+    }
+
+    if (!input_accepts_session_packet(session, seq, addr, port)) {
+        if (wifi_session.active && session == wifi_session.session) {
+            input_stats.stale++;
+        }
+        return;
+    }
+
+    uint16_t skipped = (uint16_t)(seq - input_stats.last_seq - 1u);
+    if (input_stats.packets != 0 && skipped < 0x8000u) {
+        input_stats.lost += skipped;
+    }
+    input_stats.last_seq = seq;
+    input_stats.last_us = time_us_32();
+    input_stats.packets++;
+    if (type == INPUT_PACKET_HID_EVENT || type == INPUT_PACKET_HID_BITMAP) {
+        input_stats.hid++;
     }
 
     switch (type) {
@@ -418,4 +457,37 @@ static void input_udp_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p, const
     }
 
     pbuf_free(p);
+}
+
+static void input_stats_print_ms(uint32_t us) {
+    printf("%lu.%lu ms", (unsigned long)(us / 1000u), (unsigned long)((us % 1000u) / 100u));
+}
+
+void mia_input_print_stats(void) {
+    uint32_t now_us = time_us_32();
+    uint32_t elapsed_us = now_us - input_stats.since_us;
+    uint32_t rate = elapsed_us < 1000u ? 0
+                  : (uint32_t)(((uint64_t)input_stats.packets * 1000000u) / elapsed_us);
+
+    printf("Input link (last %lu s):\n", (unsigned long)(elapsed_us / 1000000u));
+    printf("  packets:  %lu (%lu/s), %lu keyboard, %lu sessions started\n",
+           (unsigned long)input_stats.packets,
+           (unsigned long)rate,
+           (unsigned long)input_stats.hid,
+           (unsigned long)input_stats.sessions);
+    printf("  losses:   %lu lost (sequence skipped), %lu late or repeated\n",
+           (unsigned long)input_stats.lost,
+           (unsigned long)input_stats.stale);
+    if (input_stats.packets != 0) {
+        printf("  last:     ");
+        input_stats_print_ms(now_us - input_stats.last_us);
+        printf(" ago\n");
+    }
+}
+
+void mia_input_clear_stats(void) {
+    uint16_t last_seq = input_stats.last_seq;
+    memset(&input_stats, 0, sizeof(input_stats));
+    input_stats.since_us = time_us_32();
+    input_stats.last_seq = last_seq;
 }

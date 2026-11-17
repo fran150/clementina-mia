@@ -16,13 +16,17 @@ typedef enum {
     SYSMON_WIFI,     // cyw43_arch_poll: Wi-Fi driver and lwIP
     SYSMON_VIDEO,    // frames and packets to the video client
     SYSMON_CONSOLE,  // console input and commands
-    SYSMON_OTHER,    // LED blink and the loop itself
+    SYSMON_OTHER,    // the loop itself
     SYSMON_SLOTS
 } sysmon_slot_t;
 
 // Call first thing in main(), before mia_init() launches core 1: starts the
 // cycle counter and fills both stacks with a pattern for the high-water marks.
 void sysmon_init(void);
+
+// Call right before the main loop: boot (the 2 s pause, the Wi-Fi connect,
+// mia_init) is not a loop pass, so it is not charged to the first slot.
+void sysmon_loop_start(void);
 
 // Charge the time since the previous lap to slot.
 void sysmon_lap(sysmon_slot_t slot);
